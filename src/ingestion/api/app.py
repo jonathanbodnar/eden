@@ -20,10 +20,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(sources.router, prefix="/admin/sources", tags=["Trusted Sources"])
-app.include_router(jobs.router, prefix="/admin/jobs", tags=["Jobs & Queue"])
-app.include_router(progress.router, prefix="/admin/progress", tags=["Progress"])
-app.include_router(archive.router, prefix="/admin/archive", tags=["Archive Inspection"])
+app.include_router(sources.router, prefix="/api/sources", tags=["Trusted Sources"])
+app.include_router(jobs.router, prefix="/api/jobs", tags=["Jobs & Queue"])
+app.include_router(progress.router, prefix="/api/progress", tags=["Progress"])
+app.include_router(archive.router, prefix="/api/archive", tags=["Archive Inspection"])
 
 
 @app.get("/health")

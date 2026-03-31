@@ -64,8 +64,8 @@ cp .env.example .env
 docker compose up -d
 
 # Access:
-#   Admin UI:  http://localhost:3000
-#   API:       http://localhost:8000
+#   Admin UI:  http://localhost:3000/admin
+#   API:       http://localhost:8000/api
 #   API Docs:  http://localhost:8000/docs
 ```
 
@@ -104,49 +104,49 @@ npm run dev
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/admin/sources` | List all trusted sources |
-| `POST` | `/admin/sources` | Register a new trusted source |
-| `GET` | `/admin/sources/{id}` | Get source details |
-| `PATCH` | `/admin/sources/{id}` | Update source config |
-| `POST` | `/admin/sources/{id}/pause` | Deactivate source |
-| `POST` | `/admin/sources/{id}/resume` | Reactivate source |
-| `POST` | `/admin/sources/{id}/run` | Start ingestion run |
-| `POST` | `/admin/sources/{id}/reprocess` | Re-derive from existing raw objects |
+| `GET` | `/api/sources` | List all trusted sources |
+| `POST` | `/api/sources` | Register a new trusted source |
+| `GET` | `/api/sources/{id}` | Get source details |
+| `PATCH` | `/api/sources/{id}` | Update source config |
+| `POST` | `/api/sources/{id}/pause` | Deactivate source |
+| `POST` | `/api/sources/{id}/resume` | Reactivate source |
+| `POST` | `/api/sources/{id}/run` | Start ingestion run |
+| `POST` | `/api/sources/{id}/reprocess` | Re-derive from existing raw objects |
 
 ### Queue & Jobs
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/admin/jobs` | List jobs with filters |
-| `GET` | `/admin/jobs/{id}` | Get job details |
-| `GET` | `/admin/jobs/{id}/checkpoints` | Get job checkpoints |
-| `POST` | `/admin/jobs/enqueue` | Manually enqueue a job |
-| `POST` | `/admin/jobs/{id}/pause` | Pause a running job |
-| `POST` | `/admin/jobs/{id}/resume` | Resume a paused job |
-| `POST` | `/admin/jobs/{id}/retry` | Retry a failed job |
-| `POST` | `/admin/jobs/{id}/cancel` | Cancel a queued job |
-| `POST` | `/admin/jobs/recover-stalled` | Recover stalled jobs |
+| `GET` | `/api/jobs` | List jobs with filters |
+| `GET` | `/api/jobs/{id}` | Get job details |
+| `GET` | `/api/jobs/{id}/checkpoints` | Get job checkpoints |
+| `POST` | `/api/jobs/enqueue` | Manually enqueue a job |
+| `POST` | `/api/jobs/{id}/pause` | Pause a running job |
+| `POST` | `/api/jobs/{id}/resume` | Resume a paused job |
+| `POST` | `/api/jobs/{id}/retry` | Retry a failed job |
+| `POST` | `/api/jobs/{id}/cancel` | Cancel a queued job |
+| `POST` | `/api/jobs/recover-stalled` | Recover stalled jobs |
 
 ### Progress
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/admin/progress/overview` | System-wide stats |
-| `GET` | `/admin/progress/sources` | Per-source progress |
-| `GET` | `/admin/progress/sources/{id}` | Single source progress |
+| `GET` | `/api/progress/overview` | System-wide stats |
+| `GET` | `/api/progress/sources` | Per-source progress |
+| `GET` | `/api/progress/sources/{id}` | Single source progress |
 
 ### Archive Inspection
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/admin/archive/raw-objects` | List raw objects |
-| `GET` | `/admin/archive/raw-objects/{id}` | Get raw object metadata |
-| `GET` | `/admin/archive/source-records` | List source records |
-| `GET` | `/admin/archive/source-records/{id}` | Get source record |
-| `GET` | `/admin/archive/source-records/{id}/dates` | List typed dates |
-| `GET` | `/admin/archive/source-records/{id}/versions` | List source versions |
-| `GET` | `/admin/archive/versions/{id}/segments` | List segments |
-| `GET` | `/admin/archive/provenance/{id}` | Full provenance chain |
+| `GET` | `/api/archive/raw-objects` | List raw objects |
+| `GET` | `/api/archive/raw-objects/{id}` | Get raw object metadata |
+| `GET` | `/api/archive/source-records` | List source records |
+| `GET` | `/api/archive/source-records/{id}` | Get source record |
+| `GET` | `/api/archive/source-records/{id}/dates` | List typed dates |
+| `GET` | `/api/archive/source-records/{id}/versions` | List source versions |
+| `GET` | `/api/archive/versions/{id}/segments` | List segments |
+| `GET` | `/api/archive/provenance/{id}` | Full provenance chain |
 
 ## Database Schema
 
