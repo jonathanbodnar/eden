@@ -48,4 +48,20 @@ Eden Ingestion Platform — a source-governed, queue-driven, checkpointed ingest
 
 ### Environment variables
 
-All config uses `EDEN_` prefix. Defaults connect to `eden:eden@localhost:5432/eden`. See `.env.example` for full list. R2 and OpenAI keys are only needed for actual ingestion pipeline runs (workers), not for API/UI development.
+All config uses `EDEN_` prefix. Defaults connect to `eden:eden@localhost:5432/eden`. See `.env.example` for full list.
+
+#### R2 Object Storage (Cloudflare)
+
+The pipeline workers use Cloudflare R2 (S3-compatible) for raw and derived object storage. Three secrets are required and should be injected as environment variables:
+
+| Secret | Description |
+|--------|-------------|
+| `EDEN_R2_ENDPOINT_URL` | S3-compatible endpoint, e.g. `https://<account-id>.r2.cloudflarestorage.com` |
+| `EDEN_R2_ACCESS_KEY_ID` | R2 API token Access Key ID |
+| `EDEN_R2_SECRET_ACCESS_KEY` | R2 API token Secret Access Key |
+
+`EDEN_R2_BUCKET_NAME` defaults to `eden-raw`. The R2 client is at `src/ingestion/storage/r2_client.py` and uses `boto3` with S3v4 signatures. R2 is only needed when running ingestion workers or testing storage; the API and frontend work without it.
+
+#### OpenAI (optional)
+
+`EDEN_OPENAI_API_KEY` is only needed by the embedding worker stage (`embed`). Not required for API/UI development or for the discover/fetch/normalize/segment pipeline stages.
