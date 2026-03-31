@@ -1,0 +1,135 @@
+const BASE = "/api";
+
+async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    ...options,
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`${res.status}: ${body}`);
+  }
+  if (res.status === 204) return undefined as T;
+  return res.json();
+}
+
+export interface TrustedSource {
+  id: string;
+  name: string;
+  slug: string;
+  domain: string;
+  base_url: string;
+  source_category: string;
+  trust_tier: string;
+  ingestion_method: string;
+  parser_type: string;
+  content_types_supported: string[] | null;
+  robots_or_access_notes: string | null;
+  license_notes: string | null;
+  default_language: string | null;
+  active: boolean;
+  priority: number;
+  rate_limit_rpm: number | null;
+  crawl_frequency_hours: number | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface QueuedJob {
+  id: string;
+  source_run_id: string | null;
+  trusted_source_id: string;
+  job_type: string;
+  status: string;
+  priority: number;
+  scheduled_for: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  worker_id: string | null;
+  attempt_count: number;
+  max_attempts: number;
+  payload_jsonb: Record<string, unknown> | null;
+  error_log: string | null;
+  last_heartbeat_at: string | null;
+  created_at: string;
+}
+
+export interface Overview {
+  total_trusted_sources: number;
+  active_trusted_sources: number;
+  total_raw_objects: number;
+  total_source_records: number;
+  total_versions: number;
+  total_segments: number;
+  total_embeddings: number;
+  total_bytes_stored: number;
+  jobs_running: number;
+  jobs_queued: number;
+  jobs_failed: number;
+}
+
+export interface SourceProgress {
+  id: string;
+  trusted_source_id: string;
+  last_run_id: string | null;
+  discovered_count: number;
+  fetched_count: number;
+  normalized_count: number;
+  segmented_count: number;
+  embedded_count: number;
+  failed_count: number;
+  skipped_count: number;
+  total_bytes_stored: number;
+  last_successful_checkpoint: string | null;
+  last_updated_at: string;
+  source_name: string;
+  source_slug: string;
+  active: boolean;
+}
+
+export const api = {
+  // Sources
+  listSources: (activeOnly = false) =>
+    request<{ items: TrustedSource[]; total: number }>(
+      `/sources?active_only=${activeOnly}&limit=200`
+    ),
+  getSource: (id: string) => request<TrustedSource>(`/sources/${id}`),
+  createSource: (data: Record<string, unknown>) =>
+    request<TrustedSource>("/sources", { method: "POST", body: JSON.stringify(data) }),
+  updateSource: (id: string, data: Record<string, unknown>) =>
+    request<TrustedSource>(`/sources/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  pauseSource: (id: string) =>
+    request<void>(`/sources/${id}/pause`, { method: "POST" }),
+  resumeSource: (id: string) =>
+    request<void>(`/sources/${id}/resume`, { method: "POST" }),
+  runSource: (id: string, runType = "full_ingest") =>
+    request<unknown>(`/sources/${id}/run`, {
+      method: "POST",
+      body: JSON.stringify({ run_type: runType }),
+    }),
+  reprocessSource: (id: string) =>
+    request<unknown>(`/sources/${id}/reprocess`, { method: "POST" }),
+
+  // Jobs
+  listJobs: (params?: { status?: string; job_type?: string; trusted_source_id?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.status) qs.set("status", params.status);
+    if (params?.job_type) qs.set("job_type", params.job_type);
+    if (params?.trusted_source_id) qs.set("trusted_source_id", params.trusted_source_id);
+    qs.set("limit", "200");
+    return request<{ items: QueuedJob[]; total: number }>(`/jobs?${qs}`);
+  },
+  getJob: (id: string) => request<QueuedJob>(`/jobs/${id}`),
+  getJobCheckpoints: (id: string) => request<unknown[]>(`/jobs/${id}/checkpoints`),
+  pauseJob: (id: string) => request<void>(`/jobs/${id}/pause`, { method: "POST" }),
+  resumeJob: (id: string) => request<void>(`/jobs/${id}/resume`, { method: "POST" }),
+  retryJob: (id: string) => request<void>(`/jobs/${id}/retry`, { method: "POST" }),
+  cancelJob: (id: string) => request<void>(`/jobs/${id}/cancel`, { method: "POST" }),
+  recoverStalled: () => request<{ recovered: number }>("/jobs/recover-stalled", { method: "POST" }),
+
+  // Progress
+  getOverview: () => request<Overview>("/progress/overview"),
+  getAllSourceProgress: () => request<SourceProgress[]>("/progress/sources"),
+  getSourceProgress: (id: string) => request<SourceProgress>(`/progress/sources/${id}`),
+};
