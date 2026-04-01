@@ -116,7 +116,7 @@ class FetchWorker(BaseWorker):
 
         concurrency = 10 if is_api_source else 3
         sem = asyncio.Semaphore(concurrency)
-        batch_size = 200 if is_api_source else 50
+        batch_size = 100 if is_api_source else 50
 
         async with httpx.AsyncClient(timeout=60.0) as client:
             while True:
@@ -139,34 +139,77 @@ class FetchWorker(BaseWorker):
                     continue
 
                 empty_polls = 0
+
+                async def _prefetch(record: DiscoveredRecord) -> tuple[DiscoveredRecord, httpx.Response | None, str | None]:
+                    """Do the HTTP request concurrently, return (record, response, error)."""
+                    async with sem:
+                        fetch_url = None
+                        if is_api_source:
+                            fetch_url = api_fetch_url(source.slug, record.external_id)
+                        if not fetch_url:
+                            fetch_url = record.record_url
+                        if not fetch_url or not fetch_url.startswith(("http://", "https://")):
+                            return (record, None, f"Invalid URL: {fetch_url}")
+
+                        for attempt in range(3):
+                            try:
+                                resp = await client.get(
+                                    fetch_url, follow_redirects=True,
+                                    headers={"Accept": "application/json", "User-Agent": "EdenBot/1.0"} if is_api_source else {},
+                                )
+                            except httpx.TimeoutException:
+                                if attempt < 2:
+                                    await asyncio.sleep(2 ** (attempt + 1))
+                                    continue
+                                return (record, None, f"Timeout after 3 attempts for {fetch_url}")
+
+                            if resp.status_code in (429, 503):
+                                retry_after = int(resp.headers.get("Retry-After", 2 ** (attempt + 1)))
+                                if attempt < 2:
+                                    await asyncio.sleep(retry_after)
+                                    continue
+                                return (record, None, f"HTTP {resp.status_code} after 3 attempts")
+
+                            if resp.status_code in (403, 404, 410):
+                                return (record, None, f"HTTP {resp.status_code} for {fetch_url}")
+
+                            return (record, resp, None)
+
+                        return (record, None, "exhausted retries")
+
+                prefetched = await asyncio.gather(*[_prefetch(r) for r in batch])
+
                 batch_ok = 0
                 batch_fail = 0
+                for record, response, error in prefetched:
+                    if error or response is None:
+                        batch_fail += 1
+                        logger.error("Failed to fetch %s: %s", record.external_id, error)
+                        await session.execute(
+                            update(DiscoveredRecord)
+                            .where(DiscoveredRecord.id == record.id)
+                            .values(status=DiscoveredRecordStatus.FAILED)
+                        )
+                        continue
 
-                async def _fetch_one(record: DiscoveredRecord) -> None:
-                    nonlocal batch_ok, batch_fail
-                    async with sem:
-                        try:
-                            await self._fetch_record(session, client, source, record)
-                            batch_ok += 1
-                            await session.execute(
-                                update(DiscoveredRecord)
-                                .where(DiscoveredRecord.id == record.id)
-                                .values(status=DiscoveredRecordStatus.FETCHED)
-                            )
-                        except Exception as exc:
-                            batch_fail += 1
-                            logger.error("Failed to fetch %s: %s", record.external_id, exc)
-                            await session.execute(
-                                update(DiscoveredRecord)
-                                .where(DiscoveredRecord.id == record.id)
-                                .values(status=DiscoveredRecordStatus.FAILED)
-                            )
-                        if is_api_source:
-                            await asyncio.sleep(0.05)
+                    try:
+                        await self._store_response(session, client, source, record, response)
+                        batch_ok += 1
+                        await session.execute(
+                            update(DiscoveredRecord)
+                            .where(DiscoveredRecord.id == record.id)
+                            .values(status=DiscoveredRecordStatus.FETCHED)
+                        )
+                    except Exception as exc:
+                        batch_fail += 1
+                        logger.error("Failed to store %s: %s", record.external_id, exc)
+                        await session.execute(
+                            update(DiscoveredRecord)
+                            .where(DiscoveredRecord.id == record.id)
+                            .values(status=DiscoveredRecordStatus.FAILED)
+                        )
 
-                await asyncio.gather(*[_fetch_one(r) for r in batch])
                 records_processed += batch_ok
-
                 await update_source_progress(session, source.id, fetched_count=records_processed)
                 await session.commit()
                 logger.info("Fetch %s: %d done (+%d ok, %d fail)", source.slug, records_processed, batch_ok, batch_fail)
@@ -175,57 +218,19 @@ class FetchWorker(BaseWorker):
             session, source.id, fetched_count=records_processed,
         )
 
-    async def _fetch_record(
+    async def _store_response(
         self,
         session: AsyncSession,
         client: httpx.AsyncClient,
         source: TrustedSource,
         record: DiscoveredRecord,
+        response: httpx.Response,
     ) -> RawObject:
+        """Parse response and store in DB + R2 (must run serially on session)."""
         is_api = source.ingestion_method == IngestionMethod.API
-        fetch_url = None
-
-        if is_api:
-            fetch_url = api_fetch_url(source.slug, record.external_id)
-
-        if not fetch_url:
-            fetch_url = record.record_url
-
-        if not fetch_url.startswith(("http://", "https://")):
-            raise ValueError(f"Invalid URL: {fetch_url}")
-
-        retries = 3
-        response = None
-        for attempt in range(retries):
-            try:
-                response = await client.get(
-                    fetch_url,
-                    follow_redirects=True,
-                    headers={"Accept": "application/json", "User-Agent": "EdenBot/1.0"} if is_api else {},
-                )
-            except httpx.TimeoutException:
-                if attempt < retries - 1:
-                    wait = 2 ** (attempt + 1)
-                    logger.warning("Timeout fetching %s, retrying in %ds (attempt %d/%d)", record.external_id, wait, attempt + 1, retries)
-                    await asyncio.sleep(wait)
-                    continue
-                raise ValueError(f"Timeout after {retries} attempts for {fetch_url}")
-
-            if response.status_code in (429, 503):
-                retry_after = int(response.headers.get("Retry-After", 2 ** (attempt + 1)))
-                if attempt < retries - 1:
-                    logger.warning("HTTP %d for %s, retrying in %ds", response.status_code, record.external_id, retry_after)
-                    await asyncio.sleep(retry_after)
-                    continue
-                raise ValueError(f"HTTP {response.status_code} after {retries} attempts for {fetch_url}")
-
-            break
-
-        if response.status_code in (403, 404, 410):
-            raise ValueError(f"HTTP {response.status_code} for {fetch_url}")
-        response.raise_for_status()
         data = response.content
         content_type = response.headers.get("content-type", "")
+        fetch_url = str(response.url)
 
         if is_api and "json" in content_type.lower():
             api_json = response.json()
