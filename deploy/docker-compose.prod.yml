@@ -56,6 +56,8 @@ services:
       EDEN_R2_SECRET_ACCESS_KEY: "${EDEN_R2_SECRET_ACCESS_KEY:-}"
       EDEN_R2_BUCKET_NAME: "${EDEN_R2_BUCKET_NAME:-eden-raw}"
       EDEN_OPENAI_API_KEY: "${EDEN_OPENAI_API_KEY:-}"
+      EDEN_ANTHROPIC_API_KEY: "${EDEN_ANTHROPIC_API_KEY:-}"
+      EDEN_ANTHROPIC_MODEL: "${EDEN_ANTHROPIC_MODEL:-claude-sonnet-4-20250514}"
     deploy:
       resources:
         limits:
@@ -77,6 +79,8 @@ services:
       EDEN_R2_SECRET_ACCESS_KEY: "${EDEN_R2_SECRET_ACCESS_KEY:-}"
       EDEN_R2_BUCKET_NAME: "${EDEN_R2_BUCKET_NAME:-eden-raw}"
       EDEN_OPENAI_API_KEY: "${EDEN_OPENAI_API_KEY:-}"
+      EDEN_ANTHROPIC_API_KEY: "${EDEN_ANTHROPIC_API_KEY:-}"
+      EDEN_ANTHROPIC_MODEL: "${EDEN_ANTHROPIC_MODEL:-claude-sonnet-4-20250514}"
     deploy:
       resources:
         limits:
