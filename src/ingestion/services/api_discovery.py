@@ -1148,63 +1148,108 @@ async def stream_unesco_whc(max_pages: int = 100_000) -> AsyncIterator[Discovery
 # Wikidata — ancient locations
 # ---------------------------------------------------------------------------
 
-WD_LOCATION_QUERY = """
-SELECT ?item ?itemLabel ?coord WHERE {{
-  VALUES ?siteType {{ wd:Q839954 wd:Q3947 wd:Q5107 wd:Q44539 wd:Q15661340 wd:Q23413 }}
-  ?item wdt:P31/wdt:P279* ?siteType .
-  ?item wdt:P625 ?coord .
-  ?item wdt:P571 ?inception .
-  FILTER(YEAR(?inception) < 500)
-  SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en" . }}
-}}
-LIMIT {limit} OFFSET {offset}
-"""
+WD_LOCATION_QUERIES = [
+    # Ancient cities
+    """SELECT ?item ?itemLabel ?coord WHERE {{
+      ?item wdt:P31/wdt:P279* wd:Q515 .
+      ?item wdt:P625 ?coord .
+      ?item wdt:P571 ?inception .
+      FILTER(YEAR(?inception) < 1)
+      SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en" . }}
+    }} LIMIT {limit} OFFSET {offset}""",
+    # Archaeological sites
+    """SELECT ?item ?itemLabel ?coord WHERE {{
+      ?item wdt:P31/wdt:P279* wd:Q839954 .
+      ?item wdt:P625 ?coord .
+      ?item wdt:P571 ?inception .
+      FILTER(YEAR(?inception) < 1)
+      SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en" . }}
+    }} LIMIT {limit} OFFSET {offset}""",
+    # Temples
+    """SELECT ?item ?itemLabel ?coord WHERE {{
+      ?item wdt:P31/wdt:P279* wd:Q44539 .
+      ?item wdt:P625 ?coord .
+      ?item wdt:P571 ?inception .
+      FILTER(YEAR(?inception) < 1)
+      SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en" . }}
+    }} LIMIT {limit} OFFSET {offset}""",
+    # Pyramids
+    """SELECT ?item ?itemLabel ?coord WHERE {{
+      ?item wdt:P31/wdt:P279* wd:Q12516 .
+      ?item wdt:P625 ?coord .
+      SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en" . }}
+    }} LIMIT {limit} OFFSET {offset}""",
+    # Ziggurats
+    """SELECT ?item ?itemLabel ?coord WHERE {{
+      ?item wdt:P31/wdt:P279* wd:Q104555 .
+      ?item wdt:P625 ?coord .
+      SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en" . }}
+    }} LIMIT {limit} OFFSET {offset}""",
+    # Ancient monuments
+    """SELECT ?item ?itemLabel ?coord WHERE {{
+      ?item wdt:P31/wdt:P279* wd:Q4989906 .
+      ?item wdt:P625 ?coord .
+      ?item wdt:P571 ?inception .
+      FILTER(YEAR(?inception) < 1)
+      SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en" . }}
+    }} LIMIT {limit} OFFSET {offset}""",
+]
 
 async def stream_wikidata_locations(max_pages: int = 100_000) -> AsyncIterator[DiscoveryBatch]:
     total = 0
-    offset = 0
-    limit = 500
-    async with httpx.AsyncClient(timeout=90.0) as client:
-        while total < max_pages:
-            try:
-                query = WD_LOCATION_QUERY.format(limit=limit, offset=offset)
-                resp = await client.get(
-                    WIKIDATA_SPARQL,
-                    params={"query": query, "format": "json"},
-                    headers={"User-Agent": USER_AGENT, "Accept": "application/sparql-results+json"},
-                )
-                if resp.status_code != 200:
-                    break
-                results = resp.json().get("results", {}).get("bindings", [])
-                if not results:
-                    break
-
-                batch: list[DiscoveredPage] = []
-                for r in results:
-                    item_uri = r.get("item", {}).get("value", "")
-                    qid = item_uri.rsplit("/", 1)[-1] if item_uri else ""
-                    label = r.get("itemLabel", {}).get("value", qid)
-                    if not qid:
-                        continue
-                    batch.append(DiscoveredPage(
-                        url=item_uri,
-                        external_id=f"wd-loc-{qid}",
-                        title=label[:300],
-                        content_hint="ancient_location",
-                        depth=0,
-                    ))
-                    total += 1
-                    if total >= max_pages:
-                        break
-                if batch:
-                    yield DiscoveryBatch(batch, 1, 0, False)
-                if len(results) < limit:
-                    break
-                offset += limit
-                await asyncio.sleep(2.0)
-            except Exception as exc:
-                logger.error("Wikidata locations error: %s", exc)
+    seen_qids: set[str] = set()
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        for query_template in WD_LOCATION_QUERIES:
+            if total >= max_pages:
                 break
+            offset = 0
+            limit = 200
+            while total < max_pages:
+                try:
+                    query = query_template.format(limit=limit, offset=offset)
+                    resp = await client.get(
+                        WIKIDATA_SPARQL,
+                        params={"query": query, "format": "json"},
+                        headers={"User-Agent": USER_AGENT, "Accept": "application/sparql-results+json"},
+                    )
+                    if resp.status_code == 429 or resp.status_code == 504:
+                        logger.warning("Wikidata SPARQL %d, waiting 30s", resp.status_code)
+                        await asyncio.sleep(30.0)
+                        continue
+                    if resp.status_code != 200:
+                        logger.warning("Wikidata SPARQL %d for query, skipping", resp.status_code)
+                        break
+                    results = resp.json().get("results", {}).get("bindings", [])
+                    if not results:
+                        break
+
+                    batch: list[DiscoveredPage] = []
+                    for r in results:
+                        item_uri = r.get("item", {}).get("value", "")
+                        qid = item_uri.rsplit("/", 1)[-1] if item_uri else ""
+                        label = r.get("itemLabel", {}).get("value", qid)
+                        if not qid or qid in seen_qids:
+                            continue
+                        seen_qids.add(qid)
+                        batch.append(DiscoveredPage(
+                            url=item_uri,
+                            external_id=f"wd-loc-{qid}",
+                            title=label[:300],
+                            content_hint="ancient_location",
+                            depth=0,
+                        ))
+                        total += 1
+                        if total >= max_pages:
+                            break
+                    if batch:
+                        yield DiscoveryBatch(batch, 1, 0, False)
+                    if len(results) < limit:
+                        break
+                    offset += limit
+                    await asyncio.sleep(5.0)
+                except Exception as exc:
+                    logger.error("Wikidata locations error: %s", exc)
+                    break
     yield DiscoveryBatch([], 0, 0, True)
 
 

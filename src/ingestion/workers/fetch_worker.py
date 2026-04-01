@@ -118,7 +118,8 @@ class FetchWorker(BaseWorker):
         sem = asyncio.Semaphore(concurrency)
         batch_size = 100 if is_api_source else 50
 
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        ssl_verify = source.slug not in ("pleiades", "oracc")
+        async with httpx.AsyncClient(timeout=60.0, verify=ssl_verify) as client:
             while True:
                 result = await session.execute(
                     select(DiscoveredRecord).where(
