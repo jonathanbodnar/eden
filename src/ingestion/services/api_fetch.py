@@ -194,10 +194,48 @@ def _parse_cdli(art: dict) -> dict:
                     "project_url": res.get("project_url", ""),
                 })
 
-    # Dates
+    # Dates — map period names to approximate BC date ranges
+    period_dates = {
+        "Uruk III": (-3500, -3200), "Uruk IV": (-3500, -3200),
+        "Uruk V": (-3800, -3500), "Proto-Elamite": (-3200, -2700),
+        "ED I": (-2900, -2750), "ED II": (-2750, -2600),
+        "ED IIIa": (-2600, -2500), "ED IIIb": (-2500, -2340),
+        "Early Dynastic I-II": (-2900, -2600), "Early Dynastic IIIa": (-2600, -2500),
+        "Early Dynastic IIIb": (-2500, -2340),
+        "Old Akkadian": (-2340, -2200), "Akkadian": (-2340, -2200),
+        "Lagash II": (-2200, -2112), "Gutian": (-2200, -2112),
+        "Ur III": (-2112, -2004),
+        "Early Old Babylonian": (-2004, -1900),
+        "Old Babylonian": (-2004, -1595),
+        "Old Assyrian": (-2000, -1750),
+        "Middle Babylonian": (-1595, -1155),
+        "Middle Assyrian": (-1392, -1056),
+        "Neo-Assyrian": (-911, -612),
+        "Neo-Babylonian": (-626, -539),
+        "Achaemenid": (-539, -330),
+        "Hellenistic": (-330, -63),
+        "Seleucid": (-312, -63),
+        "Parthian": (-247, 224),
+        "Sasanian": (224, 651),
+    }
+    dates = []
+    period_name = meta.get("period", "")
+    if period_name and period_name in period_dates:
+        start, end = period_dates[period_name]
+        dates.append({
+            "type": "object_creation", "start": start, "end": end,
+            "label": period_name, "confidence": "approximate",
+        })
+
     dates_ref = art.get("dates_referenced")
     if dates_ref and dates_ref != "00.00.00.00":
-        meta["dates"] = [{"label": dates_ref, "type": "object_creation", "confidence": "uncertain"}]
+        if not dates:
+            dates.append({"label": dates_ref, "type": "object_creation", "confidence": "uncertain"})
+        else:
+            dates[0]["label"] = f"{period_name} ({dates_ref})"
+    if dates:
+        meta["dates"] = dates
+
     dates_list = art.get("dates", [])
     if dates_list:
         meta["dates_detailed"] = dates_list
@@ -240,11 +278,15 @@ def _parse_cdli(art: dict) -> dict:
     if witnesses:
         meta["witnesses"] = witnesses
 
-    # Images — CDLI serves photos at /dl/photo/P{id zero-padded to 6}.jpg
+    # Images — CDLI serves photos and line drawings at predictable URLs
+    # Photo: /dl/photo/P{id:06d}.jpg (not all artifacts have photos)
+    # Lineart: /dl/lineart/P{id:06d}_l.jpg (most artifacts have these)
     images = []
     cdli_id = art.get("id")
     if cdli_id:
-        images.append(f"https://cdli.earth/dl/photo/P{int(cdli_id):06d}.jpg")
+        p_num = f"P{int(cdli_id):06d}"
+        images.append(f"https://cdli.earth/dl/photo/{p_num}.jpg")
+        images.append(f"https://cdli.earth/dl/lineart/{p_num}_l.jpg")
 
     for img_field in ("images", "photos"):
         for img in art.get(img_field, []):
