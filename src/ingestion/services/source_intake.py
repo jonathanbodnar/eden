@@ -5,6 +5,7 @@ Pipeline: normalize URLs -> group by domain -> fetch samples -> rule-based extra
 
 from __future__ import annotations
 
+import asyncio
 import html
 import logging
 import re
@@ -23,8 +24,10 @@ from src.ingestion.schemas.intake import (
 
 logger = logging.getLogger(__name__)
 
-FETCH_TIMEOUT = 15.0
+FETCH_TIMEOUT = 12.0
 MAX_CONTENT_BYTES = 50_000
+MAX_PAGES_PER_DOMAIN = 5
+OVERALL_TIMEOUT = 55.0
 USER_AGENT = "EdenBot/1.0 (research ingestion platform)"
 
 
@@ -363,8 +366,8 @@ Robots.txt excerpt:
 {analysis.robots_txt[:500] if analysis.robots_txt else 'Not available'}"""
 
     try:
-        client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
-        response = client.messages.create(
+        client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+        response = await client.messages.create(
             model=settings.anthropic_model,
             max_tokens=2048,
             system=[{
@@ -427,6 +430,55 @@ Robots.txt excerpt:
     return rules_source, rules_conf, rules_evidence
 
 
+async def _analyze_single_domain(
+    client: httpx.AsyncClient,
+    domain: str,
+    domain_urls: list[str],
+) -> DomainGroup:
+    """Analyze a single domain: fetch pages concurrently, run rules, then AI."""
+    analysis = DomainAnalysis(domain=domain, urls=domain_urls)
+
+    urls_to_fetch = domain_urls[:MAX_PAGES_PER_DOMAIN]
+    homepage_url = f"https://{domain}"
+    need_homepage = homepage_url not in domain_urls
+
+    fetch_tasks = [fetch_page(client, url) for url in urls_to_fetch]
+    if need_homepage:
+        fetch_tasks.append(fetch_page(client, homepage_url))
+    fetch_tasks.append(fetch_robots(client, domain))
+
+    fetched = await asyncio.gather(*fetch_tasks, return_exceptions=True)
+
+    robots_result = fetched[-1]
+    if isinstance(robots_result, str):
+        analysis.robots_txt = robots_result
+
+    page_results = fetched[:-1]
+    for i, result in enumerate(page_results):
+        if isinstance(result, Exception):
+            logger.warning("Fetch failed for %s: %s", urls_to_fetch[i] if i < len(urls_to_fetch) else homepage_url, result)
+            continue
+        if isinstance(result, PageData):
+            if need_homepage and i == len(urls_to_fetch) and not result.error:
+                analysis.pages.insert(0, result)
+            else:
+                analysis.pages.append(result)
+
+    rules_source, rules_conf, rules_evidence = rules_based_extraction(analysis)
+
+    source, conf, evidence = await ai_classify_domain(
+        analysis, rules_source, rules_conf, rules_evidence
+    )
+
+    return DomainGroup(
+        domain=domain,
+        urls=domain_urls,
+        suggested_source=source,
+        confidence=conf,
+        evidence=evidence,
+    )
+
+
 async def analyze_urls(urls: list[str]) -> list[DomainGroup]:
     """Full intake pipeline: normalize -> group -> fetch -> rules -> AI -> return candidates."""
     clean_urls = normalize_urls(urls)
@@ -434,36 +486,26 @@ async def analyze_urls(urls: list[str]) -> list[DomainGroup]:
         return []
 
     domain_groups = group_by_domain(clean_urls)
-    results: list[DomainGroup] = []
 
     async with httpx.AsyncClient() as client:
-        for domain, domain_urls in domain_groups.items():
-            analysis = DomainAnalysis(domain=domain, urls=domain_urls)
-
-            analysis.robots_txt = await fetch_robots(client, domain)
-
-            for url in domain_urls[:5]:
-                page = await fetch_page(client, url)
-                analysis.pages.append(page)
-
-            homepage_url = f"https://{domain}"
-            if homepage_url not in domain_urls and not any(p.url == homepage_url for p in analysis.pages):
-                homepage = await fetch_page(client, homepage_url)
-                if not homepage.error:
-                    analysis.pages.insert(0, homepage)
-
-            rules_source, rules_conf, rules_evidence = rules_based_extraction(analysis)
-
-            source, conf, evidence = await ai_classify_domain(
-                analysis, rules_source, rules_conf, rules_evidence
+        tasks = [
+            _analyze_single_domain(client, domain, domain_urls)
+            for domain, domain_urls in domain_groups.items()
+        ]
+        try:
+            results = await asyncio.wait_for(
+                asyncio.gather(*tasks, return_exceptions=True),
+                timeout=OVERALL_TIMEOUT,
             )
+        except asyncio.TimeoutError:
+            logger.error("Intake analysis timed out after %.0fs", OVERALL_TIMEOUT)
+            raise TimeoutError(f"Analysis timed out after {OVERALL_TIMEOUT:.0f}s. Try fewer URLs.")
 
-            results.append(DomainGroup(
-                domain=domain,
-                urls=domain_urls,
-                suggested_source=source,
-                confidence=conf,
-                evidence=evidence,
-            ))
+    final: list[DomainGroup] = []
+    for r in results:
+        if isinstance(r, DomainGroup):
+            final.append(r)
+        elif isinstance(r, Exception):
+            logger.error("Domain analysis failed: %s", r)
 
-    return results
+    return final

@@ -13,6 +13,9 @@ from src.ingestion.models.enums import ProvenanceStatus, RecordStatus, SourceCat
 class SourceRecord(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "source_records"
 
+    trusted_source_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("trusted_sources.id"), nullable=False, index=True
+    )
     raw_object_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("raw_objects.id"), nullable=False, index=True
     )
@@ -40,6 +43,7 @@ class SourceRecord(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     metadata_jsonb: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
+    trusted_source = relationship("TrustedSource", back_populates="source_records")
     raw_object = relationship("RawObject", back_populates="source_records")
     source_dates = relationship("SourceDate", back_populates="source_record", cascade="all, delete-orphan")
     source_versions = relationship("SourceVersion", back_populates="source_record", cascade="all, delete-orphan")

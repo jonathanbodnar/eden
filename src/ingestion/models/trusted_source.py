@@ -47,6 +47,7 @@ class TrustedSource(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     discovered_records = relationship("DiscoveredRecord", back_populates="trusted_source")
     raw_objects = relationship("RawObject", back_populates="trusted_source")
+    source_records = relationship("SourceRecord", back_populates="trusted_source")
     ingestion_jobs = relationship("IngestionJob", back_populates="trusted_source")
     source_runs = relationship("SourceRun", back_populates="trusted_source")
     queued_jobs = relationship("QueuedJob", back_populates="trusted_source")

@@ -156,15 +156,12 @@ class ContextExtractionWorker(BaseWorker):
     async def _get_segments_for_source(
         self, session: AsyncSession, trusted_source_id
     ) -> list[Segment]:
-        """Get all segments belonging to a secondary source via the version->record->raw_object chain."""
-        from src.ingestion.models.raw_object import RawObject
-
+        """Get all segments belonging to a secondary source via the version->record chain."""
         result = await session.execute(
             select(Segment)
             .join(SourceVersion, Segment.source_version_id == SourceVersion.id)
             .join(SourceRecord, SourceVersion.source_record_id == SourceRecord.id)
-            .join(RawObject, SourceRecord.raw_object_id == RawObject.id)
-            .where(RawObject.trusted_source_id == trusted_source_id)
+            .where(SourceRecord.trusted_source_id == trusted_source_id)
             .order_by(Segment.created_at)
         )
         return list(result.scalars().all())

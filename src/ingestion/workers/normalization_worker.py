@@ -118,6 +118,7 @@ class NormalizationWorker(BaseWorker):
         meta = raw_obj.raw_metadata_jsonb or {}
 
         source_record = SourceRecord(
+            trusted_source_id=source.id,
             raw_object_id=raw_obj.id,
             canonical_title=meta.get("title", f"Record {raw_obj.external_id}"),
             source_category=source.source_category,
