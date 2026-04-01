@@ -433,46 +433,47 @@ CTEXT_PRE_QIN = [
 async def stream_ctext(max_pages: int = 100_000) -> AsyncIterator[DiscoveryBatch]:
     total = 0
 
-    async def _get_subsections(client, text_id, depth=0):
-        """Recursively get all leaf-level subsections."""
-        if depth > 3:
-            return [text_id]
+    async def _get_leaves(client: httpx.AsyncClient, urn: str, depth: int = 0) -> list[str]:
+        """Recursively get leaf-level chapters via gettext endpoint."""
+        if depth > 5:
+            return [urn]
         try:
             resp = await client.get(
-                f"https://api.ctext.org/gettextinfo?urn=ctp:{text_id}",
+                f"https://api.ctext.org/gettext?urn={urn}",
                 headers={"User-Agent": USER_AGENT},
             )
             if resp.status_code != 200:
-                return [text_id]
-            info = resp.json()
-            subs = info.get("subsections", [])
+                return [urn]
+            data = resp.json()
+            subs = data.get("subsections", [])
             if not subs:
-                return [text_id]
-            all_leaves = []
+                return [urn]
+            all_leaves: list[str] = []
             for sub in subs:
-                sub_name = sub if isinstance(sub, str) else ""
-                if not sub_name:
+                if not isinstance(sub, str):
                     continue
-                full_path = f"{text_id}/{sub_name}"
-                child_subs = await _get_subsections(client, full_path, depth + 1)
-                all_leaves.extend(child_subs)
-                await asyncio.sleep(0.5)
-            return all_leaves if all_leaves else [text_id]
-        except Exception:
-            return [text_id]
+                child_leaves = await _get_leaves(client, sub, depth + 1)
+                all_leaves.extend(child_leaves)
+                await asyncio.sleep(0.3)
+            return all_leaves if all_leaves else [urn]
+        except Exception as exc:
+            logger.warning("CText subsection error for %s: %s", urn, exc)
+            return [urn]
 
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
         for text_id in CTEXT_PRE_QIN:
             if total >= max_pages:
                 break
             try:
-                leaves = await _get_subsections(client, text_id)
+                urn = f"ctp:{text_id}"
+                leaves = await _get_leaves(client, urn)
                 batch: list[DiscoveredPage] = []
-                for leaf in leaves:
+                for leaf_urn in leaves:
+                    path = leaf_urn.removeprefix("ctp:")
                     batch.append(DiscoveredPage(
-                        url=f"https://ctext.org/{leaf}",
-                        external_id=f"ctext-{leaf.replace('/', '-')}",
-                        title=leaf[:300],
+                        url=f"https://ctext.org/{path}",
+                        external_id=f"ctext::{path}",
+                        title=path[:300],
                         content_hint="chinese_classic",
                         depth=0,
                     ))
@@ -481,7 +482,7 @@ async def stream_ctext(max_pages: int = 100_000) -> AsyncIterator[DiscoveryBatch
                         break
                 if batch:
                     yield DiscoveryBatch(batch, 1, 0, False)
-                    logger.info("CText %s: %d chapters found (total: %d)", text_id, len(batch), total)
+                    logger.info("CText %s: %d chapters (total: %d)", text_id, len(batch), total)
                 await asyncio.sleep(0.5)
             except Exception as exc:
                 logger.error("CText error for %s: %s", text_id, exc)
@@ -539,36 +540,57 @@ async def stream_suttacentral(max_pages: int = 100_000) -> AsyncIterator[Discove
 # ---------------------------------------------------------------------------
 
 async def stream_oracc(max_pages: int = 100_000) -> AsyncIterator[DiscoveryBatch]:
+    import ssl
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+
     total = 0
-    async with httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=True, verify=False) as client:
+    base = "https://oracc.museum.upenn.edu"
+    async with httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=True, verify=ctx) as client:
         try:
-            resp = await client.get("http://oracc.org/projects.json", headers={"User-Agent": USER_AGENT})
+            resp = await client.get(f"{base}/projects.json", headers={"User-Agent": USER_AGENT})
             if resp.status_code != 200:
+                logger.warning("ORACC projects.json: HTTP %d", resp.status_code)
                 yield DiscoveryBatch([], 1, 1, True); return
-            projects = resp.json()
-            project_list = projects.get("projects", {}).keys() if isinstance(projects.get("projects"), dict) else []
+            projects_data = resp.json()
+            project_slugs = projects_data.get("public", [])
+            if not isinstance(project_slugs, list):
+                project_slugs = list(projects_data.get("projects", {}).keys())
         except Exception as exc:
             logger.error("ORACC projects error: %s", exc)
             yield DiscoveryBatch([], 1, 1, True); return
 
-        for proj in project_list:
+        for proj in project_slugs:
             if total >= max_pages:
                 break
+            if "/" in proj:
+                continue
             try:
                 cat_resp = await client.get(
-                    f"http://oracc.org/{proj}/catalogue.json",
+                    f"{base}/{proj}/catalogue.json",
                     headers={"User-Agent": USER_AGENT},
                 )
                 if cat_resp.status_code != 200:
                     continue
-                cat = cat_resp.json()
+                raw = cat_resp.content
+                if not raw:
+                    continue
+                try:
+                    cat = cat_resp.json()
+                except Exception:
+                    import gzip
+                    try:
+                        cat = __import__("json").loads(gzip.decompress(raw))
+                    except Exception:
+                        continue
                 members = cat.get("members", {})
 
                 batch: list[DiscoveredPage] = []
                 for text_id, text_info in members.items():
                     designation = text_info.get("designation", text_id) if isinstance(text_info, dict) else text_id
                     batch.append(DiscoveredPage(
-                        url=f"http://oracc.org/{proj}/{text_id}",
+                        url=f"{base}/{proj}/{text_id}",
                         external_id=f"oracc-{proj}-{text_id}",
                         title=f"{designation}"[:300],
                         content_hint="cuneiform_text",
@@ -580,7 +602,7 @@ async def stream_oracc(max_pages: int = 100_000) -> AsyncIterator[DiscoveryBatch
                 if batch:
                     yield DiscoveryBatch(batch, 1, 0, False)
                     logger.info("ORACC %s: %d texts (total: %d)", proj, len(batch), total)
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(0.3)
             except Exception as exc:
                 logger.error("ORACC catalogue error for %s: %s", proj, exc)
     yield DiscoveryBatch([], 0, 0, True)
@@ -861,15 +883,22 @@ async def stream_bsb_mdz(max_pages: int = 100_000) -> AsyncIterator[DiscoveryBat
 import xml.etree.ElementTree as ET
 
 GALLICA_QUERIES = [
-    "cunéiforme", "mésopotamie tablette", "papyrus égyptien",
-    "manuscrit ancien", "hiéroglyphe", "sumérien",
-    "babylonien", "assyrien", "qumran", "mer morte",
+    ("dc.title", "papyrus"), ("dc.title", "cunéiforme"), ("dc.title", "hiéroglyphe"),
+    ("dc.title", "mésopotamie"), ("dc.title", "babylone"), ("dc.title", "sumérien"),
+    ("dc.title", "égypte ancienne"), ("dc.title", "manuscrit hébreu"),
+    ("dc.title", "bible hébraïque"), ("dc.title", "torah"),
+    ("dc.subject", "cunéiforme"), ("dc.subject", "papyrus"),
+    ("dc.subject", "mésopotamie"), ("dc.subject", "hiéroglyphe"),
+    ("dc.subject", "sumérien"), ("dc.subject", "babylonien"),
+    ("dc.subject", "assyrien"), ("dc.subject", "qumran"),
+    ("dc.subject", "égyptologie"), ("dc.subject", "archéologie"),
+    ("dc.subject", "inscription"), ("dc.subject", "antiquité"),
 ]
 
 async def stream_gallica(max_pages: int = 100_000) -> AsyncIterator[DiscoveryBatch]:
     total = 0
     async with httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=True) as client:
-        for query in GALLICA_QUERIES:
+        for field, query in GALLICA_QUERIES:
             if total >= max_pages:
                 break
             start = 1
@@ -879,7 +908,7 @@ async def stream_gallica(max_pages: int = 100_000) -> AsyncIterator[DiscoveryBat
                         "https://gallica.bnf.fr/SRU",
                         params={
                             "version": "1.2", "operation": "searchRetrieve",
-                            "query": f'dc.subject all "{query}"',
+                            "query": f'{field} all "{query}"',
                             "maximumRecords": 50, "startRecord": start,
                         },
                         headers={"User-Agent": USER_AGENT},

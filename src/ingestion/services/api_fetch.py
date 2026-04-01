@@ -43,7 +43,7 @@ def api_fetch_url(slug: str, external_id: str) -> str | None:
         return None  # HTML scrape, no API URL
 
     if slug == "ctext":
-        path = external_id.removeprefix("ctext-").replace("-", "/")
+        path = external_id.removeprefix("ctext::")
         return f"https://api.ctext.org/gettext?urn=ctp:{path}"
 
     if slug == "suttacentral":
