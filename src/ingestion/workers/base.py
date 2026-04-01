@@ -17,6 +17,7 @@ from src.ingestion.models.queued_job import QueuedJob
 from src.ingestion.queue.manager import (
     claim_job,
     complete_job,
+    enqueue_next_stage,
     get_latest_checkpoint,
     heartbeat,
     save_checkpoint,
@@ -63,6 +64,9 @@ class BaseWorker(ABC):
 
             await complete_job(session, job.id, success=True)
             logger.info("Job %s succeeded", job.id)
+
+            await session.refresh(job)
+            await enqueue_next_stage(session, job)
 
         except Exception as exc:
             logger.exception("Job %s failed: %s", job.id, exc)

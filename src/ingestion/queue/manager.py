@@ -53,6 +53,14 @@ async def enqueue_job(
     return job
 
 
+def _stages_for_run_type(run_type: RunType) -> list[JobType]:
+    if run_type == RunType.DISCOVERY:
+        return [JobType.DISCOVER]
+    if run_type == RunType.REPROCESS:
+        return [JobType.NORMALIZE, JobType.SEGMENT, JobType.EMBED]
+    return list(PIPELINE_STAGES)
+
+
 async def create_source_run(
     session: AsyncSession,
     *,
@@ -61,7 +69,11 @@ async def create_source_run(
     requested_by: str | None = None,
     notes: str | None = None,
 ) -> SourceRun:
-    """Create a source run and enqueue all pipeline stage jobs."""
+    """Create a source run and enqueue the first pipeline stage.
+
+    Subsequent stages are enqueued by enqueue_next_stage() as each
+    stage completes, ensuring discovery finishes before fetch starts.
+    """
     run = SourceRun(
         trusted_source_id=trusted_source_id,
         run_type=run_type,
@@ -72,20 +84,14 @@ async def create_source_run(
     session.add(run)
     await session.flush()
 
-    stages = PIPELINE_STAGES
-    if run_type == RunType.DISCOVERY:
-        stages = [JobType.DISCOVER]
-    elif run_type == RunType.REPROCESS:
-        stages = [JobType.NORMALIZE, JobType.SEGMENT, JobType.EMBED]
-
-    for i, stage in enumerate(stages):
-        await enqueue_job(
-            session,
-            trusted_source_id=trusted_source_id,
-            job_type=stage,
-            source_run_id=run.id,
-            priority=100 + i,
-        )
+    stages = _stages_for_run_type(run_type)
+    await enqueue_job(
+        session,
+        trusted_source_id=trusted_source_id,
+        job_type=stages[0],
+        source_run_id=run.id,
+        priority=100,
+    )
 
     progress = await session.execute(
         select(SourceProgress).where(SourceProgress.trusted_source_id == trusted_source_id)
@@ -100,8 +106,48 @@ async def create_source_run(
         )
 
     await session.commit()
-    logger.info("Created source run %s [%s] with %d jobs", run.id, run_type.value, len(stages))
+    logger.info("Created source run %s [%s], queued first stage: %s", run.id, run_type.value, stages[0].value)
     return run
+
+
+async def enqueue_next_stage(
+    session: AsyncSession,
+    completed_job: QueuedJob,
+) -> QueuedJob | None:
+    """After a job succeeds, enqueue the next pipeline stage for this run."""
+    if not completed_job.source_run_id:
+        return None
+
+    run = await session.get(SourceRun, completed_job.source_run_id)
+    if not run:
+        return None
+
+    stages = _stages_for_run_type(run.run_type)
+    current_stage = completed_job.job_type
+
+    try:
+        idx = stages.index(current_stage)
+    except ValueError:
+        return None
+
+    if idx + 1 >= len(stages):
+        run.status = RunStatus.SUCCEEDED
+        run.completed_at = datetime.now(timezone.utc)
+        await session.commit()
+        logger.info("Source run %s completed — all stages done", run.id)
+        return None
+
+    next_stage = stages[idx + 1]
+    job = await enqueue_job(
+        session,
+        trusted_source_id=completed_job.trusted_source_id,
+        job_type=next_stage,
+        source_run_id=run.id,
+        priority=100 + idx + 1,
+    )
+    await session.commit()
+    logger.info("Source run %s: stage %s done, queued next stage %s", run.id, current_stage.value, next_stage.value)
+    return job
 
 
 async def claim_job(
