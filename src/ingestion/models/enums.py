@@ -165,6 +165,14 @@ class RunType(str, enum.Enum):
     REPROCESS = "reprocess"
 
 
+class IntakeStatus(str, enum.Enum):
+    PENDING = "pending"
+    FETCHING = "fetching"
+    ANALYZING = "analyzing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
 class RunStatus(str, enum.Enum):
     QUEUED = "queued"
     RUNNING = "running"

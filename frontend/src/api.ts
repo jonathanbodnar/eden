@@ -116,6 +116,42 @@ export interface ContextStats {
   by_extraction_method: Record<string, number>;
 }
 
+export interface IntakeSuggestedSource {
+  name: string;
+  slug: string;
+  domain: string;
+  base_url: string;
+  source_category: string;
+  trust_tier: string;
+  ingestion_method: string;
+  parser_type: string;
+  priority: number;
+  default_language: string;
+  rate_limit_rpm: number;
+  crawl_frequency_hours: number;
+  license_notes: string;
+  notes: string;
+  is_secondary_source: boolean;
+}
+
+export interface FieldConfidence {
+  [key: string]: number;
+}
+
+export interface IntakeDomainGroup {
+  domain: string;
+  urls: string[];
+  suggested_source: IntakeSuggestedSource;
+  confidence: FieldConfidence;
+  evidence: string[];
+}
+
+export interface IntakeAnalyzeResponse {
+  id: string;
+  groups: IntakeDomainGroup[];
+  status: string;
+}
+
 export const api = {
   // Sources
   listSources: (activeOnly = false) =>
@@ -138,6 +174,13 @@ export const api = {
     }),
   reprocessSource: (id: string) =>
     request<unknown>(`/sources/${id}/reprocess`, { method: "POST" }),
+
+  // Source Intake
+  analyzeIntake: (urls: string[]) =>
+    request<IntakeAnalyzeResponse>("/sources/intake/analyze", {
+      method: "POST",
+      body: JSON.stringify({ urls }),
+    }),
 
   // Jobs
   listJobs: (params?: { status?: string; job_type?: string; trusted_source_id?: string }) => {
