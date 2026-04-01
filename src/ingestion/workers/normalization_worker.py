@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -149,6 +150,10 @@ class NormalizationWorker(BaseWorker):
                     logger.warning("Failed to add date for %s: %s", raw_obj.external_id, exc)
 
         text_content = meta.get("text", "")
+        if text_content:
+            text_content = re.sub(r"<[^>]+>", " ", text_content)
+            text_content = text_content.replace("&nbsp;", " ").replace("&amp;", "&")
+            text_content = re.sub(r"\s+", " ", text_content).strip()
         if not text_content:
             text_content = self._synthesize_description(meta)
 
@@ -183,6 +188,12 @@ class NormalizationWorker(BaseWorker):
         for tr in meta.get("translations", []):
             if not isinstance(tr, dict) or not tr.get("text"):
                 continue
+            tr_text = tr["text"]
+            tr_text = re.sub(r"<[^>]+>", " ", tr_text)
+            tr_text = tr_text.replace("&nbsp;", " ").replace("&amp;", "&")
+            tr_text = re.sub(r"\s+", " ", tr_text).strip()
+            if not tr_text:
+                continue
             vtype = VersionType.ORIGINAL if tr.get("version_type") == "original" else VersionType.TRANSLATION
             tr_version = SourceVersion(
                 source_record_id=source_record.id,
@@ -191,7 +202,7 @@ class NormalizationWorker(BaseWorker):
                 translator_editor=tr.get("translator"),
                 copyright_status=copyright_status,
                 is_preferred=False,
-                text_extracted=tr["text"],
+                text_extracted=tr_text,
                 metadata_jsonb={"parser": source.parser_type.value, "translation_source": meta.get("source_api", "")},
             )
             session.add(tr_version)

@@ -171,6 +171,18 @@ class FetchWorker(BaseWorker):
                                 return (record, None, f"HTTP {resp.status_code} after 3 attempts")
 
                             if resp.status_code in (403, 404, 410):
+                                if resp.status_code == 404 and source.slug == "suttacentral":
+                                    uid = record.external_id.removeprefix("sc-")
+                                    fallback = f"https://suttacentral.net/api/bilarasuttas/{uid}"
+                                    try:
+                                        resp2 = await client.get(
+                                            fallback, follow_redirects=True,
+                                            headers={"Accept": "application/json", "User-Agent": "EdenBot/1.0"},
+                                        )
+                                        if resp2.status_code == 200:
+                                            return (record, resp2, None)
+                                    except Exception:
+                                        pass
                                 return (record, None, f"HTTP {resp.status_code} for {fetch_url}")
 
                             return (record, resp, None)

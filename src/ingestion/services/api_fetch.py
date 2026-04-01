@@ -18,6 +18,17 @@ logger = logging.getLogger(__name__)
 USER_AGENT = "EdenBot/1.0 (research ingestion platform)"
 
 
+def _strip_html(text: str) -> str:
+    """Remove HTML tags, decode entities, normalize whitespace."""
+    if not text:
+        return ""
+    text = re.sub(r"<br\s*/?>", "\n", text, flags=re.IGNORECASE)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = text.replace("&nbsp;", " ").replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
 def api_fetch_url(slug: str, external_id: str) -> str | None:
     """Return the JSON API URL for a given source slug + external_id.
 
@@ -48,7 +59,7 @@ def api_fetch_url(slug: str, external_id: str) -> str | None:
 
     if slug == "suttacentral":
         uid = external_id.removeprefix("sc-")
-        return f"https://suttacentral.net/api/suttaplex/{uid}"
+        return f"https://suttacentral.net/api/bilarasuttas/{uid}/sujato"
 
     if slug == "oracc":
         eid = external_id.removeprefix("oracc-")
@@ -653,59 +664,84 @@ def _flatten_text(obj) -> list[str]:
 # ---------------------------------------------------------------------------
 
 def parse_dss_html(html: str, external_id: str) -> dict:
-    """Parse structured HTML from dssenglishbible.com into metadata."""
+    """Parse structured HTML from dssenglishbible.com into metadata.
+    
+    The page has a white-background TD containing: metadata header,
+    then the actual translation text with verse numbers.
+    """
     meta: dict = {"source_api": "dss-bible"}
 
-    lines = html.split("\n")
-    title = ""
+    scroll_id = external_id.removeprefix("dss-")
+    title_match = re.search(r"<title[^>]*>([^<]+)</title>", html, re.IGNORECASE)
+    title = title_match.group(1).replace("Biblical Dead Sea Scrolls -", "").strip() if title_match else ""
+    if not title:
+        title = f"Dead Sea Scroll {scroll_id}"
+    meta["title"] = title
+
+    content_section = ""
+    parts = html.split('bgcolor="white"')
+    if len(parts) < 2:
+        parts = html.split("bgcolor='white'")
+    if len(parts) >= 2:
+        content_section = parts[1]
+    else:
+        content_section = html
+
+    plain = re.sub(r"<[^>]+>", " ", content_section)
+    plain = re.sub(r"&nbsp;", " ", plain)
+    plain = re.sub(r"\s+", " ", plain).strip()
+
     language = "Hebrew"
     date_str = ""
     location = ""
-    contents = ""
+    contents_desc = ""
 
-    for line in lines:
-        stripped = line.strip()
-        if "_Language:" in stripped:
-            m = re.search(r"Language:\s*(\w+)", stripped)
-            if m:
-                language = m.group(1)
-        if "_Date:" in stripped:
-            m = re.search(r"Date:\s*(.+?)_", stripped)
-            if m:
-                date_str = m.group(1).strip()
-        if "_Location:" in stripped:
-            m = re.search(r"Location:\s*(.+?)_", stripped)
-            if m:
-                location = m.group(1).strip()
-        if "_Contents:" in stripped:
-            m = re.search(r"Contents:\s*(.+?)_", stripped)
-            if m:
-                contents = m.group(1).strip()
+    lang_m = re.search(r"Language:\s*(\w+)", plain)
+    if lang_m:
+        language = lang_m.group(1)
+    date_m = re.search(r"Date:\s*(.+?)(?:Location:|Contents:|$)", plain)
+    if date_m:
+        date_str = date_m.group(1).strip().rstrip("_").strip()
+    loc_m = re.search(r"Location:\s*(.+?)(?:Contents:|$)", plain)
+    if loc_m:
+        location = loc_m.group(1).strip().rstrip("_").strip()
+    cont_m = re.search(r"Contents:\s*(.+?)(?:\d+:\d+|\d+\s+[A-Z])", plain)
+    if cont_m:
+        contents_desc = cont_m.group(1).strip().rstrip("_").strip()
 
-    scroll_id = external_id.removeprefix("dss-")
-    import re as _re
-    title_match = _re.search(r"<title[^>]*>([^<]+)</title>", html, _re.IGNORECASE)
-    if title_match:
-        title = title_match.group(1).replace("Biblical Dead Sea Scrolls -", "").strip()
-    if not title:
-        title = f"Dead Sea Scroll {scroll_id}"
-
-    meta["title"] = title
     meta["language_family"] = language
     meta["origin_place"] = location if location else "Qumran"
-    meta["contents_coverage"] = contents
+    meta["contents_coverage"] = contents_desc
 
-    text_parts = []
-    in_text = False
-    for line in lines:
-        if "<td" in line.lower() and "translation" not in line.lower():
-            in_text = True
-        if in_text:
-            clean = re.sub(r"<[^>]+>", "", line).strip()
-            if clean:
-                text_parts.append(clean)
+    verse_chunks = re.split(r"(?=\d+:\d+\s)", plain)
+    translation_lines = []
+    for chunk in verse_chunks:
+        vm = re.match(r"(\d+:\d+)\s+(.*)", chunk)
+        if vm:
+            ref = vm.group(1)
+            text = vm.group(2).strip()
+            text = re.sub(r"\[\.+\]", "[...]", text)
+            if text and len(text) > 3:
+                translation_lines.append(f"{ref} {text}")
 
-    meta["text"] = "\n".join(text_parts)
+    if not translation_lines:
+        single_verse = re.split(r"(?=\d+\s+[A-Z])", plain)
+        for chunk in single_verse:
+            vm = re.match(r"(\d+)\s+([A-Z].*)", chunk)
+            if vm and len(vm.group(2)) > 5:
+                translation_lines.append(f"{vm.group(1)} {vm.group(2).strip()}")
+
+    meta["text"] = "\n".join(translation_lines)
+
+    translations = []
+    if translation_lines:
+        translations.append({
+            "language": "English",
+            "text": "\n".join(translation_lines),
+            "translator": "Craig Davis",
+            "version_type": "translation",
+        })
+    meta["translations"] = translations
 
     dates = []
     if date_str:
@@ -758,27 +794,48 @@ def _parse_ctext(data: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 def _parse_suttacentral(data: dict) -> dict:
-    if isinstance(data, list):
-        data = data[0] if data else {}
-    meta: dict = {"_raw": data, "source_api": "suttacentral"}
-    meta["title"] = data.get("translated_title") or data.get("original_title") or data.get("uid", "")
+    meta: dict = {"_raw": {k: v for k, v in data.items() if k != "html_text"}, "source_api": "suttacentral"}
     meta["language_family"] = "Pali"
-
-    blurb = data.get("blurb", "")
-    if blurb:
-        meta["text"] = blurb
-
     meta["is_public_domain"] = True
 
+    keys_order = data.get("keys_order", [])
+    translation_text = data.get("translation_text", {})
+    root_text = data.get("root_text", {})
+
+    if keys_order and translation_text:
+        title_key = keys_order[1] if len(keys_order) > 1 else keys_order[0]
+        meta["title"] = translation_text.get(title_key, "").strip()
+    elif keys_order and root_text:
+        title_key = keys_order[1] if len(keys_order) > 1 else keys_order[0]
+        meta["title"] = root_text.get(title_key, "").strip()
+
+    en_parts = []
+    pali_parts = []
+    for key in keys_order:
+        en_val = translation_text.get(key, "").strip()
+        if en_val:
+            en_parts.append(en_val)
+        pali_val = root_text.get(key, "").strip()
+        if pali_val:
+            pali_parts.append(pali_val)
+
+    en_text = "\n".join(en_parts)
+    pali_text = "\n".join(pali_parts)
+
+    meta["text"] = en_text if en_text else pali_text
+
     translations = []
-    for tr in data.get("translations", []):
-        if isinstance(tr, dict) and tr.get("lang") == "en":
-            translations.append({
-                "language": "English",
-                "translator": tr.get("author", ""),
-                "url": f"https://suttacentral.net/api/bilaratexts/{data.get('uid', '')}/{tr.get('author_uid', '')}",
-            })
+    if pali_text:
+        translations.append({"language": "Pali", "text": pali_text, "version_type": "original"})
+    if en_text:
+        translations.append({"language": "English", "text": en_text, "translator": "Bhikkhu Sujato"})
     meta["translations"] = translations
+
+    meta["dates"] = [{
+        "type": "composition", "start": -500, "end": -200,
+        "label": "Pali Canon (c. 5th-3rd century BC)",
+        "confidence": "approximate",
+    }]
 
     return meta
 
@@ -864,11 +921,11 @@ def _parse_internet_archive(data: dict) -> dict:
     meta_raw = data.get("metadata", data)
     meta: dict = {"_raw": data, "source_api": "internet_archive"}
 
-    meta["title"] = meta_raw.get("title", "")
+    meta["title"] = _strip_html(meta_raw.get("title", ""))
     desc = meta_raw.get("description", "")
     if isinstance(desc, list):
-        desc = " ".join(desc)
-    meta["text"] = desc[:5000] if desc else ""
+        desc = " ".join(str(d) for d in desc)
+    meta["text"] = _strip_html(desc)[:5000] if desc else ""
 
     subjects = meta_raw.get("subject", [])
     if isinstance(subjects, str):
