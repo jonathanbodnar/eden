@@ -92,19 +92,14 @@ class DiscoveryWorker(BaseWorker):
                 new_count += 1
 
             await session.flush()
-            await self.maybe_checkpoint(
-                session, job,
-                checkpoint_type="discovery",
-                records_processed=new_count + skipped_count,
-                stage_percent=None,
-            )
 
             if new_count % 1000 < 100:
                 await update_source_progress(
                     session, source.id, discovered_count=new_count,
                 )
+                await session.commit()
                 logger.info(
-                    "Discovery streaming %s: %d new, %d skipped so far",
+                    "Discovery streaming %s: %d new, %d skipped (committed)",
                     source.slug, new_count, skipped_count,
                 )
 
