@@ -97,98 +97,75 @@ class FetchWorker(BaseWorker):
         job: QueuedJob,
         checkpoint: JobCheckpoint | None,
     ) -> None:
+        from src.ingestion.queue.manager import is_upstream_done
+
         source = await session.get(TrustedSource, job.trusted_source_id)
         if not source or not source.active:
             logger.warning("Source %s not active, skipping fetch", job.trusted_source_id)
             return
 
-        last_external_id = None
         records_processed = 0
         bytes_processed = 0
         if checkpoint:
-            last_external_id = checkpoint.external_id_last_processed
             records_processed = checkpoint.records_processed
             bytes_processed = checkpoint.bytes_processed
-            logger.info("Resuming fetch from %s (%d done)", last_external_id, records_processed)
+            logger.info("Resuming fetch (%d already done)", records_processed)
 
-        query = select(DiscoveredRecord).where(
-            DiscoveredRecord.trusted_source_id == source.id,
-            DiscoveredRecord.status == DiscoveredRecordStatus.NEW,
-        ).order_by(DiscoveredRecord.external_id)
-
-        if last_external_id:
-            query = query.where(DiscoveredRecord.external_id > last_external_id)
-
-        result = await session.execute(query)
-        records = result.scalars().all()
-
-        total = len(records) + records_processed
-        logger.info("Fetching %d records for %s", len(records), source.slug)
+        is_api_source = source.ingestion_method == IngestionMethod.API
+        empty_polls = 0
 
         async with httpx.AsyncClient(timeout=60.0) as client:
-            for record in records:
-                try:
-                    await self._fetch_record(session, client, source, record)
-                    records_processed += 1
-                    bytes_downloaded = 0
-
-                    await session.execute(
-                        update(DiscoveredRecord)
-                        .where(DiscoveredRecord.id == record.id)
-                        .values(status=DiscoveredRecordStatus.FETCHED)
-                    )
-
-                except Exception as exc:
-                    logger.error("Failed to fetch %s: %s", record.external_id, exc)
-                    await session.execute(
-                        update(DiscoveredRecord)
-                        .where(DiscoveredRecord.id == record.id)
-                        .values(status=DiscoveredRecordStatus.FAILED)
-                    )
-
-                if records_processed % 25 == 0:
-                    await update_source_progress(
-                        session, source.id, fetched_count=records_processed,
-                    )
-                    await session.commit()
-                    logger.info(
-                        "Fetch %s: %d/%d done (committed)",
-                        source.slug, records_processed, total,
-                    )
-
-                await self.maybe_checkpoint(
-                    session, job,
-                    checkpoint_type="fetch",
-                    external_id_last_processed=record.external_id,
-                    records_processed=records_processed,
-                    records_total_estimate=total,
-                    bytes_processed=bytes_processed,
-                    stage_percent=(records_processed / total * 100) if total else None,
+            while True:
+                result = await session.execute(
+                    select(DiscoveredRecord).where(
+                        DiscoveredRecord.trusted_source_id == source.id,
+                        DiscoveredRecord.status == DiscoveredRecordStatus.NEW,
+                    ).order_by(DiscoveredRecord.external_id).limit(50)
                 )
+                batch = result.scalars().all()
 
-                is_api_source = source.ingestion_method == IngestionMethod.API
-                if is_api_source:
-                    delay = 0.2
-                else:
-                    delay = settings.default_fetch_delay_seconds
-                if source.rate_limit_rpm:
-                    delay = max(delay, 60.0 / source.rate_limit_rpm)
-                await asyncio.sleep(delay)
+                if not batch:
+                    upstream_done = await is_upstream_done(session, job.source_run_id, job.job_type)
+                    if upstream_done:
+                        empty_polls += 1
+                        if empty_polls >= 2:
+                            logger.info("Fetch %s: upstream done, no more records", source.slug)
+                            break
+                    await asyncio.sleep(5.0)
+                    continue
 
-        await self.maybe_checkpoint(
-            session, job,
-            checkpoint_type="fetch",
-            records_processed=records_processed,
-            records_total_estimate=total,
-            bytes_processed=bytes_processed,
-            stage_percent=100.0,
-            force=True,
-        )
+                empty_polls = 0
+                for record in batch:
+                    try:
+                        await self._fetch_record(session, client, source, record)
+                        records_processed += 1
+                        await session.execute(
+                            update(DiscoveredRecord)
+                            .where(DiscoveredRecord.id == record.id)
+                            .values(status=DiscoveredRecordStatus.FETCHED)
+                        )
+                    except Exception as exc:
+                        logger.error("Failed to fetch %s: %s", record.external_id, exc)
+                        await session.execute(
+                            update(DiscoveredRecord)
+                            .where(DiscoveredRecord.id == record.id)
+                            .values(status=DiscoveredRecordStatus.FAILED)
+                        )
+
+                    if is_api_source:
+                        await asyncio.sleep(0.2)
+                    else:
+                        delay = settings.default_fetch_delay_seconds
+                        if source.rate_limit_rpm:
+                            delay = max(delay, 60.0 / source.rate_limit_rpm)
+                        await asyncio.sleep(delay)
+
+                await update_source_progress(session, source.id, fetched_count=records_processed)
+                await session.commit()
+                logger.info("Fetch %s: %d done (committed)", source.slug, records_processed)
 
         await update_source_progress(
-            session, source.id,
-            fetched_count=records_processed,
-            total_bytes_stored=bytes_processed,
+            session, source.id, fetched_count=records_processed,
         )
 
     async def _fetch_record(

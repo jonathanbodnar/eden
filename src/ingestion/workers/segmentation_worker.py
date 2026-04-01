@@ -42,82 +42,56 @@ class SegmentationWorker(BaseWorker):
         job: QueuedJob,
         checkpoint: JobCheckpoint | None,
     ) -> None:
+        from src.ingestion.queue.manager import is_upstream_done
+        import asyncio
+
         source = await session.get(TrustedSource, job.trusted_source_id)
         if not source:
             return
 
-        last_version_id = None
         records_processed = 0
         segments_created = 0
-        if checkpoint:
-            last_version_id = checkpoint.external_id_last_processed
-            records_processed = checkpoint.records_processed
-            if checkpoint.checkpoint_jsonb:
-                segments_created = checkpoint.checkpoint_jsonb.get("segments_created", 0)
+        empty_polls = 0
 
-        query = (
-            select(SourceVersion)
-            .join(SourceRecord, SourceVersion.source_record_id == SourceRecord.id)
-            .join(
-                self._raw_object_alias(),
-                SourceRecord.raw_object_id == self._raw_object_alias().c.id,
+        while True:
+            result = await session.execute(
+                select(SourceVersion)
+                .join(SourceRecord, SourceVersion.source_record_id == SourceRecord.id)
+                .where(SourceRecord.trusted_source_id == source.id)
+                .where(~SourceVersion.id.in_(
+                    select(Segment.source_version_id).distinct()
+                ))
+                .where(SourceVersion.text_extracted.isnot(None))
+                .where(SourceVersion.text_extracted != "")
+                .order_by(SourceVersion.created_at)
+                .limit(50)
             )
-            .where(self._raw_object_alias().c.trusted_source_id == source.id)
-            .order_by(SourceVersion.created_at)
-        )
+            batch = result.scalars().all()
 
-        result = await session.execute(
-            select(SourceVersion)
-            .order_by(SourceVersion.created_at)
-        )
-        versions = result.scalars().all()
-
-        skip = True if last_version_id else False
-
-        for version in versions:
-            if skip:
-                if str(version.id) == last_version_id:
-                    skip = False
+            if not batch:
+                upstream_done = await is_upstream_done(session, job.source_run_id, job.job_type)
+                if upstream_done:
+                    empty_polls += 1
+                    if empty_polls >= 2:
+                        logger.info("Segment %s: upstream done, no more records", source.slug)
+                        break
+                await asyncio.sleep(5.0)
                 continue
 
-            existing = await session.execute(
-                select(Segment).where(Segment.source_version_id == version.id).limit(1)
-            )
-            if existing.scalar_one_or_none():
-                records_processed += 1
-                continue
+            empty_polls = 0
+            for version in batch:
+                try:
+                    count = await self._segment_version(session, version)
+                    segments_created += count
+                    records_processed += 1
+                except Exception as exc:
+                    logger.error("Failed to segment version %s: %s", version.id, exc)
 
-            if not version.text_extracted:
-                records_processed += 1
-                continue
+            await update_source_progress(session, source.id, segmented_count=records_processed)
+            await session.commit()
+            logger.info("Segment %s: %d versions, %d segments (committed)", source.slug, records_processed, segments_created)
 
-            try:
-                count = await self._segment_version(session, version)
-                segments_created += count
-                records_processed += 1
-            except Exception as exc:
-                logger.error("Failed to segment version %s: %s", version.id, exc)
-
-            await self.maybe_checkpoint(
-                session, job,
-                checkpoint_type="segment",
-                external_id_last_processed=str(version.id),
-                records_processed=records_processed,
-                extra={"segments_created": segments_created},
-            )
-
-        await self.maybe_checkpoint(
-            session, job,
-            checkpoint_type="segment",
-            records_processed=records_processed,
-            stage_percent=100.0,
-            extra={"segments_created": segments_created},
-            force=True,
-        )
-
-        await update_source_progress(
-            session, source.id, segmented_count=records_processed
-        )
+        await update_source_progress(session, source.id, segmented_count=records_processed)
 
     @staticmethod
     def _raw_object_alias():

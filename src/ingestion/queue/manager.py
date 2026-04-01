@@ -69,10 +69,10 @@ async def create_source_run(
     requested_by: str | None = None,
     notes: str | None = None,
 ) -> SourceRun:
-    """Create a source run and enqueue the first pipeline stage.
+    """Create a source run and enqueue ALL pipeline stages concurrently.
 
-    Subsequent stages are enqueued by enqueue_next_stage() as each
-    stage completes, ensuring discovery finishes before fetch starts.
+    All stages are queued at once so workers can run in parallel.
+    Downstream workers poll for records as upstream produces them.
     """
     run = SourceRun(
         trusted_source_id=trusted_source_id,
@@ -85,13 +85,14 @@ async def create_source_run(
     await session.flush()
 
     stages = _stages_for_run_type(run_type)
-    await enqueue_job(
-        session,
-        trusted_source_id=trusted_source_id,
-        job_type=stages[0],
-        source_run_id=run.id,
-        priority=100,
-    )
+    for i, stage in enumerate(stages):
+        await enqueue_job(
+            session,
+            trusted_source_id=trusted_source_id,
+            job_type=stage,
+            source_run_id=run.id,
+            priority=100 + i,
+        )
 
     progress = await session.execute(
         select(SourceProgress).where(SourceProgress.trusted_source_id == trusted_source_id)
@@ -106,7 +107,7 @@ async def create_source_run(
         )
 
     await session.commit()
-    logger.info("Created source run %s [%s], queued first stage: %s", run.id, run_type.value, stages[0].value)
+    logger.info("Created source run %s [%s], queued all %d stages", run.id, run_type.value, len(stages))
     return run
 
 
@@ -335,6 +336,31 @@ async def recover_stalled_jobs(session: AsyncSession) -> int:
     if count:
         logger.warning("Recovered %d stalled jobs", count)
     return count
+
+
+async def is_upstream_done(
+    session: AsyncSession,
+    source_run_id: uuid.UUID,
+    current_stage: JobType,
+) -> bool:
+    """Check if the upstream pipeline stage has completed for this run."""
+    stages = list(PIPELINE_STAGES)
+    try:
+        idx = stages.index(current_stage)
+    except ValueError:
+        return True
+    if idx == 0:
+        return True
+
+    upstream = stages[idx - 1]
+    result = await session.execute(
+        select(QueuedJob.status).where(
+            QueuedJob.source_run_id == source_run_id,
+            QueuedJob.job_type == upstream,
+        )
+    )
+    status = result.scalar_one_or_none()
+    return status in (JobStatus.SUCCEEDED, JobStatus.FAILED, JobStatus.CANCELED, None)
 
 
 async def update_source_progress(

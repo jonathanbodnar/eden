@@ -73,67 +73,48 @@ class EmbeddingWorker(BaseWorker):
         job: QueuedJob,
         checkpoint: JobCheckpoint | None,
     ) -> None:
-        last_segment_id = None
+        import asyncio
+        from src.ingestion.queue.manager import is_upstream_done
+
         records_processed = 0
-        if checkpoint:
-            last_segment_id = checkpoint.external_id_last_processed
-            records_processed = checkpoint.records_processed
+        empty_polls = 0
 
-        query = (
-            select(Segment)
-            .where(Segment.review_status != ReviewStatus.REJECTED)
-            .order_by(Segment.created_at)
-        )
-
-        result = await session.execute(query)
-        segments = result.scalars().all()
-
-        skip = True if last_segment_id else False
-        to_embed = []
-
-        for seg in segments:
-            if skip:
-                if str(seg.id) == last_segment_id:
-                    skip = False
-                continue
-
-            existing = await session.execute(
-                select(Embedding).where(Embedding.segment_id == seg.id).limit(1)
-            )
-            if existing.scalar_one_or_none():
-                records_processed += 1
-                continue
-
-            text = seg.normalized_text or seg.original_text
-            if not text or not text.strip():
-                records_processed += 1
-                continue
-
-            to_embed.append(seg)
-
-            if len(to_embed) >= BATCH_SIZE:
-                await self._embed_batch(session, to_embed)
-                records_processed += len(to_embed)
-                to_embed = []
-
-                await self.maybe_checkpoint(
-                    session, job,
-                    checkpoint_type="embed",
-                    external_id_last_processed=str(seg.id),
-                    records_processed=records_processed,
+        while True:
+            result = await session.execute(
+                select(Segment)
+                .where(Segment.review_status != ReviewStatus.REJECTED)
+                .where(~Segment.id.in_(
+                    select(Embedding.segment_id)
+                ))
+                .where(
+                    (Segment.normalized_text.isnot(None)) & (Segment.normalized_text != "")
+                    | (Segment.original_text.isnot(None)) & (Segment.original_text != "")
                 )
+                .order_by(Segment.created_at)
+                .limit(BATCH_SIZE)
+            )
+            batch = result.scalars().all()
 
-        if to_embed:
-            await self._embed_batch(session, to_embed)
-            records_processed += len(to_embed)
+            if not batch:
+                upstream_done = await is_upstream_done(session, job.source_run_id, job.job_type)
+                if upstream_done:
+                    empty_polls += 1
+                    if empty_polls >= 2:
+                        logger.info("Embed: upstream done, no more segments")
+                        break
+                await asyncio.sleep(5.0)
+                continue
 
-        await self.maybe_checkpoint(
-            session, job,
-            checkpoint_type="embed",
-            records_processed=records_processed,
-            stage_percent=100.0,
-            force=True,
-        )
+            empty_polls = 0
+            try:
+                await self._embed_batch(session, batch)
+                records_processed += len(batch)
+                await session.commit()
+                logger.info("Embed: %d segments embedded (committed)", records_processed)
+            except Exception as exc:
+                logger.error("Embedding batch failed: %s", exc)
+                await session.rollback()
+                await asyncio.sleep(10.0)
 
         await update_source_progress(
             session,

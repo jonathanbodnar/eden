@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from sqlalchemy import select
@@ -39,75 +40,54 @@ class NormalizationWorker(BaseWorker):
         job: QueuedJob,
         checkpoint: JobCheckpoint | None,
     ) -> None:
+        from src.ingestion.queue.manager import is_upstream_done
+
         source = await session.get(TrustedSource, job.trusted_source_id)
         if not source:
             return
 
-        last_raw_id = None
         records_processed = 0
         if checkpoint:
-            last_raw_id = checkpoint.external_id_last_processed
             records_processed = checkpoint.records_processed
 
-        query = (
-            select(RawObject)
-            .where(RawObject.trusted_source_id == source.id)
-            .order_by(RawObject.fetched_at)
-        )
+        empty_polls = 0
 
-        result = await session.execute(query)
-        raw_objects = result.scalars().all()
+        while True:
+            from sqlalchemy.orm import aliased
+            result = await session.execute(
+                select(RawObject)
+                .where(RawObject.trusted_source_id == source.id)
+                .where(~RawObject.id.in_(
+                    select(SourceRecord.raw_object_id).where(SourceRecord.raw_object_id.isnot(None))
+                ))
+                .order_by(RawObject.fetched_at)
+                .limit(50)
+            )
+            batch = result.scalars().all()
 
-        skip = True if last_raw_id else False
-        total = len(raw_objects)
-
-        for raw_obj in raw_objects:
-            if skip:
-                if str(raw_obj.id) == last_raw_id:
-                    skip = False
+            if not batch:
+                upstream_done = await is_upstream_done(session, job.source_run_id, job.job_type)
+                if upstream_done:
+                    empty_polls += 1
+                    if empty_polls >= 2:
+                        logger.info("Normalize %s: upstream done, no more records", source.slug)
+                        break
+                await asyncio.sleep(5.0)
                 continue
 
-            existing = await session.execute(
-                select(SourceRecord).where(SourceRecord.raw_object_id == raw_obj.id)
-            )
-            if existing.scalar_one_or_none():
-                records_processed += 1
-                continue
+            empty_polls = 0
+            for raw_obj in batch:
+                try:
+                    await self._normalize_raw_object(session, source, raw_obj)
+                    records_processed += 1
+                except Exception as exc:
+                    logger.error("Failed to normalize %s: %s", raw_obj.id, exc)
 
-            try:
-                await self._normalize_raw_object(session, source, raw_obj)
-                records_processed += 1
-            except Exception as exc:
-                logger.error("Failed to normalize raw object %s: %s", raw_obj.id, exc)
+            await update_source_progress(session, source.id, normalized_count=records_processed)
+            await session.commit()
+            logger.info("Normalize %s: %d done (committed)", source.slug, records_processed)
 
-            if records_processed % 50 == 0:
-                await update_source_progress(
-                    session, source.id, normalized_count=records_processed,
-                )
-                await session.commit()
-                logger.info("Normalize %s: %d/%d done (committed)", source.slug, records_processed, total)
-
-            await self.maybe_checkpoint(
-                session, job,
-                checkpoint_type="normalize",
-                external_id_last_processed=str(raw_obj.id),
-                records_processed=records_processed,
-                records_total_estimate=total,
-                stage_percent=(records_processed / total * 100) if total else None,
-            )
-
-        await self.maybe_checkpoint(
-            session, job,
-            checkpoint_type="normalize",
-            records_processed=records_processed,
-            records_total_estimate=total,
-            stage_percent=100.0,
-            force=True,
-        )
-
-        await update_source_progress(
-            session, source.id, normalized_count=records_processed
-        )
+        await update_source_progress(session, source.id, normalized_count=records_processed)
 
     async def _normalize_raw_object(
         self,

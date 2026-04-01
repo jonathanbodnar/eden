@@ -7,7 +7,9 @@ import logging
 import time
 import uuid
 from abc import ABC, abstractmethod
+from datetime import datetime, timezone
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.ingestion.config import settings
@@ -17,9 +19,9 @@ from src.ingestion.models.queued_job import QueuedJob
 from src.ingestion.queue.manager import (
     claim_job,
     complete_job,
-    enqueue_next_stage,
     get_latest_checkpoint,
     heartbeat,
+    is_upstream_done,
     save_checkpoint,
 )
 
@@ -92,11 +94,23 @@ class BaseWorker(ABC):
         if success and source_run_id:
             try:
                 async with async_session_factory() as next_session:
-                    refreshed = await next_session.get(QueuedJob, job_id)
-                    if refreshed:
-                        await enqueue_next_stage(next_session, refreshed)
+                    from src.ingestion.models.source_run import SourceRun
+                    from src.ingestion.models.enums import RunStatus
+                    run = await next_session.get(SourceRun, source_run_id)
+                    if run:
+                        all_done = await next_session.execute(
+                            select(QueuedJob).where(
+                                QueuedJob.source_run_id == source_run_id,
+                                QueuedJob.status.in_([JobStatus.QUEUED, JobStatus.RUNNING]),
+                            )
+                        )
+                        if not all_done.scalars().first():
+                            run.status = RunStatus.SUCCEEDED
+                            run.completed_at = datetime.now(timezone.utc)
+                            await next_session.commit()
+                            logger.info("Source run %s completed — all stages done", source_run_id)
             except Exception:
-                logger.exception("Failed to enqueue next stage after job %s", job_id)
+                logger.exception("Failed to check run completion for %s", source_run_id)
 
     async def _heartbeat_loop(self, job_id: uuid.UUID) -> None:
         interval = settings.worker_heartbeat_interval_seconds
