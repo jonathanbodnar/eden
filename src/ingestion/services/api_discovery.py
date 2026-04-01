@@ -355,9 +355,37 @@ DSS_SCROLLS = [
 ]
 
 async def stream_dss_bible(max_pages: int = 100_000) -> AsyncIterator[DiscoveryBatch]:
+    import re
+    total = 0
+    seen = set()
+    async with httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=True) as client:
+        try:
+            resp = await client.get("https://dssenglishbible.com/index.htm", headers={"User-Agent": USER_AGENT})
+            if resp.status_code == 200:
+                book_pages = re.findall(r'href="(Scrolls?\w+\.htm)"', resp.text, re.IGNORECASE)
+                for bp in book_pages:
+                    try:
+                        bp_resp = await client.get(f"https://dssenglishbible.com/{bp}", headers={"User-Agent": USER_AGENT})
+                        if bp_resp.status_code != 200:
+                            continue
+                        scroll_links = re.findall(r'href="(scroll\w+\.htm)"', bp_resp.text, re.IGNORECASE)
+                        for sl in scroll_links:
+                            scroll_id = sl.replace("scroll", "").replace("Scroll", "").replace(".htm", "")
+                            if scroll_id in seen:
+                                continue
+                            seen.add(scroll_id)
+                        await asyncio.sleep(0.3)
+                    except Exception:
+                        pass
+        except Exception as exc:
+            logger.error("DSS index scrape error: %s", exc)
+
+    for scroll_id in DSS_SCROLLS:
+        seen.add(scroll_id)
+
     batch: list[DiscoveredPage] = []
-    for i, scroll_id in enumerate(DSS_SCROLLS):
-        if i >= max_pages:
+    for scroll_id in sorted(seen):
+        if total >= max_pages:
             break
         url = f"https://dssenglishbible.com/scroll{scroll_id}.htm"
         batch.append(DiscoveredPage(
@@ -367,7 +395,15 @@ async def stream_dss_bible(max_pages: int = 100_000) -> AsyncIterator[DiscoveryB
             content_hint="dead_sea_scroll",
             depth=0,
         ))
-    yield DiscoveryBatch(batch, 1, 0, True)
+        total += 1
+        if len(batch) >= 100:
+            yield DiscoveryBatch(batch, 1, 0, False)
+            batch = []
+
+    if batch:
+        yield DiscoveryBatch(batch, 1, 0, False)
+    logger.info("DSS Bible: discovered %d scrolls", total)
+    yield DiscoveryBatch([], 0, 0, True)
 
 
 # ---------------------------------------------------------------------------
@@ -383,34 +419,55 @@ CTEXT_PRE_QIN = [
     "chu-ci", "spring-and-autumn-annals", "erya",
     "liezi", "wenzi", "huainanzi", "lv-shi-chun-qiu",
     "shan-hai-jing", "guanzi",
+    "shiji", "warring-states-strategies", "bamboo-annals",
+    "yijing", "classic-of-filial-piety", "nei-ye",
+    "wen-xuan", "shenzi", "gongsun-longzi", "yin-wenzi",
+    "he-guanzi", "deng-xizi", "kongcongzi",
 ]
 
 async def stream_ctext(max_pages: int = 100_000) -> AsyncIterator[DiscoveryBatch]:
     total = 0
+
+    async def _get_subsections(client, text_id, depth=0):
+        """Recursively get all leaf-level subsections."""
+        if depth > 3:
+            return [text_id]
+        try:
+            resp = await client.get(
+                f"https://api.ctext.org/gettextinfo?urn=ctp:{text_id}",
+                headers={"User-Agent": USER_AGENT},
+            )
+            if resp.status_code != 200:
+                return [text_id]
+            info = resp.json()
+            subs = info.get("subsections", [])
+            if not subs:
+                return [text_id]
+            all_leaves = []
+            for sub in subs:
+                sub_name = sub if isinstance(sub, str) else ""
+                if not sub_name:
+                    continue
+                full_path = f"{text_id}/{sub_name}"
+                child_subs = await _get_subsections(client, full_path, depth + 1)
+                all_leaves.extend(child_subs)
+                await asyncio.sleep(0.5)
+            return all_leaves if all_leaves else [text_id]
+        except Exception:
+            return [text_id]
+
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
         for text_id in CTEXT_PRE_QIN:
             if total >= max_pages:
                 break
             try:
-                resp = await client.get(
-                    f"https://api.ctext.org/gettextinfo?urn=ctp:{text_id}",
-                    headers={"User-Agent": USER_AGENT},
-                )
-                if resp.status_code != 200:
-                    continue
-                info = resp.json()
-                subsections = info.get("subsections", [])
-                if not subsections:
-                    subsections = [text_id]
-
+                leaves = await _get_subsections(client, text_id)
                 batch: list[DiscoveredPage] = []
-                for sub in subsections:
-                    sub_name = sub if isinstance(sub, str) else sub.get("urn", "")
-                    urn = f"ctp:{text_id}/{sub_name}" if "/" not in sub_name else f"ctp:{sub_name}"
+                for leaf in leaves:
                     batch.append(DiscoveredPage(
-                        url=f"https://ctext.org/{text_id}/{sub_name}" if isinstance(sub, str) else f"https://ctext.org/{sub_name}",
-                        external_id=f"ctext-{text_id}-{sub_name}",
-                        title=f"{text_id} / {sub_name}"[:300],
+                        url=f"https://ctext.org/{leaf}",
+                        external_id=f"ctext-{leaf.replace('/', '-')}",
+                        title=leaf[:300],
                         content_hint="chinese_classic",
                         depth=0,
                     ))
@@ -419,7 +476,8 @@ async def stream_ctext(max_pages: int = 100_000) -> AsyncIterator[DiscoveryBatch
                         break
                 if batch:
                     yield DiscoveryBatch(batch, 1, 0, False)
-                await asyncio.sleep(1.0)
+                    logger.info("CText %s: %d chapters found (total: %d)", text_id, len(batch), total)
+                await asyncio.sleep(0.5)
             except Exception as exc:
                 logger.error("CText error for %s: %s", text_id, exc)
     yield DiscoveryBatch([], 0, 0, True)
@@ -477,7 +535,7 @@ async def stream_suttacentral(max_pages: int = 100_000) -> AsyncIterator[Discove
 
 async def stream_oracc(max_pages: int = 100_000) -> AsyncIterator[DiscoveryBatch]:
     total = 0
-    async with httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=True) as client:
+    async with httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=True, verify=False) as client:
         try:
             resp = await client.get("http://oracc.org/projects.json", headers={"User-Agent": USER_AGENT})
             if resp.status_code != 200:
@@ -527,10 +585,14 @@ async def stream_oracc(max_pages: int = 100_000) -> AsyncIterator[DiscoveryBatch
 # Library of Congress
 # ---------------------------------------------------------------------------
 
+LOC_COLLECTIONS = [
+    "ancient-near-eastern-seals",
+    "cuneiform-tablets",
+]
 LOC_QUERIES = [
-    "cuneiform tablet", "ancient mesopotamia inscription",
+    "cuneiform tablet", "ancient mesopotamia",
     "dead sea scrolls", "ancient egypt papyrus",
-    "sumerian text", "babylonian artifact",
+    "sumerian", "babylonian",
 ]
 
 async def stream_loc(max_pages: int = 100_000) -> AsyncIterator[DiscoveryBatch]:
@@ -543,11 +605,20 @@ async def stream_loc(max_pages: int = 100_000) -> AsyncIterator[DiscoveryBatch]:
             while total < max_pages:
                 try:
                     resp = await client.get(
-                        "https://www.loc.gov/search/",
+                        "https://www.loc.gov/collections/",
                         params={"q": query, "fo": "json", "sp": page, "c": 100},
-                        headers={"User-Agent": USER_AGENT},
+                        headers={
+                            "User-Agent": "Mozilla/5.0 (compatible; EdenBot/1.0; research)",
+                            "Accept": "application/json",
+                        },
                     )
+                    if resp.status_code == 403:
+                        resp = await client.get(
+                            f"https://www.loc.gov/search/?q={query}&fo=json&sp={page}&c=50",
+                            headers={"User-Agent": "Mozilla/5.0 (compatible; EdenBot/1.0; research)"},
+                        )
                     if resp.status_code != 200:
+                        logger.warning("LoC HTTP %d for '%s'", resp.status_code, query)
                         break
                     data = resp.json()
                     results = data.get("results", [])
@@ -556,7 +627,7 @@ async def stream_loc(max_pages: int = 100_000) -> AsyncIterator[DiscoveryBatch]:
 
                     batch: list[DiscoveredPage] = []
                     for item in results:
-                        item_id = item.get("id", "")
+                        item_id = item.get("id", item.get("url", ""))
                         title = item.get("title", "")
                         if not item_id:
                             continue
@@ -564,7 +635,7 @@ async def stream_loc(max_pages: int = 100_000) -> AsyncIterator[DiscoveryBatch]:
                         batch.append(DiscoveredPage(
                             url=item_id if item_id.startswith("http") else f"https://www.loc.gov{item_id}",
                             external_id=f"loc-{ext_id}",
-                            title=title[:300],
+                            title=str(title)[:300],
                             content_hint=query,
                             depth=0,
                         ))
@@ -578,7 +649,7 @@ async def stream_loc(max_pages: int = 100_000) -> AsyncIterator[DiscoveryBatch]:
                     if page >= pagination.get("total", 1) or not results:
                         break
                     page += 1
-                    await asyncio.sleep(1.0)
+                    await asyncio.sleep(2.0)
                 except Exception as exc:
                     logger.error("LoC error for '%s' page %d: %s", query, page, exc)
                     break
@@ -711,7 +782,11 @@ async def stream_wikidata_artifacts(max_pages: int = 100_000) -> AsyncIterator[D
 # BSB/MDZ — Bavarian State Library (IIIF)
 # ---------------------------------------------------------------------------
 
-BSB_SEARCHES = ["cuneiform", "keilschrift", "papyrus ancient", "mesopotamia"]
+BSB_SEARCHES = [
+    "cuneiform", "keilschrift", "papyrus", "mesopotamia",
+    "ancient near east", "sumerian", "akkadian", "hieroglyphic",
+    "dead sea scrolls", "qumran",
+]
 
 async def stream_bsb_mdz(max_pages: int = 100_000) -> AsyncIterator[DiscoveryBatch]:
     total = 0
@@ -723,30 +798,37 @@ async def stream_bsb_mdz(max_pages: int = 100_000) -> AsyncIterator[DiscoveryBat
             while total < max_pages:
                 try:
                     resp = await client.get(
-                        "https://api.digitale-sammlungen.de/iiif/presentation/v2/search",
+                        "https://api.digitale-sammlungen.de/iiif/presentation/v2/collection/search",
                         params={"q": query, "start": offset, "rows": 100},
                         headers={"User-Agent": USER_AGENT},
                     )
                     if resp.status_code != 200:
+                        resp = await client.get(
+                            "https://api.digitale-sammlungen.de/search",
+                            params={"q": query, "start": offset, "rows": 100, "format": "json"},
+                            headers={"User-Agent": USER_AGENT},
+                        )
+                    if resp.status_code != 200:
+                        logger.warning("BSB/MDZ %d for '%s'", resp.status_code, query)
                         break
                     data = resp.json()
-                    manifests = data.get("manifests", data.get("members", []))
+                    manifests = data.get("manifests", data.get("members", data.get("items", data.get("results", []))))
                     if not manifests:
                         break
 
                     batch: list[DiscoveredPage] = []
                     for m in manifests:
-                        m_id = m.get("@id", "")
-                        label = m.get("label", "")
+                        m_id = m.get("@id", m.get("id", m.get("manifest", "")))
+                        label = m.get("label", m.get("title", ""))
                         if isinstance(label, list):
                             label = label[0] if label else ""
                         if isinstance(label, dict):
-                            label = label.get("@value", "")
+                            label = label.get("@value", label.get("en", [label])[0] if "en" in label else "")
                         ext_id = m_id.rsplit("/", 1)[-1] if m_id else ""
                         if not ext_id:
                             continue
                         batch.append(DiscoveredPage(
-                            url=m_id,
+                            url=m_id if m_id.startswith("http") else f"https://api.digitale-sammlungen.de/iiif/presentation/v2/{ext_id}/manifest",
                             external_id=f"bsb-{ext_id}",
                             title=str(label)[:300],
                             content_hint="iiif_manuscript",
@@ -773,7 +855,11 @@ async def stream_bsb_mdz(max_pages: int = 100_000) -> AsyncIterator[DiscoveryBat
 
 import xml.etree.ElementTree as ET
 
-GALLICA_QUERIES = ["cuneiform", "cunéiforme", "papyrus ancient", "mésopotamie tablette"]
+GALLICA_QUERIES = [
+    "cunéiforme", "mésopotamie tablette", "papyrus égyptien",
+    "manuscrit ancien", "hiéroglyphe", "sumérien",
+    "babylonien", "assyrien", "qumran", "mer morte",
+]
 
 async def stream_gallica(max_pages: int = 100_000) -> AsyncIterator[DiscoveryBatch]:
     total = 0
@@ -947,36 +1033,73 @@ async def stream_unesco_whc(max_pages: int = 100_000) -> AsyncIterator[Discovery
         while total < max_pages:
             try:
                 resp = await client.get(
-                    "https://data.unesco.org/api/explore/v2.0/catalog/datasets/whc001/records",
+                    "https://data.unesco.org/api/explore/v2.1/catalog/datasets/whc-sites/records",
                     params={"limit": 100, "offset": offset},
                     headers={"User-Agent": USER_AGENT},
                 )
                 if resp.status_code != 200:
+                    resp = await client.get(
+                        "https://data.unesco.org/api/explore/v2.0/catalog/datasets/whc001/records",
+                        params={"limit": 100, "offset": offset},
+                        headers={"User-Agent": USER_AGENT},
+                    )
+                if resp.status_code != 200:
+                    logger.warning("UNESCO API returned %d, trying WHC XML list", resp.status_code)
+                    resp = await client.get(
+                        "https://whc.unesco.org/en/list/xml/",
+                        headers={"User-Agent": USER_AGENT},
+                    )
+                    if resp.status_code == 200:
+                        import xml.etree.ElementTree as ET
+                        try:
+                            root = ET.fromstring(resp.content)
+                            batch: list[DiscoveredPage] = []
+                            for row in root.iter("row"):
+                                site_el = row.find("site")
+                                id_el = row.find("id_number")
+                                if id_el is not None and id_el.text:
+                                    site_id = id_el.text.strip()
+                                    name = site_el.text.strip() if site_el is not None and site_el.text else f"Site {site_id}"
+                                    batch.append(DiscoveredPage(
+                                        url=f"https://whc.unesco.org/en/list/{site_id}",
+                                        external_id=f"unesco-{site_id}",
+                                        title=name[:300],
+                                        content_hint="world_heritage_site",
+                                        depth=0,
+                                    ))
+                                    total += 1
+                                    if total >= max_pages:
+                                        break
+                            if batch:
+                                yield DiscoveryBatch(batch, 1, 0, False)
+                        except Exception as exc:
+                            logger.error("UNESCO XML parse error: %s", exc)
                     break
+
                 data = resp.json()
                 records = data.get("results", data.get("records", []))
                 if not records:
                     break
 
-                batch: list[DiscoveredPage] = []
+                batch_list: list[DiscoveredPage] = []
                 for rec in records:
                     fields = rec.get("record", {}).get("fields", rec.get("fields", rec))
-                    site_id = str(fields.get("id_number", fields.get("unique_number", "")))
-                    name = fields.get("name_en", fields.get("site", ""))
-                    if not site_id:
+                    site_id = str(fields.get("id_number", fields.get("unique_number", fields.get("id_no", ""))))
+                    name = fields.get("name_en", fields.get("site", fields.get("name", "")))
+                    if not site_id or site_id == "None":
                         continue
-                    batch.append(DiscoveredPage(
+                    batch_list.append(DiscoveredPage(
                         url=f"https://whc.unesco.org/en/list/{site_id}",
                         external_id=f"unesco-{site_id}",
-                        title=name[:300],
+                        title=str(name)[:300],
                         content_hint="world_heritage_site",
                         depth=0,
                     ))
                     total += 1
                     if total >= max_pages:
                         break
-                if batch:
-                    yield DiscoveryBatch(batch, 1, 0, False)
+                if batch_list:
+                    yield DiscoveryBatch(batch_list, 1, 0, False)
                 if len(records) < 100:
                     break
                 offset += 100

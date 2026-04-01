@@ -38,7 +38,9 @@ class DiscoveryWorker(BaseWorker):
             source.slug, source.domain, source.ingestion_method.value,
         )
 
-        if source.ingestion_method == IngestionMethod.API:
+        from src.ingestion.services.api_discovery import get_api_stream
+        stream = get_api_stream(source.slug, max_pages=500_000)
+        if stream is not None:
             await self._discover_via_stream(session, job, source)
         else:
             await self._discover_via_crawl(session, job, source)
