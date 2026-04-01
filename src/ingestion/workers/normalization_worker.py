@@ -101,7 +101,6 @@ class NormalizationWorker(BaseWorker):
         await update_source_progress(
             session, source.id, normalized_count=records_processed
         )
-        await session.commit()
 
     async def _normalize_raw_object(
         self,

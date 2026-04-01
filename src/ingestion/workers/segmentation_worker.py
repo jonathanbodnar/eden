@@ -118,7 +118,6 @@ class SegmentationWorker(BaseWorker):
         await update_source_progress(
             session, source.id, segmented_count=records_processed
         )
-        await session.commit()
 
     @staticmethod
     def _raw_object_alias():

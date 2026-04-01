@@ -146,7 +146,6 @@ class ContextExtractionWorker(BaseWorker):
             extra={"statements_created": statements_created},
             force=True,
         )
-        await session.commit()
 
         logger.info(
             "Context extraction complete for %s: %d segments processed, %d statements created",

@@ -116,7 +116,6 @@ class FetchWorker(BaseWorker):
             fetched_count=records_processed,
             total_bytes_stored=bytes_processed,
         )
-        await session.commit()
 
     async def _fetch_record(
         self,

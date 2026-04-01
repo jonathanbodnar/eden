@@ -140,7 +140,6 @@ class EmbeddingWorker(BaseWorker):
             job.trusted_source_id,
             embedded_count=records_processed,
         )
-        await session.commit()
 
     async def _embed_batch(
         self,

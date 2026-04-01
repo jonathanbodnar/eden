@@ -44,33 +44,43 @@ class BaseWorker(ABC):
     async def run_loop(self, poll_interval: float = 2.0) -> None:
         logger.info("Worker %s starting run loop for %s", self.worker_id, self.job_types)
         while self._running:
-            async with async_session_factory() as session:
-                job = await claim_job(session, self.worker_id, self.job_types)
-                if job is None:
-                    await asyncio.sleep(poll_interval)
-                    continue
+            try:
+                async with async_session_factory() as session:
+                    job = await claim_job(session, self.worker_id, self.job_types)
+                    if job is None:
+                        await asyncio.sleep(poll_interval)
+                        continue
 
-                logger.info("Processing job %s [%s]", job.id, job.job_type.value)
-                await self._process_job(session, job)
+                    logger.info("Processing job %s [%s]", job.id, job.job_type.value)
+                    await self._process_job(session, job)
+            except Exception:
+                logger.exception("Worker %s run-loop error, will retry", self.worker_id)
+                await asyncio.sleep(poll_interval)
 
     async def _process_job(self, session: AsyncSession, job: QueuedJob) -> None:
-        heartbeat_task = asyncio.create_task(self._heartbeat_loop(job.id))
+        job_id = job.id
+        source_run_id = job.source_run_id
+        trusted_source_id = job.trusted_source_id
+        job_type = job.job_type
+        heartbeat_task = asyncio.create_task(self._heartbeat_loop(job_id))
+        success = False
         try:
-            checkpoint = await get_latest_checkpoint(session, job.id)
+            checkpoint = await get_latest_checkpoint(session, job_id)
             self._last_checkpoint_time = time.monotonic()
             self._items_since_checkpoint = 0
 
             await self.process(session, job, checkpoint)
-
-            await complete_job(session, job.id, success=True)
-            logger.info("Job %s succeeded", job.id)
-
-            await session.refresh(job)
-            await enqueue_next_stage(session, job)
+            await complete_job(session, job_id, success=True)
+            success = True
+            logger.info("Job %s [%s] succeeded", job_id, job_type.value)
 
         except Exception as exc:
-            logger.exception("Job %s failed: %s", job.id, exc)
-            await complete_job(session, job.id, success=False, error_log=str(exc))
+            logger.exception("Job %s failed: %s", job_id, exc)
+            try:
+                await session.rollback()
+                await complete_job(session, job_id, success=False, error_log=str(exc)[:2000])
+            except Exception:
+                logger.exception("Failed to mark job %s as failed", job_id)
 
         finally:
             heartbeat_task.cancel()
@@ -78,6 +88,15 @@ class BaseWorker(ABC):
                 await heartbeat_task
             except asyncio.CancelledError:
                 pass
+
+        if success and source_run_id:
+            try:
+                async with async_session_factory() as next_session:
+                    refreshed = await next_session.get(QueuedJob, job_id)
+                    if refreshed:
+                        await enqueue_next_stage(next_session, refreshed)
+            except Exception:
+                logger.exception("Failed to enqueue next stage after job %s", job_id)
 
     async def _heartbeat_loop(self, job_id: uuid.UUID) -> None:
         interval = settings.worker_heartbeat_interval_seconds

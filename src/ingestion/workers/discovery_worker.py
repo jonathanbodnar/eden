@@ -92,7 +92,6 @@ class DiscoveryWorker(BaseWorker):
         await update_source_progress(
             session, source.id, discovered_count=new_count
         )
-        await session.commit()
 
         logger.info(
             "Discovery complete for %s: %d new, %d skipped, %d pages crawled",
