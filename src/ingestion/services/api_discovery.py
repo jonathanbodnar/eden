@@ -103,6 +103,7 @@ MET_BASE = "https://collectionapi.metmuseum.org/public/collection/v1"
 
 MET_DEPARTMENTS = [
     (3, "Ancient Near Eastern Art"),
+    (5, "Arts of Africa, Oceania, and the Americas"),
     (10, "Egyptian Art"),
     (13, "Greek and Roman Art"),
 ]
@@ -691,6 +692,13 @@ IA_QUERIES = [
     "subject:cuneiform", "subject:mesopotamia AND subject:ancient",
     "subject:dead sea scrolls", "subject:sumerian AND subject:tablet",
     "subject:ancient egypt AND subject:papyrus",
+    "subject:popol vuh", "subject:maya codex OR title:maya codex",
+    "subject:aztec codex OR title:codex borgia OR title:codex mendoza",
+    "subject:mesoamerican AND subject:ancient",
+    "subject:inca AND subject:ancient OR title:quipu",
+    "subject:olmec OR subject:zapotec OR subject:mixtec",
+    "subject:moche OR subject:nazca OR subject:chavin",
+    "title:chilam balam", "title:florentine codex",
 ]
 
 async def stream_internet_archive(max_pages: int = 100_000) -> AsyncIterator[DiscoveryBatch]:
@@ -1201,6 +1209,20 @@ WD_LOCATION_QUERIES = [
     """SELECT ?item ?itemLabel ?coord WHERE {{
       ?item wdt:P31 wd:Q194195 .
       ?item wdt:P625 ?coord .
+      SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en" . }}
+    }} LIMIT {limit} OFFSET {offset}""",
+    # Mesoamerican pyramids (step pyramids)
+    """SELECT ?item ?itemLabel ?coord WHERE {{
+      ?item wdt:P31 wd:Q1636022 .
+      ?item wdt:P625 ?coord .
+      SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en" . }}
+    }} LIMIT {limit} OFFSET {offset}""",
+    # Pre-Columbian sites in Americas (archaeological site + country in Americas)
+    """SELECT ?item ?itemLabel ?coord WHERE {{
+      ?item wdt:P31 wd:Q839954 .
+      ?item wdt:P625 ?coord .
+      ?item wdt:P17 ?country .
+      VALUES ?country {{ wd:Q96 wd:Q298 wd:Q241 wd:Q419 wd:Q414 wd:Q750 wd:Q736 wd:Q733 wd:Q717 wd:Q739 wd:Q774 wd:Q786 wd:Q800 }}
       SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en" . }}
     }} LIMIT {limit} OFFSET {offset}""",
 ]
