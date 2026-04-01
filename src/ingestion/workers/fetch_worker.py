@@ -166,9 +166,9 @@ class FetchWorker(BaseWorker):
                     stage_percent=(records_processed / total * 100) if total else None,
                 )
 
-                is_api = source.ingestion_method == IngestionMethod.API
-                if is_api:
-                    delay = 0.1
+                is_api_source = source.ingestion_method == IngestionMethod.API
+                if is_api_source:
+                    delay = 0.2
                 else:
                     delay = settings.default_fetch_delay_seconds
                 if source.rate_limit_rpm:
@@ -213,8 +213,11 @@ class FetchWorker(BaseWorker):
         response = await client.get(
             fetch_url,
             follow_redirects=True,
-            headers={"Accept": "application/json"} if is_api else {},
+            headers={"Accept": "application/json", "User-Agent": "EdenBot/1.0"} if is_api else {},
         )
+        if response.status_code in (403, 404, 410, 429):
+            logger.debug("Skipping %s: HTTP %d", record.external_id, response.status_code)
+            raise ValueError(f"HTTP {response.status_code} for {fetch_url}")
         response.raise_for_status()
         data = response.content
         content_type = response.headers.get("content-type", "")
