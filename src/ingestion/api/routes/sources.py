@@ -61,7 +61,16 @@ async def create_source(
 
     source = TrustedSource(**body.model_dump())
     session.add(source)
-    await session.commit()
+    await session.flush()
+
+    await create_source_run(
+        session,
+        trusted_source_id=source.id,
+        run_type=RunType.FULL_INGEST,
+        requested_by="auto",
+        notes="Automatically queued on source creation",
+    )
+
     await session.refresh(source)
     return TrustedSourceResponse.model_validate(source)
 

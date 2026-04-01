@@ -10,9 +10,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.ingestion.database import get_session
-from src.ingestion.models.enums import IntakeStatus
+from src.ingestion.models.enums import IntakeStatus, RunType
 from src.ingestion.models.source_intake_run import SourceIntakeRun
 from src.ingestion.models.trusted_source import TrustedSource
+from src.ingestion.queue.manager import create_source_run
 from src.ingestion.schemas.intake import (
     DomainGroup,
     IntakeAnalyzeRequest,
@@ -90,6 +91,8 @@ async def approve_all_intake(
     created: list[TrustedSourceResponse] = []
     skipped: list[str] = []
 
+    new_sources: list[TrustedSource] = []
+
     for group in body.groups:
         s = group.suggested_source
         if s.slug in existing_slugs:
@@ -114,15 +117,20 @@ async def approve_all_intake(
             is_secondary_source=s.is_secondary_source,
         )
         session.add(source)
+        await session.flush()
+        new_sources.append(source)
         existing_slugs.add(s.slug)
 
-    await session.commit()
-
-    if created_sources := [s.slug for g in body.groups if (s := g.suggested_source).slug not in {sk for sk in skipped}]:
-        result = await session.execute(
-            select(TrustedSource).where(TrustedSource.slug.in_(created_sources))
+    for source in new_sources:
+        await create_source_run(
+            session,
+            trusted_source_id=source.id,
+            run_type=RunType.FULL_INGEST,
+            requested_by="auto",
+            notes="Automatically queued on batch intake approval",
         )
-        created = [TrustedSourceResponse.model_validate(src) for src in result.scalars().all()]
+
+    created = [TrustedSourceResponse.model_validate(src) for src in new_sources]
 
     return BatchApproveResponse(created=created, skipped=skipped)
 
