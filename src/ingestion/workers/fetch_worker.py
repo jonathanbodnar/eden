@@ -114,11 +114,19 @@ class FetchWorker(BaseWorker):
         is_api_source = source.ingestion_method == IngestionMethod.API
         empty_polls = 0
 
-        concurrency = 10 if is_api_source else 3
+        rate_limited_slugs = {"wikidata-locations", "pleiades"}
+        if source.slug in rate_limited_slugs:
+            concurrency = 3
+            batch_size = 20
+        elif is_api_source:
+            concurrency = 10
+            batch_size = 100
+        else:
+            concurrency = 3
+            batch_size = 50
         sem = asyncio.Semaphore(concurrency)
-        batch_size = 100 if is_api_source else 50
 
-        ssl_verify = source.slug not in ("pleiades", "oracc")
+        ssl_verify = source.slug not in ("pleiades", "oracc", "unesco-whc")
         async with httpx.AsyncClient(timeout=60.0, verify=ssl_verify) as client:
             while True:
                 result = await session.execute(
@@ -144,6 +152,8 @@ class FetchWorker(BaseWorker):
                 async def _prefetch(record: DiscoveredRecord) -> tuple[DiscoveredRecord, httpx.Response | None, str | None]:
                     """Do the HTTP request concurrently, return (record, response, error)."""
                     async with sem:
+                        if source.slug in rate_limited_slugs:
+                            await asyncio.sleep(0.5)
                         fetch_url = None
                         if is_api_source:
                             fetch_url = api_fetch_url(source.slug, record.external_id)
@@ -158,11 +168,13 @@ class FetchWorker(BaseWorker):
                                     fetch_url, follow_redirects=True,
                                     headers={"Accept": "application/json", "User-Agent": "EdenBot/1.0"} if is_api_source else {},
                                 )
-                            except httpx.TimeoutException:
+                            except (httpx.TimeoutException, httpx.ConnectError, httpx.RemoteProtocolError) as exc:
                                 if attempt < 2:
                                     await asyncio.sleep(2 ** (attempt + 1))
                                     continue
-                                return (record, None, f"Timeout after 3 attempts for {fetch_url}")
+                                return (record, None, f"{type(exc).__name__} after 3 attempts for {fetch_url}")
+                            except Exception as exc:
+                                return (record, None, f"Unexpected error: {type(exc).__name__}: {exc}")
 
                             if resp.status_code in (429, 503):
                                 retry_after = int(resp.headers.get("Retry-After", 2 ** (attempt + 1)))
