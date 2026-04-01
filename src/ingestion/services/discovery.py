@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 CRAWL_TIMEOUT = 15.0
 MAX_CONTENT_BYTES = 200_000
 MAX_PAGES = 5000
+MAX_PAGES_API = 500_000
 MAX_DEPTH = 6
 CONCURRENCY = 5
 USER_AGENT = "EdenBot/1.0 (research ingestion platform)"
@@ -228,7 +229,8 @@ async def discover_source(
     if method == "api" and slug:
         from src.ingestion.services.api_discovery import discover_via_api
 
-        api_result = await discover_via_api(slug, max_pages=max_pages)
+        api_limit = max(max_pages, MAX_PAGES_API)
+        api_result = await discover_via_api(slug, max_pages=api_limit)
         if api_result is not None:
             return api_result
         logger.warning("No API adapter for slug=%s, falling back to HTML crawl", slug)
