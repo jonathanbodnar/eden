@@ -218,11 +218,20 @@ async def discover_source(
     base_url: str,
     domain: str,
     max_pages: int = MAX_PAGES,
+    slug: str = "",
 ) -> CrawlResult:
-    """Dispatch discovery based on ingestion method."""
+    """Dispatch discovery based on ingestion method (and slug for API sources)."""
     method = ingestion_method
     if isinstance(ingestion_method, IngestionMethod):
         method = ingestion_method.value
+
+    if method == "api" and slug:
+        from src.ingestion.services.api_discovery import discover_via_api
+
+        api_result = await discover_via_api(slug, max_pages=max_pages)
+        if api_result is not None:
+            return api_result
+        logger.warning("No API adapter for slug=%s, falling back to HTML crawl", slug)
 
     if method in ("html_scrape", "pdf_download"):
         return await crawl_html_source(base_url, domain, max_pages=max_pages)

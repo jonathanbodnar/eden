@@ -111,8 +111,8 @@ class NormalizationWorker(BaseWorker):
         """Parse raw object metadata into canonical record.
 
         Uses the source's parser_type to determine parsing strategy.
-        This template implementation creates a basic record from
-        available metadata. Real parsers would extract structured data.
+        JSON API sources get rich structured normalization; HTML sources
+        fall back to basic metadata extraction.
         """
         meta = raw_obj.raw_metadata_jsonb or {}
 
@@ -129,36 +129,62 @@ class NormalizationWorker(BaseWorker):
             record_status=RecordStatus.NORMALIZED,
             metadata_jsonb=meta,
         )
+
+        if meta.get("medium"):
+            source_record.metadata_jsonb["medium"] = meta["medium"]
+        if meta.get("period"):
+            source_record.metadata_jsonb["period"] = meta["period"]
+
         session.add(source_record)
         await session.flush()
 
         if "dates" in meta:
             for date_info in meta["dates"]:
-                date_record = SourceDate(
-                    source_record_id=source_record.id,
-                    date_type=DateType(date_info.get("type", "composition")),
-                    date_start=date_info.get("start"),
-                    date_end=date_info.get("end"),
-                    date_label=date_info.get("label"),
-                    dating_method=date_info.get("method"),
-                    dating_confidence=DatingConfidence(
-                        date_info.get("confidence", "uncertain")
-                    ),
-                    source_note=date_info.get("note"),
-                )
-                session.add(date_record)
+                try:
+                    date_record = SourceDate(
+                        source_record_id=source_record.id,
+                        date_type=DateType(date_info.get("type", "composition")),
+                        date_start=date_info.get("start"),
+                        date_end=date_info.get("end"),
+                        date_label=date_info.get("label"),
+                        dating_method=date_info.get("method"),
+                        dating_confidence=DatingConfidence(
+                            date_info.get("confidence", "uncertain")
+                        ),
+                        source_note=date_info.get("note"),
+                    )
+                    session.add(date_record)
+                except Exception as exc:
+                    logger.warning("Failed to add date for %s: %s", raw_obj.external_id, exc)
+
+        text_content = meta.get("text", "")
+        copyright_status = CopyrightStatus.UNKNOWN
+        if meta.get("is_public_domain"):
+            copyright_status = CopyrightStatus.PUBLIC_DOMAIN
 
         version = SourceVersion(
             source_record_id=source_record.id,
             version_type=VersionType.ORIGINAL,
-            language=source.default_language,
-            copyright_status=CopyrightStatus.UNKNOWN,
+            language=meta.get("language_family", source.default_language),
+            copyright_status=copyright_status,
             is_preferred=True,
             r2_key=raw_obj.r2_key,
-            text_extracted=meta.get("text"),
+            text_extracted=text_content if text_content else None,
             metadata_jsonb={"parser": source.parser_type.value},
         )
         session.add(version)
-        await session.flush()
 
+        if meta.get("text") and meta.get("text_format") == "ATF":
+            transliteration = SourceVersion(
+                source_record_id=source_record.id,
+                version_type=VersionType.TRANSLITERATION,
+                language="Sumerian",
+                copyright_status=CopyrightStatus.PUBLIC_DOMAIN,
+                is_preferred=False,
+                text_extracted=meta["text"],
+                metadata_jsonb={"format": "ATF", "parser": "cdli_atf"},
+            )
+            session.add(transliteration)
+
+        await session.flush()
         return source_record

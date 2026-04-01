@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
 import re
 from datetime import datetime, timezone
@@ -15,13 +16,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.ingestion.config import settings
 from src.ingestion.models.discovered_record import DiscoveredRecord
-from src.ingestion.models.enums import DiscoveredRecordStatus, JobType
+from src.ingestion.models.enums import DiscoveredRecordStatus, IngestionMethod, JobType
 from src.ingestion.models.job_checkpoint import JobCheckpoint
 from src.ingestion.models.object_image import ObjectImage
 from src.ingestion.models.queued_job import QueuedJob
 from src.ingestion.models.raw_object import RawObject
 from src.ingestion.models.trusted_source import TrustedSource
 from src.ingestion.queue.manager import update_source_progress
+from src.ingestion.services.api_fetch import api_fetch_url, parse_api_metadata
 from src.ingestion.storage.r2_client import R2Client, r2_client
 from src.ingestion.workers.base import BaseWorker
 
@@ -182,19 +184,34 @@ class FetchWorker(BaseWorker):
         source: TrustedSource,
         record: DiscoveredRecord,
     ) -> RawObject:
-        if not record.record_url.startswith(("http://", "https://")):
-            raise ValueError(f"Invalid URL: {record.record_url}")
+        is_api = source.ingestion_method == IngestionMethod.API
+        fetch_url = None
 
-        parsed = urlparse(record.record_url)
-        if source.domain and parsed.netloc and source.domain not in parsed.netloc:
-            raise ValueError(
-                f"URL domain {parsed.netloc} not in approved domain {source.domain}"
-            )
+        if is_api:
+            fetch_url = api_fetch_url(source.slug, record.external_id)
 
-        response = await client.get(record.record_url, follow_redirects=True)
+        if not fetch_url:
+            fetch_url = record.record_url
+
+        if not fetch_url.startswith(("http://", "https://")):
+            raise ValueError(f"Invalid URL: {fetch_url}")
+
+        response = await client.get(
+            fetch_url,
+            follow_redirects=True,
+            headers={"Accept": "application/json"} if is_api else {},
+        )
         response.raise_for_status()
         data = response.content
         content_type = response.headers.get("content-type", "")
+
+        if is_api and "json" in content_type.lower():
+            api_json = response.json()
+            if isinstance(api_json, list) and len(api_json) == 1:
+                api_json = api_json[0]
+            metadata = parse_api_metadata(source.slug, api_json)
+        else:
+            metadata = {"headers": dict(response.headers)}
 
         existing = await session.execute(
             select(RawObject).where(
@@ -213,10 +230,9 @@ class FetchWorker(BaseWorker):
             data=data,
             content_type=content_type,
             metadata={
-                "source_url": record.record_url,
+                "source_url": fetch_url,
                 "external_id": record.external_id,
                 "http_status": response.status_code,
-                "headers": dict(response.headers),
             },
         )
 
@@ -230,19 +246,50 @@ class FetchWorker(BaseWorker):
             byte_size=len(data),
             r2_key=r2_key,
             http_status=response.status_code,
-            raw_metadata_jsonb={"headers": dict(response.headers)},
+            raw_metadata_jsonb=metadata,
             parser_hint=source.parser_type.value,
         )
         session.add(raw_obj)
         await session.flush()
 
-        if "text/html" in content_type.lower():
+        if is_api:
+            image_urls = metadata.get("image_urls", [])
+            if image_urls:
+                await self._store_api_images(session, source, raw_obj, image_urls)
+        elif "text/html" in content_type.lower():
             await self._extract_and_store_images(
                 session, client, source, raw_obj, data.decode("utf-8", errors="replace"),
                 record.record_url,
             )
 
         return raw_obj
+
+    async def _store_api_images(
+        self,
+        session: AsyncSession,
+        source: TrustedSource,
+        raw_obj: RawObject,
+        image_urls: list[str],
+    ) -> int:
+        """Store image references from API metadata."""
+        stored = 0
+        for i, url in enumerate(image_urls[:MAX_IMAGES_PER_PAGE]):
+            try:
+                img = ObjectImage(
+                    raw_object_id=raw_obj.id,
+                    trusted_source_id=source.id,
+                    image_url=url,
+                    image_order=i,
+                )
+                session.add(img)
+                stored += 1
+            except Exception as exc:
+                logger.debug("Failed to record API image %s: %s", url, exc)
+
+        if stored:
+            await session.flush()
+            logger.info("Stored %d API image refs for %s", stored, raw_obj.external_id)
+        return stored
 
     async def _extract_and_store_images(
         self,

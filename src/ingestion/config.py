@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     context_extraction_batch_size: int = 20
     context_extraction_rules_only: bool = False
 
+    # External API keys
+    europeana_api_key: str = ""
+
     # Rate limiting
     default_rate_limit_rpm: int = 60
     default_fetch_delay_seconds: float = 1.0

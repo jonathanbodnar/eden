@@ -39,6 +39,7 @@ class DiscoveryWorker(BaseWorker):
             ingestion_method=source.ingestion_method,
             base_url=source.base_url,
             domain=source.domain,
+            slug=source.slug,
         )
 
         new_count = 0
