@@ -61,7 +61,7 @@ class NormalizationWorker(BaseWorker):
                     select(SourceRecord.raw_object_id).where(SourceRecord.raw_object_id.isnot(None))
                 ))
                 .order_by(RawObject.fetched_at)
-                .limit(50)
+                .limit(200)
             )
             batch = result.scalars().all()
 
@@ -72,7 +72,7 @@ class NormalizationWorker(BaseWorker):
                     if empty_polls >= 2:
                         logger.info("Normalize %s: upstream done, no more records", source.slug)
                         break
-                await asyncio.sleep(5.0)
+                await asyncio.sleep(3.0)
                 continue
 
             empty_polls = 0
@@ -121,6 +121,8 @@ class NormalizationWorker(BaseWorker):
             repository_institution=meta.get("repository"),
             provenance_status=ProvenanceStatus.UNVERIFIED if has_provenance else ProvenanceStatus.UNKNOWN,
             record_status=RecordStatus.NORMALIZED,
+            latitude=meta.get("latitude"),
+            longitude=meta.get("longitude"),
             metadata_jsonb={k: v for k, v in meta.items() if k != "_raw"},
         )
 
@@ -177,6 +179,22 @@ class NormalizationWorker(BaseWorker):
                 metadata_jsonb={"format": "ATF", "parser": "cdli_atf"},
             )
             session.add(transliteration)
+
+        for tr in meta.get("translations", []):
+            if not isinstance(tr, dict) or not tr.get("text"):
+                continue
+            vtype = VersionType.ORIGINAL if tr.get("version_type") == "original" else VersionType.TRANSLATION
+            tr_version = SourceVersion(
+                source_record_id=source_record.id,
+                version_type=vtype,
+                language=tr.get("language", ""),
+                translator_editor=tr.get("translator"),
+                copyright_status=copyright_status,
+                is_preferred=False,
+                text_extracted=tr["text"],
+                metadata_jsonb={"parser": source.parser_type.value, "translation_source": meta.get("source_api", "")},
+            )
+            session.add(tr_version)
 
         await session.flush()
         return source_record

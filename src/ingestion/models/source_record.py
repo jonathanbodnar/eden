@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import ForeignKey, String, Text
+from sqlalchemy import Float, ForeignKey, String, Text
 from sqlalchemy.dialects.postgresql import ENUM, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -41,6 +41,8 @@ class SourceRecord(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         nullable=False,
         index=True,
     )
+    latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
     metadata_jsonb: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
     trusted_source = relationship("TrustedSource", back_populates="source_records")

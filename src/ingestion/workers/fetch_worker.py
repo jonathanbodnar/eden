@@ -114,13 +114,17 @@ class FetchWorker(BaseWorker):
         is_api_source = source.ingestion_method == IngestionMethod.API
         empty_polls = 0
 
+        concurrency = 10 if is_api_source else 3
+        sem = asyncio.Semaphore(concurrency)
+        batch_size = 200 if is_api_source else 50
+
         async with httpx.AsyncClient(timeout=60.0) as client:
             while True:
                 result = await session.execute(
                     select(DiscoveredRecord).where(
                         DiscoveredRecord.trusted_source_id == source.id,
                         DiscoveredRecord.status == DiscoveredRecordStatus.NEW,
-                    ).order_by(DiscoveredRecord.external_id).limit(50)
+                    ).order_by(DiscoveredRecord.external_id).limit(batch_size)
                 )
                 batch = result.scalars().all()
 
@@ -135,34 +139,37 @@ class FetchWorker(BaseWorker):
                     continue
 
                 empty_polls = 0
-                for record in batch:
-                    try:
-                        await self._fetch_record(session, client, source, record)
-                        records_processed += 1
-                        await session.execute(
-                            update(DiscoveredRecord)
-                            .where(DiscoveredRecord.id == record.id)
-                            .values(status=DiscoveredRecordStatus.FETCHED)
-                        )
-                    except Exception as exc:
-                        logger.error("Failed to fetch %s: %s", record.external_id, exc)
-                        await session.execute(
-                            update(DiscoveredRecord)
-                            .where(DiscoveredRecord.id == record.id)
-                            .values(status=DiscoveredRecordStatus.FAILED)
-                        )
+                batch_ok = 0
+                batch_fail = 0
 
-                    if is_api_source:
-                        await asyncio.sleep(0.2)
-                    else:
-                        delay = settings.default_fetch_delay_seconds
-                        if source.rate_limit_rpm:
-                            delay = max(delay, 60.0 / source.rate_limit_rpm)
-                        await asyncio.sleep(delay)
+                async def _fetch_one(record: DiscoveredRecord) -> None:
+                    nonlocal batch_ok, batch_fail
+                    async with sem:
+                        try:
+                            await self._fetch_record(session, client, source, record)
+                            batch_ok += 1
+                            await session.execute(
+                                update(DiscoveredRecord)
+                                .where(DiscoveredRecord.id == record.id)
+                                .values(status=DiscoveredRecordStatus.FETCHED)
+                            )
+                        except Exception as exc:
+                            batch_fail += 1
+                            logger.error("Failed to fetch %s: %s", record.external_id, exc)
+                            await session.execute(
+                                update(DiscoveredRecord)
+                                .where(DiscoveredRecord.id == record.id)
+                                .values(status=DiscoveredRecordStatus.FAILED)
+                            )
+                        if is_api_source:
+                            await asyncio.sleep(0.05)
+
+                await asyncio.gather(*[_fetch_one(r) for r in batch])
+                records_processed += batch_ok
 
                 await update_source_progress(session, source.id, fetched_count=records_processed)
                 await session.commit()
-                logger.info("Fetch %s: %d done (committed)", source.slug, records_processed)
+                logger.info("Fetch %s: %d done (+%d ok, %d fail)", source.slug, records_processed, batch_ok, batch_fail)
 
         await update_source_progress(
             session, source.id, fetched_count=records_processed,
@@ -225,6 +232,9 @@ class FetchWorker(BaseWorker):
             if isinstance(api_json, list) and len(api_json) == 1:
                 api_json = api_json[0]
             metadata = parse_api_metadata(source.slug, api_json)
+        elif source.slug == "dss-bible" and "text/html" in content_type.lower():
+            from src.ingestion.services.api_fetch import parse_dss_html
+            metadata = parse_dss_html(data.decode("utf-8", errors="replace"), record.external_id)
         else:
             metadata = {"headers": dict(response.headers)}
 

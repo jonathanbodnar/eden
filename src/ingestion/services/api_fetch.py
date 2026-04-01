@@ -35,6 +35,72 @@ def api_fetch_url(slug: str, external_id: str) -> str | None:
         item_path = external_id.removeprefix("europeana-").replace("-", "/")
         return f"https://api.europeana.eu/record/v2/{item_path}.json"
 
+    if slug == "sefaria":
+        ref = external_id.removeprefix("sefaria-")
+        return f"https://www.sefaria.org/api/v3/texts/{ref}?version=all"
+
+    if slug == "dss-bible":
+        return None  # HTML scrape, no API URL
+
+    if slug == "ctext":
+        parts = external_id.removeprefix("ctext-").split("-", 1)
+        if len(parts) == 2:
+            return f"https://api.ctext.org/gettext?urn=ctp:{parts[0]}/{parts[1]}"
+        return f"https://api.ctext.org/gettext?urn=ctp:{parts[0]}"
+
+    if slug == "suttacentral":
+        uid = external_id.removeprefix("sc-")
+        return f"https://suttacentral.net/api/suttaplex/{uid}"
+
+    if slug == "oracc":
+        eid = external_id.removeprefix("oracc-")
+        proj, _, text_id = eid.partition("-")
+        return f"http://oracc.org/{proj}/{text_id}.json" if text_id else None
+
+    if slug == "loc":
+        loc_id = external_id.removeprefix("loc-")
+        return f"https://www.loc.gov/item/{loc_id}/?fo=json"
+
+    if slug == "internet-archive":
+        ia_id = external_id.removeprefix("ia-")
+        return f"https://archive.org/metadata/{ia_id}"
+
+    if slug == "wikidata-artifacts":
+        qid = external_id.removeprefix("wd-art-")
+        return f"https://www.wikidata.org/w/api.php?action=wbgetentities&ids={qid}&format=json&languages=en"
+
+    if slug == "bsb-mdz":
+        bsb_id = external_id.removeprefix("bsb-")
+        return f"https://api.digitale-sammlungen.de/iiif/presentation/v2/{bsb_id}/manifest"
+
+    if slug == "gallica":
+        ark = external_id.removeprefix("gallica-")
+        return f"https://gallica.bnf.fr/services/OAIRecord?ark={ark}"
+
+    if slug == "pleiades":
+        pid = external_id.removeprefix("pleiades-")
+        return f"https://pleiades.stoa.org/places/{pid}/json"
+
+    if slug == "open-context":
+        oc_id = external_id.removeprefix("oc-")
+        return f"https://opencontext.org/subjects/{oc_id}.json"
+
+    if slug == "unesco-whc":
+        site_id = external_id.removeprefix("unesco-")
+        return f"https://data.unesco.org/api/explore/v2.0/catalog/datasets/whc001/records?where=id_number={site_id}&limit=1"
+
+    if slug == "wikidata-locations":
+        qid = external_id.removeprefix("wd-loc-")
+        return f"https://www.wikidata.org/w/api.php?action=wbgetentities&ids={qid}&format=json&languages=en"
+
+    if slug == "openalex":
+        oa_id = external_id.removeprefix("oa-")
+        return f"https://api.openalex.org/works/{oa_id}"
+
+    if slug == "core":
+        core_id = external_id.removeprefix("core-")
+        return f"https://api.core.ac.uk/v3/works/{core_id}"
+
     return None
 
 
@@ -49,6 +115,34 @@ def parse_api_metadata(slug: str, data: dict) -> dict:
         return _parse_met(data)
     if slug == "europeana":
         return _parse_europeana(data)
+    if slug == "sefaria":
+        return _parse_sefaria(data)
+    if slug == "ctext":
+        return _parse_ctext(data)
+    if slug == "suttacentral":
+        return _parse_suttacentral(data)
+    if slug == "oracc":
+        return _parse_oracc(data)
+    if slug == "loc":
+        return _parse_loc(data)
+    if slug == "internet-archive":
+        return _parse_internet_archive(data)
+    if slug in ("wikidata-artifacts", "wikidata-locations"):
+        return _parse_wikidata(data, is_location=(slug == "wikidata-locations"))
+    if slug == "bsb-mdz":
+        return _parse_bsb(data)
+    if slug == "gallica":
+        return _parse_gallica(data)
+    if slug == "pleiades":
+        return _parse_pleiades(data)
+    if slug == "open-context":
+        return _parse_open_context(data)
+    if slug == "unesco-whc":
+        return _parse_unesco(data)
+    if slug == "openalex":
+        return _parse_openalex(data)
+    if slug == "core":
+        return _parse_core(data)
     return data
 
 
@@ -476,5 +570,650 @@ def _parse_europeana(data: dict) -> dict:
             if vals:
                 meta["repository"] = vals[0] if isinstance(vals, list) else vals
                 break
+
+    return meta
+
+
+# ---------------------------------------------------------------------------
+# Sefaria parser — Hebrew Bible, Talmud, etc.
+# ---------------------------------------------------------------------------
+
+def _parse_sefaria(data: dict) -> dict:
+    meta: dict = {"_raw": data, "source_api": "sefaria"}
+    meta["title"] = data.get("ref", data.get("heRef", ""))
+
+    versions = data.get("versions", [])
+    en_text = ""
+    he_text = ""
+    for v in (versions if isinstance(versions, list) else []):
+        lang = v.get("language", "")
+        text = v.get("text", "")
+        if isinstance(text, list):
+            text = "\n".join(_flatten_text(text))
+        if lang == "en" and not en_text:
+            en_text = text
+        elif lang == "he" and not he_text:
+            he_text = text
+
+    if not en_text:
+        raw_text = data.get("text", "")
+        if isinstance(raw_text, list):
+            en_text = "\n".join(_flatten_text(raw_text))
+        elif isinstance(raw_text, str):
+            en_text = raw_text
+    if not he_text:
+        raw_he = data.get("he", "")
+        if isinstance(raw_he, list):
+            he_text = "\n".join(_flatten_text(raw_he))
+        elif isinstance(raw_he, str):
+            he_text = raw_he
+
+    meta["text"] = en_text
+    meta["language_family"] = "Hebrew"
+
+    translations = []
+    if he_text:
+        translations.append({"language": "Hebrew", "text": he_text, "version_type": "original"})
+    if en_text and he_text:
+        meta["text"] = en_text
+    meta["translations"] = translations
+
+    cats = data.get("categories", [])
+    if cats:
+        meta["genre"] = " > ".join(cats)
+    meta["is_public_domain"] = True
+
+    return meta
+
+
+def _flatten_text(obj) -> list[str]:
+    if isinstance(obj, str):
+        return [obj] if obj.strip() else []
+    if isinstance(obj, list):
+        parts = []
+        for item in obj:
+            parts.extend(_flatten_text(item))
+        return parts
+    return []
+
+
+# ---------------------------------------------------------------------------
+# DSS HTML parser
+# ---------------------------------------------------------------------------
+
+def parse_dss_html(html: str, external_id: str) -> dict:
+    """Parse structured HTML from dssenglishbible.com into metadata."""
+    meta: dict = {"source_api": "dss-bible"}
+
+    lines = html.split("\n")
+    title = ""
+    language = "Hebrew"
+    date_str = ""
+    location = ""
+    contents = ""
+
+    for line in lines:
+        stripped = line.strip()
+        if "_Language:" in stripped:
+            m = re.search(r"Language:\s*(\w+)", stripped)
+            if m:
+                language = m.group(1)
+        if "_Date:" in stripped:
+            m = re.search(r"Date:\s*(.+?)_", stripped)
+            if m:
+                date_str = m.group(1).strip()
+        if "_Location:" in stripped:
+            m = re.search(r"Location:\s*(.+?)_", stripped)
+            if m:
+                location = m.group(1).strip()
+        if "_Contents:" in stripped:
+            m = re.search(r"Contents:\s*(.+?)_", stripped)
+            if m:
+                contents = m.group(1).strip()
+
+    scroll_id = external_id.removeprefix("dss-")
+    import re as _re
+    title_match = _re.search(r"<title[^>]*>([^<]+)</title>", html, _re.IGNORECASE)
+    if title_match:
+        title = title_match.group(1).replace("Biblical Dead Sea Scrolls -", "").strip()
+    if not title:
+        title = f"Dead Sea Scroll {scroll_id}"
+
+    meta["title"] = title
+    meta["language_family"] = language
+    meta["origin_place"] = location if location else "Qumran"
+    meta["contents_coverage"] = contents
+
+    text_parts = []
+    in_text = False
+    for line in lines:
+        if "<td" in line.lower() and "translation" not in line.lower():
+            in_text = True
+        if in_text:
+            clean = re.sub(r"<[^>]+>", "", line).strip()
+            if clean:
+                text_parts.append(clean)
+
+    meta["text"] = "\n".join(text_parts)
+
+    dates = []
+    if date_str:
+        bc_match = re.search(r"(\d+)\s*B\.?C\.?", date_str)
+        ad_match = re.search(r"(\d+)\s*A\.?D\.?", date_str)
+        start = -int(bc_match.group(1)) if bc_match else None
+        end = int(ad_match.group(1)) if ad_match else None
+        if start is not None or end is not None:
+            dates.append({
+                "type": "object_creation",
+                "start": start if start else -300,
+                "end": end if end else 68,
+                "label": date_str,
+                "confidence": "approximate",
+            })
+    meta["dates"] = dates
+    meta["is_public_domain"] = True
+
+    return meta
+
+
+# ---------------------------------------------------------------------------
+# CText parser
+# ---------------------------------------------------------------------------
+
+def _parse_ctext(data: dict) -> dict:
+    meta: dict = {"_raw": data, "source_api": "ctext"}
+    meta["title"] = data.get("title", data.get("urn", ""))
+
+    fulltext = data.get("fulltext", "")
+    if isinstance(fulltext, list):
+        fulltext = "\n".join(fulltext)
+    meta["text"] = fulltext
+    meta["language_family"] = "Chinese"
+    meta["is_public_domain"] = True
+
+    translations = []
+    en_trans = data.get("translation", "")
+    if isinstance(en_trans, list):
+        en_trans = "\n".join(en_trans)
+    if en_trans:
+        translations.append({"language": "English", "text": en_trans})
+    meta["translations"] = translations
+
+    return meta
+
+
+# ---------------------------------------------------------------------------
+# SuttaCentral parser
+# ---------------------------------------------------------------------------
+
+def _parse_suttacentral(data: dict) -> dict:
+    if isinstance(data, list):
+        data = data[0] if data else {}
+    meta: dict = {"_raw": data, "source_api": "suttacentral"}
+    meta["title"] = data.get("translated_title") or data.get("original_title") or data.get("uid", "")
+    meta["language_family"] = "Pali"
+
+    blurb = data.get("blurb", "")
+    if blurb:
+        meta["text"] = blurb
+
+    meta["is_public_domain"] = True
+
+    translations = []
+    for tr in data.get("translations", []):
+        if isinstance(tr, dict) and tr.get("lang") == "en":
+            translations.append({
+                "language": "English",
+                "translator": tr.get("author", ""),
+                "url": f"https://suttacentral.net/api/bilaratexts/{data.get('uid', '')}/{tr.get('author_uid', '')}",
+            })
+    meta["translations"] = translations
+
+    return meta
+
+
+# ---------------------------------------------------------------------------
+# ORACC parser
+# ---------------------------------------------------------------------------
+
+def _parse_oracc(data: dict) -> dict:
+    meta: dict = {"_raw": data, "source_api": "oracc"}
+
+    cdl = data.get("cdl", [])
+    designation = data.get("textid", "")
+    meta["title"] = designation
+
+    text_parts = []
+    for chunk in cdl:
+        if isinstance(chunk, dict):
+            if chunk.get("type") == "line_variant" or chunk.get("f"):
+                form = chunk.get("f", {})
+                if isinstance(form, dict):
+                    text_parts.append(form.get("form", ""))
+            for child in chunk.get("cdl", []):
+                if isinstance(child, dict) and child.get("f"):
+                    text_parts.append(child["f"].get("form", ""))
+
+    if text_parts:
+        meta["text"] = " ".join(t for t in text_parts if t)
+        meta["text_format"] = "ATF"
+
+    meta["language_family"] = "Sumerian"
+    meta["is_public_domain"] = True
+
+    return meta
+
+
+# ---------------------------------------------------------------------------
+# Library of Congress parser
+# ---------------------------------------------------------------------------
+
+def _parse_loc(data: dict) -> dict:
+    item = data.get("item", data)
+    meta: dict = {"_raw": data, "source_api": "loc"}
+
+    meta["title"] = item.get("title", "")
+    meta["text"] = item.get("description", [""])[0] if isinstance(item.get("description"), list) else item.get("description", "")
+
+    subjects = item.get("subject", [])
+    if subjects:
+        meta["tags"] = subjects
+
+    dates = []
+    date_str = item.get("date", "")
+    if date_str:
+        dates.append({"type": "publication", "label": date_str, "confidence": "approximate"})
+    meta["dates"] = dates
+
+    repo = item.get("repository", [])
+    if isinstance(repo, list) and repo:
+        meta["repository"] = repo[0]
+    elif isinstance(repo, str):
+        meta["repository"] = repo
+
+    images = []
+    for resource in item.get("resources", []):
+        if isinstance(resource, dict):
+            img_url = resource.get("image", resource.get("url", ""))
+            if img_url and img_url.startswith("http"):
+                images.append(img_url)
+    if images:
+        meta["image_urls"] = images
+
+    meta["is_public_domain"] = item.get("rights", "") == "no known restrictions"
+
+    return meta
+
+
+# ---------------------------------------------------------------------------
+# Internet Archive parser
+# ---------------------------------------------------------------------------
+
+def _parse_internet_archive(data: dict) -> dict:
+    meta_raw = data.get("metadata", data)
+    meta: dict = {"_raw": data, "source_api": "internet_archive"}
+
+    meta["title"] = meta_raw.get("title", "")
+    desc = meta_raw.get("description", "")
+    if isinstance(desc, list):
+        desc = " ".join(desc)
+    meta["text"] = desc[:5000] if desc else ""
+
+    subjects = meta_raw.get("subject", [])
+    if isinstance(subjects, str):
+        subjects = [subjects]
+    meta["tags"] = subjects
+
+    creator = meta_raw.get("creator", "")
+    if isinstance(creator, list):
+        creator = "; ".join(creator)
+    meta["creator"] = creator
+
+    date_str = meta_raw.get("date", "")
+    if date_str:
+        meta["dates"] = [{"type": "publication", "label": str(date_str), "confidence": "approximate"}]
+
+    meta["language_family"] = meta_raw.get("language", "")
+    meta["is_public_domain"] = "public" in str(meta_raw.get("licenseurl", "")).lower()
+
+    return meta
+
+
+# ---------------------------------------------------------------------------
+# Wikidata parser (artifacts + locations)
+# ---------------------------------------------------------------------------
+
+def _parse_wikidata(data: dict, is_location: bool = False) -> dict:
+    entities = data.get("entities", {})
+    entity = next(iter(entities.values()), {}) if entities else data
+
+    meta: dict = {"_raw": data, "source_api": "wikidata"}
+
+    labels = entity.get("labels", {})
+    en_label = labels.get("en", {})
+    meta["title"] = en_label.get("value", "") if isinstance(en_label, dict) else str(en_label)
+
+    descs = entity.get("descriptions", {})
+    en_desc = descs.get("en", {})
+    meta["text"] = en_desc.get("value", "") if isinstance(en_desc, dict) else str(en_desc)
+
+    claims = entity.get("claims", {})
+
+    def _claim_value(prop: str):
+        prop_claims = claims.get(prop, [])
+        for c in prop_claims:
+            ms = c.get("mainsnak", {})
+            dv = ms.get("datavalue", {})
+            if dv.get("type") == "string":
+                return dv.get("value", "")
+            if dv.get("type") == "wikibase-entityid":
+                return dv.get("value", {}).get("id", "")
+            if dv.get("type") == "time":
+                return dv.get("value", {}).get("time", "")
+            if dv.get("type") == "globecoordinate":
+                return dv.get("value", {})
+            if dv.get("type") == "quantity":
+                return dv.get("value", {}).get("amount", "")
+        return None
+
+    coords = _claim_value("P625")
+    if isinstance(coords, dict):
+        meta["latitude"] = coords.get("latitude")
+        meta["longitude"] = coords.get("longitude")
+
+    inception = _claim_value("P571")
+    if inception:
+        meta["dates"] = [{"type": "object_creation", "label": str(inception), "confidence": "approximate"}]
+
+    country_qid = _claim_value("P17")
+    if country_qid:
+        meta["country_qid"] = country_qid
+
+    culture_qid = _claim_value("P2596")
+    if culture_qid:
+        meta["culture"] = culture_qid
+
+    images = []
+    for c in claims.get("P18", []):
+        fname = c.get("mainsnak", {}).get("datavalue", {}).get("value", "")
+        if fname:
+            safe_name = fname.replace(" ", "_")
+            images.append(f"https://commons.wikimedia.org/wiki/Special:FilePath/{safe_name}")
+    if images:
+        meta["image_urls"] = images
+
+    alt_names = []
+    for lang_alias in entity.get("aliases", {}).values():
+        for a in lang_alias:
+            if isinstance(a, dict):
+                alt_names.append(a.get("value", ""))
+    if alt_names:
+        meta["alternate_names"] = alt_names
+
+    meta["is_public_domain"] = True
+
+    return meta
+
+
+# ---------------------------------------------------------------------------
+# BSB/MDZ parser (IIIF manifest)
+# ---------------------------------------------------------------------------
+
+def _parse_bsb(data: dict) -> dict:
+    meta: dict = {"_raw": data, "source_api": "bsb"}
+
+    label = data.get("label", "")
+    if isinstance(label, list):
+        label = label[0] if label else ""
+    if isinstance(label, dict):
+        label = label.get("@value", "")
+    meta["title"] = str(label)
+
+    desc = data.get("description", "")
+    if isinstance(desc, list):
+        desc = desc[0] if desc else ""
+    if isinstance(desc, dict):
+        desc = desc.get("@value", "")
+    meta["text"] = str(desc)
+
+    md = data.get("metadata", [])
+    for entry in md:
+        if not isinstance(entry, dict):
+            continue
+        lbl = entry.get("label", "")
+        val = entry.get("value", "")
+        if isinstance(val, list):
+            val = val[0] if val else ""
+        if isinstance(val, dict):
+            val = val.get("@value", "")
+        lbl_lower = str(lbl).lower()
+        if "date" in lbl_lower:
+            meta["date_label"] = str(val)
+        elif "author" in lbl_lower or "creator" in lbl_lower:
+            meta["creator"] = str(val)
+        elif "language" in lbl_lower:
+            meta["language_family"] = str(val)
+
+    images = []
+    for canvas in (data.get("sequences", [{}])[0] if data.get("sequences") else {}).get("canvases", [])[:10]:
+        for img in canvas.get("images", []):
+            resource = img.get("resource", {})
+            img_id = resource.get("@id", "")
+            if img_id:
+                images.append(img_id)
+    if images:
+        meta["image_urls"] = images
+
+    meta["repository"] = "Bayerische Staatsbibliothek"
+
+    return meta
+
+
+# ---------------------------------------------------------------------------
+# Gallica / BnF parser
+# ---------------------------------------------------------------------------
+
+def _parse_gallica(data: dict) -> dict:
+    meta: dict = {"_raw": data, "source_api": "gallica"}
+    meta["title"] = data.get("title", "")
+    meta["text"] = data.get("description", "")
+    meta["creator"] = data.get("creator", "")
+    meta["date_label"] = data.get("date", "")
+    meta["language_family"] = data.get("language", "")
+    meta["repository"] = "Bibliothèque nationale de France"
+    meta["is_public_domain"] = True
+    return meta
+
+
+# ---------------------------------------------------------------------------
+# Pleiades parser — ancient places
+# ---------------------------------------------------------------------------
+
+def _parse_pleiades(data: dict) -> dict:
+    meta: dict = {"_raw": data, "source_api": "pleiades"}
+
+    meta["title"] = data.get("title", "")
+    meta["text"] = data.get("description", "")
+    meta["origin_place"] = data.get("title", "")
+
+    repr_point = data.get("reprPoint")
+    if isinstance(repr_point, (list, tuple)) and len(repr_point) >= 2:
+        meta["longitude"] = repr_point[0]
+        meta["latitude"] = repr_point[1]
+
+    names = data.get("names", [])
+    if isinstance(names, list):
+        meta["alternate_names"] = names
+
+    connects = data.get("connectsWith", [])
+    if connects:
+        meta["connected_places"] = connects
+
+    bbox = data.get("bbox")
+    if bbox:
+        meta["bbox"] = bbox
+
+    dates = []
+    for feat in data.get("features", []):
+        if not isinstance(feat, dict):
+            continue
+        when = feat.get("when", {})
+        if isinstance(when, dict):
+            start = when.get("start")
+            stop = when.get("stop")
+            if start or stop:
+                dates.append({
+                    "type": "archaeological_context",
+                    "label": f"{start or '?'} to {stop or '?'}",
+                    "confidence": "approximate",
+                })
+    if dates:
+        meta["dates"] = dates
+
+    meta["is_public_domain"] = True
+
+    return meta
+
+
+# ---------------------------------------------------------------------------
+# Open Context parser
+# ---------------------------------------------------------------------------
+
+def _parse_open_context(data: dict) -> dict:
+    meta: dict = {"_raw": data, "source_api": "open_context"}
+
+    meta["title"] = data.get("label", data.get("dc-terms:title", ""))
+    meta["text"] = data.get("dc-terms:description", "")
+
+    geo = data.get("features", [{}])[0].get("geometry", {}) if data.get("features") else {}
+    if geo.get("type") == "Point" and geo.get("coordinates"):
+        coords = geo["coordinates"]
+        meta["longitude"] = coords[0]
+        meta["latitude"] = coords[1]
+
+    when = data.get("dc-terms:temporal", "")
+    if when:
+        meta["dates"] = [{"type": "archaeological_context", "label": str(when), "confidence": "approximate"}]
+
+    context = data.get("context", "")
+    if context:
+        meta["origin_place"] = str(context)
+
+    meta["is_public_domain"] = True
+
+    return meta
+
+
+# ---------------------------------------------------------------------------
+# UNESCO World Heritage parser
+# ---------------------------------------------------------------------------
+
+def _parse_unesco(data: dict) -> dict:
+    results = data.get("results", [data])
+    rec = results[0] if results else data
+    fields = rec.get("record", {}).get("fields", rec.get("fields", rec))
+
+    meta: dict = {"_raw": data, "source_api": "unesco"}
+
+    meta["title"] = fields.get("name_en", fields.get("site", ""))
+    meta["text"] = fields.get("short_description_en", "")
+    meta["origin_place"] = fields.get("states_name_en", "")
+
+    coords = fields.get("coordinates", {})
+    if isinstance(coords, dict):
+        meta["latitude"] = coords.get("lat")
+        meta["longitude"] = coords.get("lon")
+    elif isinstance(coords, str) and "," in coords:
+        parts = coords.split(",")
+        try:
+            meta["latitude"] = float(parts[0])
+            meta["longitude"] = float(parts[1])
+        except (ValueError, IndexError):
+            pass
+
+    year = fields.get("date_inscribed")
+    if year:
+        meta["dates"] = [{"type": "recorded", "label": f"Inscribed {year}", "start": year, "end": year, "confidence": "certain"}]
+
+    criteria = fields.get("criteria_txt", "")
+    if criteria:
+        meta["tags"] = [c.strip() for c in str(criteria).split(",") if c.strip()]
+
+    meta["category"] = fields.get("category", "")
+    meta["region"] = fields.get("region_en", "")
+
+    return meta
+
+
+# ---------------------------------------------------------------------------
+# OpenAlex parser
+# ---------------------------------------------------------------------------
+
+def _parse_openalex(data: dict) -> dict:
+    meta: dict = {"_raw": data, "source_api": "openalex"}
+
+    meta["title"] = data.get("display_name", data.get("title", ""))
+
+    abstract_inv = data.get("abstract_inverted_index", {})
+    if abstract_inv:
+        word_positions = []
+        for word, positions in abstract_inv.items():
+            for pos in positions:
+                word_positions.append((pos, word))
+        word_positions.sort()
+        meta["text"] = " ".join(w for _, w in word_positions)
+    else:
+        meta["text"] = ""
+
+    year = data.get("publication_year")
+    if year:
+        meta["dates"] = [{"type": "publication", "start": year, "end": year, "label": str(year), "confidence": "certain"}]
+
+    authors = data.get("authorships", [])
+    if authors:
+        meta["creator"] = "; ".join(
+            a.get("author", {}).get("display_name", "") for a in authors[:10] if isinstance(a, dict)
+        )
+
+    concepts = data.get("concepts", [])
+    if concepts:
+        meta["tags"] = [c.get("display_name", "") for c in concepts if isinstance(c, dict)]
+
+    source = data.get("primary_location", {}).get("source", {})
+    if source:
+        meta["repository"] = source.get("display_name", "")
+
+    meta["doi"] = data.get("doi", "")
+    meta["cited_by_count"] = data.get("cited_by_count", 0)
+
+    return meta
+
+
+# ---------------------------------------------------------------------------
+# CORE parser
+# ---------------------------------------------------------------------------
+
+def _parse_core(data: dict) -> dict:
+    meta: dict = {"_raw": data, "source_api": "core"}
+
+    meta["title"] = data.get("title", "")
+    meta["text"] = data.get("abstract", data.get("fullText", ""))[:10000]
+
+    year = data.get("yearPublished")
+    if year:
+        meta["dates"] = [{"type": "publication", "start": year, "end": year, "label": str(year), "confidence": "certain"}]
+
+    authors = data.get("authors", [])
+    if authors:
+        meta["creator"] = "; ".join(
+            a.get("name", "") if isinstance(a, dict) else str(a) for a in authors[:10]
+        )
+
+    meta["language_family"] = data.get("language", {}).get("name", "") if isinstance(data.get("language"), dict) else ""
+    meta["doi"] = data.get("doi", "")
+
+    repos = data.get("repositories", [])
+    if repos:
+        meta["repository"] = repos[0].get("name", "") if isinstance(repos[0], dict) else ""
 
     return meta
