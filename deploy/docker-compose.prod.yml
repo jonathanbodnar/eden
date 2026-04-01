@@ -91,6 +91,9 @@ services:
       - api
     ports:
       - "0.0.0.0:80:3000"
+      - "0.0.0.0:443:3443"
+    volumes:
+      - /opt/eden/certs:/etc/nginx/certs:ro
 
 volumes:
   pgdata:

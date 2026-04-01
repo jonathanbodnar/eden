@@ -21,11 +21,11 @@ class QueuedJob(UUIDPrimaryKeyMixin, Base):
         UUID(as_uuid=True), ForeignKey("trusted_sources.id"), nullable=False, index=True
     )
     job_type: Mapped[JobType] = mapped_column(
-        ENUM(JobType, name="job_type", create_type=False),
+        ENUM(JobType, name="job_type", create_type=False, values_callable=lambda e: [x.value for x in e]),
         nullable=False,
     )
     status: Mapped[JobStatus] = mapped_column(
-        ENUM(JobStatus, name="job_status", create_type=False),
+        ENUM(JobStatus, name="job_status", create_type=False, values_callable=lambda e: [x.value for x in e]),
         default=JobStatus.QUEUED,
         nullable=False,
         index=True,

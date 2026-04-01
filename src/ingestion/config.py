@@ -31,6 +31,12 @@ class Settings(BaseSettings):
     worker_checkpoint_interval_seconds: int = 60
     worker_max_attempts: int = 3
 
+    # Anthropic (for context extraction)
+    anthropic_api_key: str = ""
+    anthropic_model: str = "claude-sonnet-4-20250514"
+    context_extraction_batch_size: int = 20
+    context_extraction_rules_only: bool = False
+
     # Rate limiting
     default_rate_limit_rpm: int = 60
     default_fetch_delay_seconds: float = 1.0

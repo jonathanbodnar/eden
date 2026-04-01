@@ -17,7 +17,7 @@ class Segment(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         UUID(as_uuid=True), ForeignKey("source_versions.id"), nullable=False, index=True
     )
     segment_type: Mapped[SegmentType] = mapped_column(
-        ENUM(SegmentType, name="segment_type", create_type=False),
+        ENUM(SegmentType, name="segment_type", create_type=False, values_callable=lambda e: [x.value for x in e]),
         nullable=False,
     )
     segment_order: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -26,7 +26,7 @@ class Segment(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     normalized_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     metadata_jsonb: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     review_status: Mapped[ReviewStatus] = mapped_column(
-        ENUM(ReviewStatus, name="review_status", create_type=False),
+        ENUM(ReviewStatus, name="review_status", create_type=False, values_callable=lambda e: [x.value for x in e]),
         default=ReviewStatus.PENDING,
         nullable=False,
     )

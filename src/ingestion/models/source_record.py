@@ -18,7 +18,7 @@ class SourceRecord(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     canonical_title: Mapped[str] = mapped_column(String(2048), nullable=False)
     source_category: Mapped[SourceCategory] = mapped_column(
-        ENUM(SourceCategory, name="source_category", create_type=False),
+        ENUM(SourceCategory, name="source_category", create_type=False, values_callable=lambda e: [x.value for x in e]),
         nullable=False,
     )
     culture: Mapped[str | None] = mapped_column(String(512), nullable=True)
@@ -26,14 +26,14 @@ class SourceRecord(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     origin_place_name: Mapped[str | None] = mapped_column(String(512), nullable=True)
     repository_institution: Mapped[str | None] = mapped_column(String(512), nullable=True)
     provenance_status: Mapped[ProvenanceStatus] = mapped_column(
-        ENUM(ProvenanceStatus, name="provenance_status", create_type=False),
+        ENUM(ProvenanceStatus, name="provenance_status", create_type=False, values_callable=lambda e: [x.value for x in e]),
         default=ProvenanceStatus.UNKNOWN,
         nullable=False,
     )
     authenticity_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     rights_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     record_status: Mapped[RecordStatus] = mapped_column(
-        ENUM(RecordStatus, name="record_status", create_type=False),
+        ENUM(RecordStatus, name="record_status", create_type=False, values_callable=lambda e: [x.value for x in e]),
         default=RecordStatus.DRAFT,
         nullable=False,
         index=True,

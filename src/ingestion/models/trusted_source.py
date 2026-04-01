@@ -16,20 +16,20 @@ class TrustedSource(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     domain: Mapped[str] = mapped_column(String(512), nullable=False)
     base_url: Mapped[str] = mapped_column(String(2048), nullable=False)
     source_category: Mapped[SourceCategory] = mapped_column(
-        ENUM(SourceCategory, name="source_category", create_type=False),
+        ENUM(SourceCategory, name="source_category", create_type=False, values_callable=lambda e: [x.value for x in e]),
         nullable=False,
     )
     trust_tier: Mapped[TrustTier] = mapped_column(
-        ENUM(TrustTier, name="trust_tier", create_type=False),
+        ENUM(TrustTier, name="trust_tier", create_type=False, values_callable=lambda e: [x.value for x in e]),
         nullable=False,
         default=TrustTier.SECONDARY,
     )
     ingestion_method: Mapped[IngestionMethod] = mapped_column(
-        ENUM(IngestionMethod, name="ingestion_method", create_type=False),
+        ENUM(IngestionMethod, name="ingestion_method", create_type=False, values_callable=lambda e: [x.value for x in e]),
         nullable=False,
     )
     parser_type: Mapped[ParserType] = mapped_column(
-        ENUM(ParserType, name="parser_type", create_type=False),
+        ENUM(ParserType, name="parser_type", create_type=False, values_callable=lambda e: [x.value for x in e]),
         nullable=False,
     )
     content_types_supported: Mapped[list[str] | None] = mapped_column(
@@ -43,6 +43,7 @@ class TrustedSource(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     rate_limit_rpm: Mapped[int | None] = mapped_column(Integer, nullable=True)
     crawl_frequency_hours: Mapped[int | None] = mapped_column(Integer, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_secondary_source: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default="false")
 
     discovered_records = relationship("DiscoveredRecord", back_populates="trusted_source")
     raw_objects = relationship("RawObject", back_populates="trusted_source")

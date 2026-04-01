@@ -17,7 +17,7 @@ class SourceDate(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         UUID(as_uuid=True), ForeignKey("source_records.id"), nullable=False, index=True
     )
     date_type: Mapped[DateType] = mapped_column(
-        ENUM(DateType, name="date_type", create_type=False),
+        ENUM(DateType, name="date_type", create_type=False, values_callable=lambda e: [x.value for x in e]),
         nullable=False,
     )
     date_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -25,7 +25,7 @@ class SourceDate(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     date_label: Mapped[str | None] = mapped_column(String(512), nullable=True)
     dating_method: Mapped[str | None] = mapped_column(String(256), nullable=True)
     dating_confidence: Mapped[DatingConfidence] = mapped_column(
-        ENUM(DatingConfidence, name="dating_confidence", create_type=False),
+        ENUM(DatingConfidence, name="dating_confidence", create_type=False, values_callable=lambda e: [x.value for x in e]),
         default=DatingConfidence.UNCERTAIN,
         nullable=False,
     )

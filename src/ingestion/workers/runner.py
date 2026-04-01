@@ -7,6 +7,7 @@ import logging
 import signal
 import sys
 
+from src.ingestion.workers.context_extraction_worker import ContextExtractionWorker
 from src.ingestion.workers.discovery_worker import DiscoveryWorker
 from src.ingestion.workers.embedding_worker import EmbeddingWorker
 from src.ingestion.workers.fetch_worker import FetchWorker
@@ -25,6 +26,7 @@ WORKER_CLASSES = [
     NormalizationWorker,
     SegmentationWorker,
     EmbeddingWorker,
+    ContextExtractionWorker,
 ]
 
 
@@ -60,6 +62,7 @@ def main():
             "normalize": NormalizationWorker,
             "segment": SegmentationWorker,
             "embed": EmbeddingWorker,
+            "context": ContextExtractionWorker,
         }
         cls = worker_map.get(worker_type)
         if not cls:

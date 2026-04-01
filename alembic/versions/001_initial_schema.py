@@ -24,65 +24,65 @@ def upgrade() -> None:
     # --- Enum types ---
     source_category = postgresql.ENUM(
         "text_corpus", "museum_collection", "site_archive", "gazetteer", "public_domain_library",
-        name="source_category", create_type=True,
+        name="source_category", create_type=False,
     )
     source_category.create(op.get_bind(), checkfirst=True)
 
-    trust_tier = postgresql.ENUM("primary", "secondary", "tertiary", name="trust_tier", create_type=True)
+    trust_tier = postgresql.ENUM("primary", "secondary", "tertiary", name="trust_tier", create_type=False)
     trust_tier.create(op.get_bind(), checkfirst=True)
 
     ingestion_method = postgresql.ENUM(
         "api", "xml_feed", "html_scrape", "iiif", "pdf_download", "manual_import",
-        name="ingestion_method", create_type=True,
+        name="ingestion_method", create_type=False,
     )
     ingestion_method.create(op.get_bind(), checkfirst=True)
 
     parser_type = postgresql.ENUM(
         "tei_parser", "museum_html_parser", "json_api_parser", "pdf_parser",
-        name="parser_type", create_type=True,
+        name="parser_type", create_type=False,
     )
     parser_type.create(op.get_bind(), checkfirst=True)
 
     discovered_record_status = postgresql.ENUM(
         "new", "queued", "fetched", "failed", "skipped",
-        name="discovered_record_status", create_type=True,
+        name="discovered_record_status", create_type=False,
     )
     discovered_record_status.create(op.get_bind(), checkfirst=True)
 
     record_status = postgresql.ENUM(
         "draft", "normalized", "reviewed", "published",
-        name="record_status", create_type=True,
+        name="record_status", create_type=False,
     )
     record_status.create(op.get_bind(), checkfirst=True)
 
     provenance_status = postgresql.ENUM(
         "verified", "unverified", "disputed", "unknown",
-        name="provenance_status", create_type=True,
+        name="provenance_status", create_type=False,
     )
     provenance_status.create(op.get_bind(), checkfirst=True)
 
     date_type = postgresql.ENUM(
         "composition", "copy_witness", "object_creation", "archaeological_context",
         "discovery", "recorded", "publication",
-        name="date_type", create_type=True,
+        name="date_type", create_type=False,
     )
     date_type.create(op.get_bind(), checkfirst=True)
 
     dating_confidence = postgresql.ENUM(
         "certain", "probable", "approximate", "uncertain", "speculative",
-        name="dating_confidence", create_type=True,
+        name="dating_confidence", create_type=False,
     )
     dating_confidence.create(op.get_bind(), checkfirst=True)
 
     version_type = postgresql.ENUM(
         "original", "transliteration", "translation", "ocr", "museum_description", "edition",
-        name="version_type", create_type=True,
+        name="version_type", create_type=False,
     )
     version_type.create(op.get_bind(), checkfirst=True)
 
     copyright_status = postgresql.ENUM(
         "public_domain", "cc_by", "cc_by_sa", "cc_by_nc", "fair_use", "restricted", "unknown",
-        name="copyright_status", create_type=True,
+        name="copyright_status", create_type=False,
     )
     copyright_status.create(op.get_bind(), checkfirst=True)
 
@@ -91,37 +91,37 @@ def upgrade() -> None:
         "object_summary", "inscription_block", "provenance_block", "description_block",
         "trench_layer_block", "findings_block", "dating_block",
         "speaker_block", "episode_block", "motif_block",
-        name="segment_type", create_type=True,
+        name="segment_type", create_type=False,
     )
     segment_type.create(op.get_bind(), checkfirst=True)
 
     review_status = postgresql.ENUM(
         "pending", "approved", "rejected", "needs_review",
-        name="review_status", create_type=True,
+        name="review_status", create_type=False,
     )
     review_status.create(op.get_bind(), checkfirst=True)
 
     job_type = postgresql.ENUM(
         "discover", "fetch", "normalize", "segment", "embed", "reprocess",
-        name="job_type", create_type=True,
+        name="job_type", create_type=False,
     )
     job_type.create(op.get_bind(), checkfirst=True)
 
     job_status = postgresql.ENUM(
         "queued", "running", "succeeded", "failed", "partial", "skipped", "paused", "canceled",
-        name="job_status", create_type=True,
+        name="job_status", create_type=False,
     )
     job_status.create(op.get_bind(), checkfirst=True)
 
     run_type = postgresql.ENUM(
         "discovery", "full_ingest", "reprocess",
-        name="run_type", create_type=True,
+        name="run_type", create_type=False,
     )
     run_type.create(op.get_bind(), checkfirst=True)
 
     run_status = postgresql.ENUM(
         "queued", "running", "paused", "succeeded", "failed", "canceled", "partial",
-        name="run_status", create_type=True,
+        name="run_status", create_type=False,
     )
     run_status.create(op.get_bind(), checkfirst=True)
 
@@ -282,12 +282,9 @@ def upgrade() -> None:
         "embeddings",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, server_default=sa.text("uuid_generate_v4()")),
         sa.Column("segment_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("segments.id"), nullable=False),
-        sa.Column("embedding", sa.Column, nullable=False),
         sa.Column("embedding_model", sa.String(256), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
     )
-    # pgvector column needs raw SQL
-    op.execute("ALTER TABLE embeddings DROP COLUMN embedding")
     op.execute("ALTER TABLE embeddings ADD COLUMN embedding vector(1536) NOT NULL")
     op.create_index("ix_embeddings_segment", "embeddings", ["segment_id"])
     op.execute(

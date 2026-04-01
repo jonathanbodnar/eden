@@ -115,12 +115,36 @@ class ReviewStatus(str, enum.Enum):
     NEEDS_REVIEW = "needs_review"
 
 
+class ContextType(str, enum.Enum):
+    DESCRIPTIVE = "descriptive"
+    COMPARATIVE = "comparative"
+    SCHOLARLY_CONSENSUS = "scholarly_consensus"
+    SCHOLARLY_DEBATE = "scholarly_debate"
+    FUNCTIONAL_HYPOTHESIS = "functional_hypothesis"
+    UNCERTAIN = "uncertain"
+
+
+class ExtractionMethod(str, enum.Enum):
+    RULES_BASED = "rules_based"
+    LLM_CLASSIFIED = "llm_classified"
+    HYBRID = "hybrid"
+    MANUAL = "manual"
+
+
+class StatementConfidence(str, enum.Enum):
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+    UNCERTAIN = "uncertain"
+
+
 class JobType(str, enum.Enum):
     DISCOVER = "discover"
     FETCH = "fetch"
     NORMALIZE = "normalize"
     SEGMENT = "segment"
     EMBED = "embed"
+    EXTRACT_CONTEXT = "extract_context"
     REPROCESS = "reprocess"
 
 

@@ -1,4 +1,4 @@
-const BASE = "/admin";
+const BASE = "/api";
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
@@ -88,6 +88,34 @@ export interface SourceProgress {
   active: boolean;
 }
 
+export interface ContextualStatement {
+  id: string;
+  source_record_id: string;
+  source_version_id: string | null;
+  segment_id: string | null;
+  raw_object_id: string | null;
+  statement_text: string;
+  context_type: string;
+  confidence: string;
+  extraction_method: string;
+  classifier_model: string | null;
+  classifier_version: string | null;
+  source_reference: string | null;
+  supporting_quote: string | null;
+  review_status: string;
+  notes_jsonb: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ContextStats {
+  total: number;
+  by_type: Record<string, number>;
+  by_confidence: Record<string, number>;
+  by_review_status: Record<string, number>;
+  by_extraction_method: Record<string, number>;
+}
+
 export const api = {
   // Sources
   listSources: (activeOnly = false) =>
@@ -132,4 +160,25 @@ export const api = {
   getOverview: () => request<Overview>("/progress/overview"),
   getAllSourceProgress: () => request<SourceProgress[]>("/progress/sources"),
   getSourceProgress: (id: string) => request<SourceProgress>(`/progress/sources/${id}`),
+
+  // Context
+  listContextStatements: (params?: Record<string, string>) => {
+    const qs = new URLSearchParams();
+    if (params) {
+      for (const [k, v] of Object.entries(params)) {
+        if (v) qs.set(k, v);
+      }
+    }
+    qs.set("limit", "100");
+    return request<{ items: ContextualStatement[]; total: number }>(`/context/statements?${qs}`);
+  },
+  getContextStatement: (id: string) => request<ContextualStatement>(`/context/statements/${id}`),
+  updateContextStatement: (id: string, data: Record<string, unknown>) =>
+    request<ContextualStatement>(`/context/statements/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  batchReviewStatements: (ids: string[], review_status: string) =>
+    request<{ updated: number; ids: string[] }>("/context/statements/review", {
+      method: "POST",
+      body: JSON.stringify({ ids, review_status }),
+    }),
+  getContextStats: () => request<ContextStats>("/context/stats"),
 };

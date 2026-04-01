@@ -12,6 +12,7 @@ from src.ingestion.models.source_run import SourceRun
 from src.ingestion.models.queued_job import QueuedJob
 from src.ingestion.models.job_checkpoint import JobCheckpoint
 from src.ingestion.models.source_progress import SourceProgress
+from src.ingestion.models.contextual_statement import ContextualStatement
 
 __all__ = [
     "Base",
@@ -28,4 +29,5 @@ __all__ = [
     "QueuedJob",
     "JobCheckpoint",
     "SourceProgress",
+    "ContextualStatement",
 ]

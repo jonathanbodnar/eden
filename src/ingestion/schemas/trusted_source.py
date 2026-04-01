@@ -31,6 +31,7 @@ class TrustedSourceCreate(BaseModel):
     rate_limit_rpm: int | None = None
     crawl_frequency_hours: int | None = None
     notes: str | None = None
+    is_secondary_source: bool = False
 
 
 class TrustedSourceUpdate(BaseModel):
@@ -50,6 +51,7 @@ class TrustedSourceUpdate(BaseModel):
     rate_limit_rpm: int | None = None
     crawl_frequency_hours: int | None = None
     notes: str | None = None
+    is_secondary_source: bool | None = None
 
 
 class TrustedSourceResponse(BaseModel):
@@ -73,6 +75,7 @@ class TrustedSourceResponse(BaseModel):
     rate_limit_rpm: int | None
     crawl_frequency_hours: int | None
     notes: str | None
+    is_secondary_source: bool
     created_at: datetime
     updated_at: datetime
 

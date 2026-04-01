@@ -3,7 +3,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.ingestion.api.routes import archive, jobs, progress, sources
+from src.ingestion.api.routes import archive, context, jobs, progress, sources
 from src.ingestion.config import settings
 
 app = FastAPI(
@@ -20,10 +20,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(sources.router, prefix="/admin/sources", tags=["Trusted Sources"])
-app.include_router(jobs.router, prefix="/admin/jobs", tags=["Jobs & Queue"])
-app.include_router(progress.router, prefix="/admin/progress", tags=["Progress"])
-app.include_router(archive.router, prefix="/admin/archive", tags=["Archive Inspection"])
+app.include_router(sources.router, prefix="/api/sources", tags=["Trusted Sources"])
+app.include_router(jobs.router, prefix="/api/jobs", tags=["Jobs & Queue"])
+app.include_router(progress.router, prefix="/api/progress", tags=["Progress"])
+app.include_router(archive.router, prefix="/api/archive", tags=["Archive Inspection"])
+app.include_router(context.router, prefix="/api/context", tags=["Context Layer"])
 
 
 @app.get("/health")

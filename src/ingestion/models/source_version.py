@@ -17,7 +17,7 @@ class SourceVersion(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         UUID(as_uuid=True), ForeignKey("source_records.id"), nullable=False, index=True
     )
     version_type: Mapped[VersionType] = mapped_column(
-        ENUM(VersionType, name="version_type", create_type=False),
+        ENUM(VersionType, name="version_type", create_type=False, values_callable=lambda e: [x.value for x in e]),
         nullable=False,
     )
     language: Mapped[str | None] = mapped_column(String(128), nullable=True)
@@ -27,7 +27,7 @@ class SourceVersion(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     edition_title: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     license_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     copyright_status: Mapped[CopyrightStatus] = mapped_column(
-        ENUM(CopyrightStatus, name="copyright_status", create_type=False),
+        ENUM(CopyrightStatus, name="copyright_status", create_type=False, values_callable=lambda e: [x.value for x in e]),
         default=CopyrightStatus.UNKNOWN,
         nullable=False,
     )

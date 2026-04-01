@@ -28,7 +28,7 @@ class DiscoveredRecord(UUIDPrimaryKeyMixin, Base):
     )
     discovery_metadata_jsonb: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     status: Mapped[DiscoveredRecordStatus] = mapped_column(
-        ENUM(DiscoveredRecordStatus, name="discovered_record_status", create_type=False),
+        ENUM(DiscoveredRecordStatus, name="discovered_record_status", create_type=False, values_callable=lambda e: [x.value for x in e]),
         default=DiscoveredRecordStatus.NEW,
         nullable=False,
         index=True,
