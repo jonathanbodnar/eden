@@ -146,6 +146,16 @@ class FetchWorker(BaseWorker):
                         .values(status=DiscoveredRecordStatus.FAILED)
                     )
 
+                if records_processed % 25 == 0:
+                    await update_source_progress(
+                        session, source.id, fetched_count=records_processed,
+                    )
+                    await session.commit()
+                    logger.info(
+                        "Fetch %s: %d/%d done (committed)",
+                        source.slug, records_processed, total,
+                    )
+
                 await self.maybe_checkpoint(
                     session, job,
                     checkpoint_type="fetch",
@@ -156,7 +166,11 @@ class FetchWorker(BaseWorker):
                     stage_percent=(records_processed / total * 100) if total else None,
                 )
 
-                delay = settings.default_fetch_delay_seconds
+                is_api = source.ingestion_method == IngestionMethod.API
+                if is_api:
+                    delay = 0.1
+                else:
+                    delay = settings.default_fetch_delay_seconds
                 if source.rate_limit_rpm:
                     delay = max(delay, 60.0 / source.rate_limit_rpm)
                 await asyncio.sleep(delay)

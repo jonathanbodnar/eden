@@ -80,6 +80,13 @@ class NormalizationWorker(BaseWorker):
             except Exception as exc:
                 logger.error("Failed to normalize raw object %s: %s", raw_obj.id, exc)
 
+            if records_processed % 50 == 0:
+                await update_source_progress(
+                    session, source.id, normalized_count=records_processed,
+                )
+                await session.commit()
+                logger.info("Normalize %s: %d/%d done (committed)", source.slug, records_processed, total)
+
             await self.maybe_checkpoint(
                 session, job,
                 checkpoint_type="normalize",
