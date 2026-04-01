@@ -240,13 +240,19 @@ def _parse_cdli(art: dict) -> dict:
     if witnesses:
         meta["witnesses"] = witnesses
 
-    # Images
+    # Images — CDLI serves photos at /dl/photo/P{id zero-padded to 6}.jpg
     images = []
+    cdli_id = art.get("id")
+    if cdli_id:
+        images.append(f"https://cdli.earth/dl/photo/P{int(cdli_id):06d}.jpg")
+
     for img_field in ("images", "photos"):
         for img in art.get(img_field, []):
             if isinstance(img, dict) and img.get("url"):
-                images.append(img["url"])
-            elif isinstance(img, str):
+                url = img["url"]
+                if url not in images:
+                    images.append(url)
+            elif isinstance(img, str) and img not in images:
                 images.append(img)
     if images:
         meta["image_urls"] = images
