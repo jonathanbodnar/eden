@@ -84,7 +84,7 @@ DESCRIPTIVE_PATTERNS = [
 ]
 
 EVIDENCE_PATTERNS = [
-    r"^[\"'"].+[\"'"]$",
+    r'^["\u2018\u2019\u201c\u201d].+["\u2018\u2019\u201c\u201d]$',
     r"\btranslat(?:ion|ed)\s*:\s*[\"']",
     r"\btransliterat(?:ion|ed)\s*:",
     r"\bcol(?:umn)?\s+[IVXivx]+\s+(?:line|l\.)\s+\d",
