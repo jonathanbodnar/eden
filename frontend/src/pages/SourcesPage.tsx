@@ -110,6 +110,27 @@ export default function SourcesPage() {
     }
   };
 
+  const [approveLoading, setApproveLoading] = useState(false);
+
+  const handleApproveAll = async () => {
+    if (!intakeResults || intakeResults.length === 0) return;
+    setApproveLoading(true);
+    try {
+      const result = await api.approveAllIntake(intakeResults);
+      const msgs: string[] = [];
+      if (result.created.length > 0) msgs.push(`${result.created.length} source${result.created.length > 1 ? "s" : ""} created`);
+      if (result.skipped.length > 0) msgs.push(`${result.skipped.length} skipped (already exist)`);
+      alert(msgs.join(", ") || "No sources to create");
+      setIntakeResults(null);
+      setIntakeUrls("");
+      load();
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : String(e));
+    } finally {
+      setApproveLoading(false);
+    }
+  };
+
   const handleUseSuggestion = (group: IntakeDomainGroup) => {
     const s = group.suggested_source;
     setEditId(null);
@@ -186,11 +207,20 @@ export default function SourcesPage() {
       {/* Intake Results */}
       {intakeResults && intakeResults.length > 0 && (
         <div style={{ marginBottom: 20 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-            <span style={{ fontSize: 15, fontWeight: 600 }}>
-              Analysis Results
-            </span>
-            <span className="badge badge-success">{intakeResults.length} source{intakeResults.length > 1 ? "s" : ""} detected</span>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontSize: 15, fontWeight: 600 }}>
+                Analysis Results
+              </span>
+              <span className="badge badge-success">{intakeResults.length} source{intakeResults.length > 1 ? "s" : ""} detected</span>
+            </div>
+            <button
+              className="btn btn-primary"
+              onClick={handleApproveAll}
+              disabled={approveLoading}
+            >
+              {approveLoading ? "Creating..." : `Approve All (${intakeResults.length})`}
+            </button>
           </div>
           {intakeResults.map((group) => (
             <div key={group.domain} className="card" style={{ marginBottom: 12, padding: 16 }}>

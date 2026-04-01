@@ -181,6 +181,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ urls }),
     }),
+  approveAllIntake: (groups: IntakeDomainGroup[]) =>
+    request<{ created: TrustedSource[]; skipped: string[] }>("/sources/intake/approve-all", {
+      method: "POST",
+      body: JSON.stringify({ groups }),
+    }),
 
   // Jobs
   listJobs: (params?: { status?: string; job_type?: string; trusted_source_id?: string }) => {
