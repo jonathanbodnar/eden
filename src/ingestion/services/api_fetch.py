@@ -36,17 +36,15 @@ def api_fetch_url(slug: str, external_id: str) -> str | None:
         return f"https://api.europeana.eu/record/v2/{item_path}.json"
 
     if slug == "sefaria":
-        ref = external_id.removeprefix("sefaria-")
-        return f"https://www.sefaria.org/api/v3/texts/{ref}?version=all"
+        ref = external_id.removeprefix("sefaria-").replace(" ", "_")
+        return f"https://www.sefaria.org/api/texts/{ref}"
 
     if slug == "dss-bible":
         return None  # HTML scrape, no API URL
 
     if slug == "ctext":
-        parts = external_id.removeprefix("ctext-").split("-", 1)
-        if len(parts) == 2:
-            return f"https://api.ctext.org/gettext?urn=ctp:{parts[0]}/{parts[1]}"
-        return f"https://api.ctext.org/gettext?urn=ctp:{parts[0]}"
+        path = external_id.removeprefix("ctext-").replace("-", "/")
+        return f"https://api.ctext.org/gettext?urn=ctp:{path}"
 
     if slug == "suttacentral":
         uid = external_id.removeprefix("sc-")
@@ -581,46 +579,59 @@ def _parse_europeana(data: dict) -> dict:
 def _parse_sefaria(data: dict) -> dict:
     meta: dict = {"_raw": data, "source_api": "sefaria"}
     meta["title"] = data.get("ref", data.get("heRef", ""))
+    meta["book"] = data.get("book", "")
 
-    versions = data.get("versions", [])
-    en_text = ""
-    he_text = ""
-    for v in (versions if isinstance(versions, list) else []):
-        lang = v.get("language", "")
-        text = v.get("text", "")
-        if isinstance(text, list):
-            text = "\n".join(_flatten_text(text))
-        if lang == "en" and not en_text:
-            en_text = text
-        elif lang == "he" and not he_text:
-            he_text = text
+    en_text = data.get("text", "")
+    if isinstance(en_text, list):
+        en_text = "\n".join(_flatten_text(en_text))
+    en_text = re.sub(r"<[^>]+>", "", en_text).strip()
 
-    if not en_text:
-        raw_text = data.get("text", "")
-        if isinstance(raw_text, list):
-            en_text = "\n".join(_flatten_text(raw_text))
-        elif isinstance(raw_text, str):
-            en_text = raw_text
-    if not he_text:
-        raw_he = data.get("he", "")
-        if isinstance(raw_he, list):
-            he_text = "\n".join(_flatten_text(raw_he))
-        elif isinstance(raw_he, str):
-            he_text = raw_he
+    he_text = data.get("he", "")
+    if isinstance(he_text, list):
+        he_text = "\n".join(_flatten_text(he_text))
+    he_text = re.sub(r"<[^>]+>", "", he_text).strip()
 
-    meta["text"] = en_text
+    meta["text"] = en_text if en_text else he_text
     meta["language_family"] = "Hebrew"
 
     translations = []
     if he_text:
         translations.append({"language": "Hebrew", "text": he_text, "version_type": "original"})
-    if en_text and he_text:
-        meta["text"] = en_text
+    if en_text:
+        translations.append({"language": "English", "text": en_text})
     meta["translations"] = translations
 
     cats = data.get("categories", [])
     if cats:
         meta["genre"] = " > ".join(cats)
+
+    book = data.get("book", "")
+    tanakh_dates = {
+        "Genesis": (-1400, -400), "Exodus": (-1400, -400),
+        "Leviticus": (-1400, -400), "Numbers": (-1400, -400),
+        "Deuteronomy": (-1400, -400),
+        "Joshua": (-1200, -600), "Judges": (-1200, -600),
+        "I Samuel": (-1000, -600), "II Samuel": (-1000, -600),
+        "I Kings": (-600, -550), "II Kings": (-600, -550),
+        "Isaiah": (-740, -530), "Jeremiah": (-626, -580),
+        "Ezekiel": (-593, -571),
+        "Psalms": (-1000, -300), "Proverbs": (-900, -400),
+        "Job": (-600, -400), "Song of Songs": (-900, -300),
+        "Ruth": (-1000, -400), "Lamentations": (-586, -550),
+        "Ecclesiastes": (-400, -200), "Esther": (-400, -300),
+        "Daniel": (-530, -165), "Ezra": (-450, -400),
+        "Nehemiah": (-430, -400),
+        "I Chronicles": (-400, -300), "II Chronicles": (-400, -300),
+    }
+    for bk, (start, end) in tanakh_dates.items():
+        if bk.lower() in book.lower() or book.lower() in bk.lower():
+            meta["dates"] = [{
+                "type": "composition", "start": start, "end": end,
+                "label": f"{bk} (composed {abs(start)}-{abs(end)} BC)",
+                "confidence": "approximate",
+            }]
+            break
+
     meta["is_public_domain"] = True
 
     return meta

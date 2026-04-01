@@ -254,60 +254,65 @@ async def stream_europeana(api_key: str, max_pages: int = 100_000) -> AsyncItera
 # Sefaria — Hebrew Bible, Talmud, Mishnah, Midrash
 # ---------------------------------------------------------------------------
 
-SEFARIA_CATEGORIES = ["Tanakh", "Mishnah", "Talmud", "Midrash", "Halakhah"]
+TANAKH_BOOKS = [
+    "Genesis", "Exodus", "Leviticus", "Numbers", "Deuteronomy",
+    "Joshua", "Judges", "I Samuel", "II Samuel", "I Kings", "II Kings",
+    "Isaiah", "Jeremiah", "Ezekiel",
+    "Hosea", "Joel", "Amos", "Obadiah", "Jonah", "Micah",
+    "Nahum", "Habakkuk", "Zephaniah", "Haggai", "Zechariah", "Malachi",
+    "Psalms", "Proverbs", "Job",
+    "Song of Songs", "Ruth", "Lamentations", "Ecclesiastes", "Esther",
+    "Daniel", "Ezra", "Nehemiah", "I Chronicles", "II Chronicles",
+]
 
 async def stream_sefaria(max_pages: int = 100_000) -> AsyncIterator[DiscoveryBatch]:
+    """Discover individual chapters of Tanakh books (BC-era texts only)."""
     total = 0
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-        try:
-            resp = await client.get(
-                "https://www.sefaria.org/api/index/",
-                headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
-            )
-            if resp.status_code != 200:
-                yield DiscoveryBatch([], 1, 1, True); return
-            index = resp.json()
-        except Exception as exc:
-            logger.error("Sefaria index error: %s", exc)
-            yield DiscoveryBatch([], 1, 1, True); return
-
-        def _extract_titles(node, depth=0):
-            titles = []
-            if isinstance(node, dict):
-                if "title" in node and "category" not in node:
-                    titles.append(node["title"])
-                for child in node.get("contents", []):
-                    titles.extend(_extract_titles(child, depth + 1))
-            elif isinstance(node, list):
-                for item in node:
-                    titles.extend(_extract_titles(item, depth + 1))
-            return titles
-
-        all_titles = []
-        for cat in index:
-            if isinstance(cat, dict) and cat.get("category") in SEFARIA_CATEGORIES:
-                all_titles.extend(_extract_titles(cat))
-
-        batch: list[DiscoveredPage] = []
-        for title in all_titles:
+        for book in TANAKH_BOOKS:
             if total >= max_pages:
                 break
-            batch.append(DiscoveredPage(
-                url=f"https://www.sefaria.org/{title.replace(' ', '_')}",
-                external_id=f"sefaria-{title}",
-                title=title[:300],
-                content_hint="jewish_text",
-                depth=0,
-            ))
-            total += 1
-            if len(batch) >= 500:
-                yield DiscoveryBatch(batch, 1, 0, False)
-                batch = []
-                await asyncio.sleep(0.1)
+            try:
+                resp = await client.get(
+                    f"https://www.sefaria.org/api/v2/index/{book.replace(' ', '_')}",
+                    headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
+                )
+                if resp.status_code != 200:
+                    batch_item = DiscoveredPage(
+                        url=f"https://www.sefaria.org/{book.replace(' ', '_')}",
+                        external_id=f"sefaria-{book}",
+                        title=book,
+                        content_hint="tanakh",
+                        depth=0,
+                    )
+                    yield DiscoveryBatch([batch_item], 1, 0, False)
+                    total += 1
+                    continue
 
-        if batch:
-            yield DiscoveryBatch(batch, 1, 0, False)
+                info = resp.json()
+                schema = info.get("schema", {})
+                length = schema.get("lengths", [0])
+                num_chapters = length[0] if length else 1
 
+                batch: list[DiscoveredPage] = []
+                for ch in range(1, num_chapters + 1):
+                    ref = f"{book}.{ch}"
+                    batch.append(DiscoveredPage(
+                        url=f"https://www.sefaria.org/{book.replace(' ', '_')}.{ch}",
+                        external_id=f"sefaria-{ref}",
+                        title=f"{book} Chapter {ch}",
+                        content_hint="tanakh",
+                        depth=0,
+                    ))
+                    total += 1
+                    if total >= max_pages:
+                        break
+                if batch:
+                    yield DiscoveryBatch(batch, 1, 0, False)
+                    logger.info("Sefaria %s: %d chapters", book, len(batch))
+                await asyncio.sleep(0.3)
+            except Exception as exc:
+                logger.error("Sefaria error for %s: %s", book, exc)
     yield DiscoveryBatch([], 0, 0, True)
 
 
