@@ -1149,48 +1149,58 @@ async def stream_unesco_whc(max_pages: int = 100_000) -> AsyncIterator[Discovery
 # ---------------------------------------------------------------------------
 
 WD_LOCATION_QUERIES = [
-    # Ancient cities
+    # Archaeological sites (direct instance)
     """SELECT ?item ?itemLabel ?coord WHERE {{
-      ?item wdt:P31/wdt:P279* wd:Q515 .
+      ?item wdt:P31 wd:Q839954 .
       ?item wdt:P625 ?coord .
-      ?item wdt:P571 ?inception .
-      FILTER(YEAR(?inception) < 1)
-      SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en" . }}
-    }} LIMIT {limit} OFFSET {offset}""",
-    # Archaeological sites
-    """SELECT ?item ?itemLabel ?coord WHERE {{
-      ?item wdt:P31/wdt:P279* wd:Q839954 .
-      ?item wdt:P625 ?coord .
-      ?item wdt:P571 ?inception .
-      FILTER(YEAR(?inception) < 1)
-      SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en" . }}
-    }} LIMIT {limit} OFFSET {offset}""",
-    # Temples
-    """SELECT ?item ?itemLabel ?coord WHERE {{
-      ?item wdt:P31/wdt:P279* wd:Q44539 .
-      ?item wdt:P625 ?coord .
-      ?item wdt:P571 ?inception .
-      FILTER(YEAR(?inception) < 1)
       SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en" . }}
     }} LIMIT {limit} OFFSET {offset}""",
     # Pyramids
     """SELECT ?item ?itemLabel ?coord WHERE {{
-      ?item wdt:P31/wdt:P279* wd:Q12516 .
+      ?item wdt:P31 wd:Q12516 .
       ?item wdt:P625 ?coord .
       SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en" . }}
     }} LIMIT {limit} OFFSET {offset}""",
     # Ziggurats
     """SELECT ?item ?itemLabel ?coord WHERE {{
-      ?item wdt:P31/wdt:P279* wd:Q104555 .
+      ?item wdt:P31 wd:Q104555 .
       ?item wdt:P625 ?coord .
       SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en" . }}
     }} LIMIT {limit} OFFSET {offset}""",
-    # Ancient monuments
+    # Ancient temples
     """SELECT ?item ?itemLabel ?coord WHERE {{
-      ?item wdt:P31/wdt:P279* wd:Q4989906 .
+      ?item wdt:P31 wd:Q44539 .
       ?item wdt:P625 ?coord .
-      ?item wdt:P571 ?inception .
-      FILTER(YEAR(?inception) < 1)
+      SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en" . }}
+    }} LIMIT {limit} OFFSET {offset}""",
+    # Megalithic monuments
+    """SELECT ?item ?itemLabel ?coord WHERE {{
+      ?item wdt:P31 wd:Q1151419 .
+      ?item wdt:P625 ?coord .
+      SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en" . }}
+    }} LIMIT {limit} OFFSET {offset}""",
+    # Ancient Roman buildings
+    """SELECT ?item ?itemLabel ?coord WHERE {{
+      ?item wdt:P31 wd:Q24354 .
+      ?item wdt:P625 ?coord .
+      SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en" . }}
+    }} LIMIT {limit} OFFSET {offset}""",
+    # Ruins
+    """SELECT ?item ?itemLabel ?coord WHERE {{
+      ?item wdt:P31 wd:Q109607 .
+      ?item wdt:P625 ?coord .
+      SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en" . }}
+    }} LIMIT {limit} OFFSET {offset}""",
+    # Ancient cities (town of the ancient world)
+    """SELECT ?item ?itemLabel ?coord WHERE {{
+      ?item wdt:P31 wd:Q15661340 .
+      ?item wdt:P625 ?coord .
+      SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en" . }}
+    }} LIMIT {limit} OFFSET {offset}""",
+    # Tell (archaeological mound)
+    """SELECT ?item ?itemLabel ?coord WHERE {{
+      ?item wdt:P31 wd:Q194195 .
+      ?item wdt:P625 ?coord .
       SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en" . }}
     }} LIMIT {limit} OFFSET {offset}""",
 ]
