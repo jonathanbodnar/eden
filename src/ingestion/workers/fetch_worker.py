@@ -187,13 +187,34 @@ class FetchWorker(BaseWorker):
         if not fetch_url.startswith(("http://", "https://")):
             raise ValueError(f"Invalid URL: {fetch_url}")
 
-        response = await client.get(
-            fetch_url,
-            follow_redirects=True,
-            headers={"Accept": "application/json", "User-Agent": "EdenBot/1.0"} if is_api else {},
-        )
-        if response.status_code in (403, 404, 410, 429):
-            logger.debug("Skipping %s: HTTP %d", record.external_id, response.status_code)
+        retries = 3
+        response = None
+        for attempt in range(retries):
+            try:
+                response = await client.get(
+                    fetch_url,
+                    follow_redirects=True,
+                    headers={"Accept": "application/json", "User-Agent": "EdenBot/1.0"} if is_api else {},
+                )
+            except httpx.TimeoutException:
+                if attempt < retries - 1:
+                    wait = 2 ** (attempt + 1)
+                    logger.warning("Timeout fetching %s, retrying in %ds (attempt %d/%d)", record.external_id, wait, attempt + 1, retries)
+                    await asyncio.sleep(wait)
+                    continue
+                raise ValueError(f"Timeout after {retries} attempts for {fetch_url}")
+
+            if response.status_code in (429, 503):
+                retry_after = int(response.headers.get("Retry-After", 2 ** (attempt + 1)))
+                if attempt < retries - 1:
+                    logger.warning("HTTP %d for %s, retrying in %ds", response.status_code, record.external_id, retry_after)
+                    await asyncio.sleep(retry_after)
+                    continue
+                raise ValueError(f"HTTP {response.status_code} after {retries} attempts for {fetch_url}")
+
+            break
+
+        if response.status_code in (403, 404, 410):
             raise ValueError(f"HTTP {response.status_code} for {fetch_url}")
         response.raise_for_status()
         data = response.content

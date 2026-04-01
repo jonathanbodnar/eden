@@ -145,13 +145,16 @@ class NormalizationWorker(BaseWorker):
                     logger.warning("Failed to add date for %s: %s", raw_obj.external_id, exc)
 
         text_content = meta.get("text", "")
+        if not text_content:
+            text_content = self._synthesize_description(meta)
+
         copyright_status = CopyrightStatus.UNKNOWN
         if meta.get("is_public_domain"):
             copyright_status = CopyrightStatus.PUBLIC_DOMAIN
 
         version = SourceVersion(
             source_record_id=source_record.id,
-            version_type=VersionType.ORIGINAL,
+            version_type=VersionType.MUSEUM_DESCRIPTION if not meta.get("text") else VersionType.ORIGINAL,
             language=meta.get("language_family", source.default_language),
             copyright_status=copyright_status,
             is_preferred=True,
@@ -175,3 +178,60 @@ class NormalizationWorker(BaseWorker):
 
         await session.flush()
         return source_record
+
+    @staticmethod
+    def _synthesize_description(meta: dict) -> str:
+        """Build a textual description from structured museum metadata."""
+        parts: list[str] = []
+
+        title = meta.get("title", "")
+        if title:
+            parts.append(title)
+
+        obj_type = meta.get("object_type", "")
+        medium = meta.get("medium", "")
+        if obj_type and medium:
+            parts.append(f"{obj_type}, {medium}.")
+        elif obj_type:
+            parts.append(f"{obj_type}.")
+        elif medium:
+            parts.append(f"Medium: {medium}.")
+
+        culture = meta.get("culture", "")
+        period = meta.get("period", "")
+        date_label = meta.get("date_label", "")
+        context_parts = [s for s in [culture, period, date_label] if s]
+        if context_parts:
+            parts.append(" | ".join(context_parts))
+
+        geo = meta.get("geography") or {}
+        place_parts = [v for v in [geo.get("region"), geo.get("subregion"), geo.get("locale")] if v]
+        origin = meta.get("origin_place", "")
+        if place_parts:
+            parts.append(f"Origin: {', '.join(place_parts)}.")
+        elif origin:
+            parts.append(f"Origin: {origin}.")
+
+        dims = meta.get("dimensions", "")
+        if dims:
+            parts.append(f"Dimensions: {dims}.")
+
+        repo = meta.get("repository", "")
+        acc = meta.get("accession_number", "")
+        if repo:
+            line = repo
+            if acc:
+                line += f" ({acc})"
+            parts.append(line)
+
+        credit = meta.get("credit_line", "")
+        if credit:
+            parts.append(credit)
+
+        dept = meta.get("department", "")
+        classification = meta.get("classification", "")
+        if dept or classification:
+            extra = [s for s in [dept, classification] if s]
+            parts.append(f"Department: {', '.join(extra)}")
+
+        return "\n\n".join(parts)
