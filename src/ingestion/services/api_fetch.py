@@ -96,7 +96,7 @@ def api_fetch_url(slug: str, external_id: str) -> str | None:
 
     if slug == "unesco-whc":
         site_id = external_id.removeprefix("unesco-")
-        return f"https://data.unesco.org/api/explore/v2.0/catalog/datasets/whc001/records?where=id_number={site_id}&limit=1"
+        return f"https://data.unesco.org/api/explore/v2.1/catalog/datasets/whc001/records?where=id_no%3D{site_id}&limit=1"
 
     if slug == "wikidata-locations":
         qid = external_id.removeprefix("wd-loc-")
@@ -1107,7 +1107,21 @@ def _parse_pleiades(data: dict) -> dict:
     meta: dict = {"_raw": data, "source_api": "pleiades"}
 
     meta["title"] = data.get("title", "")
-    meta["text"] = data.get("description", "")
+    desc = data.get("description", "")
+    place_types = data.get("placeTypes", [])
+
+    details_parts = []
+    if desc:
+        details_parts.append(desc)
+    if place_types:
+        details_parts.append(f"Type: {', '.join(place_types)}")
+    for name_rec in data.get("names", []):
+        if isinstance(name_rec, dict):
+            romanized = name_rec.get("romanized", "")
+            lang = name_rec.get("language", "")
+            if romanized:
+                details_parts.append(f"Known as: {romanized}" + (f" ({lang})" if lang else ""))
+    meta["text"] = "\n".join(details_parts)
     meta["origin_place"] = data.get("title", "")
 
     repr_point = data.get("reprPoint")
@@ -1115,19 +1129,18 @@ def _parse_pleiades(data: dict) -> dict:
         meta["longitude"] = repr_point[0]
         meta["latitude"] = repr_point[1]
 
-    names = data.get("names", [])
-    if isinstance(names, list):
-        meta["alternate_names"] = names
-
     connects = data.get("connectsWith", [])
     if connects:
         meta["connected_places"] = connects
 
-    bbox = data.get("bbox")
-    if bbox:
-        meta["bbox"] = bbox
-
     dates = []
+    time_periods = set()
+    for loc in data.get("locations", []):
+        if not isinstance(loc, dict):
+            continue
+        for tp in loc.get("timePeriods", []):
+            if isinstance(tp, dict):
+                time_periods.add(tp.get("period", {}).get("label", "") if isinstance(tp.get("period"), dict) else str(tp.get("timePeriod", "")))
     for feat in data.get("features", []):
         if not isinstance(feat, dict):
             continue
@@ -1143,6 +1156,8 @@ def _parse_pleiades(data: dict) -> dict:
                 })
     if dates:
         meta["dates"] = dates
+    if time_periods:
+        meta["tags"] = [p for p in time_periods if p]
 
     meta["is_public_domain"] = True
 
@@ -1184,37 +1199,45 @@ def _parse_open_context(data: dict) -> dict:
 
 def _parse_unesco(data: dict) -> dict:
     results = data.get("results", [data])
-    rec = results[0] if results else data
-    fields = rec.get("record", {}).get("fields", rec.get("fields", rec))
+    rec = results[0] if isinstance(results, list) and results else data
 
     meta: dict = {"_raw": data, "source_api": "unesco"}
 
-    meta["title"] = fields.get("name_en", fields.get("site", ""))
-    meta["text"] = fields.get("short_description_en", "")
-    meta["origin_place"] = fields.get("states_name_en", "")
+    meta["title"] = rec.get("name_en", rec.get("site", ""))
+    desc = rec.get("description_en") or rec.get("short_description_en", "")
+    meta["text"] = _strip_html(desc) if desc else ""
+    meta["origin_place"] = rec.get("states_names", "")
 
-    coords = fields.get("coordinates", {})
+    coords = rec.get("coordinates", {})
     if isinstance(coords, dict):
         meta["latitude"] = coords.get("lat")
         meta["longitude"] = coords.get("lon")
-    elif isinstance(coords, str) and "," in coords:
-        parts = coords.split(",")
-        try:
-            meta["latitude"] = float(parts[0])
-            meta["longitude"] = float(parts[1])
-        except (ValueError, IndexError):
-            pass
 
-    year = fields.get("date_inscribed")
+    year = rec.get("date_inscribed")
     if year:
-        meta["dates"] = [{"type": "recorded", "label": f"Inscribed {year}", "start": year, "end": year, "confidence": "certain"}]
+        meta["dates"] = [{"type": "recorded", "label": f"UNESCO Inscribed {year}", "start": int(year), "end": int(year), "confidence": "certain"}]
 
-    criteria = fields.get("criteria_txt", "")
+    criteria = rec.get("criteria_txt", "")
     if criteria:
         meta["tags"] = [c.strip() for c in str(criteria).split(",") if c.strip()]
 
-    meta["category"] = fields.get("category", "")
-    meta["region"] = fields.get("region_en", "")
+    meta["category"] = rec.get("category", "")
+    meta["region"] = rec.get("region", "")
+
+    images = []
+    main_img = rec.get("main_image_url", "")
+    if main_img:
+        images.append(main_img)
+    extra_imgs = rec.get("images_urls", "")
+    if isinstance(extra_imgs, str) and extra_imgs:
+        for url in extra_imgs.split(","):
+            url = url.strip()
+            if url and url.startswith("http") and url not in images:
+                images.append(url)
+    if images:
+        meta["image_urls"] = images[:10]
+
+    meta["is_public_domain"] = True
 
     return meta
 

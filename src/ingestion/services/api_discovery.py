@@ -1150,8 +1150,11 @@ async def stream_unesco_whc(max_pages: int = 100_000) -> AsyncIterator[Discovery
 
 WD_LOCATION_QUERY = """
 SELECT ?item ?itemLabel ?coord WHERE {{
-  ?item wdt:P31/wdt:P279* wd:Q839954 .
+  VALUES ?siteType {{ wd:Q839954 wd:Q3947 wd:Q5107 wd:Q44539 wd:Q15661340 wd:Q23413 }}
+  ?item wdt:P31/wdt:P279* ?siteType .
   ?item wdt:P625 ?coord .
+  ?item wdt:P571 ?inception .
+  FILTER(YEAR(?inception) < 500)
   SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en" . }}
 }}
 LIMIT {limit} OFFSET {offset}
