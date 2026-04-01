@@ -152,6 +152,85 @@ export interface IntakeAnalyzeResponse {
   status: string;
 }
 
+export interface CollectionImage {
+  id: string;
+  image_url: string;
+  alt_text: string | null;
+  caption: string | null;
+  image_order: number;
+}
+
+export interface CollectionVersion {
+  id: string;
+  version_type: string;
+  language: string | null;
+  text_extracted: string | null;
+  is_preferred: boolean;
+}
+
+export interface CollectionDate {
+  id: string;
+  date_type: string;
+  date_start: number | null;
+  date_end: number | null;
+  date_label: string | null;
+  dating_confidence: string;
+}
+
+export interface CollectionSegment {
+  id: string;
+  segment_type: string;
+  segment_order: number;
+  original_text: string | null;
+  normalized_text: string | null;
+}
+
+export interface CollectionContext {
+  id: string;
+  statement_text: string;
+  context_type: string;
+  confidence: string;
+  review_status: string;
+}
+
+export interface CollectionItem {
+  id: string;
+  canonical_title: string;
+  source_category: string;
+  culture: string | null;
+  language_family: string | null;
+  origin_place_name: string | null;
+  repository_institution: string | null;
+  provenance_status: string;
+  record_status: string;
+  metadata_jsonb: Record<string, unknown> | null;
+  created_at: string;
+  source_url: string | null;
+  source_name: string;
+  source_slug: string;
+  images: CollectionImage[];
+  versions: CollectionVersion[];
+  dates: CollectionDate[];
+  segment_count: number;
+  context_count: number;
+}
+
+export interface CollectionItemDetail extends CollectionItem {
+  segments: CollectionSegment[];
+  context_statements: CollectionContext[];
+}
+
+export interface CollectionStats {
+  total_records: number;
+  total_images: number;
+  total_versions: number;
+  total_segments: number;
+  total_contexts: number;
+  by_source: { name: string; slug: string; count: number }[];
+  by_category: Record<string, number>;
+  by_culture: Record<string, number>;
+}
+
 export const api = {
   // Sources
   listSources: (activeOnly = false) =>
@@ -229,4 +308,18 @@ export const api = {
       body: JSON.stringify({ ids, review_status }),
     }),
   getContextStats: () => request<ContextStats>("/context/stats"),
+
+  // Collection
+  listCollection: (params?: Record<string, string>) => {
+    const qs = new URLSearchParams();
+    if (params) {
+      for (const [k, v] of Object.entries(params)) {
+        if (v) qs.set(k, v);
+      }
+    }
+    if (!qs.has("limit")) qs.set("limit", "40");
+    return request<{ items: CollectionItem[]; total: number }>(`/collection?${qs}`);
+  },
+  getCollectionItem: (id: string) => request<CollectionItemDetail>(`/collection/${id}`),
+  getCollectionStats: () => request<CollectionStats>("/collection/stats"),
 };

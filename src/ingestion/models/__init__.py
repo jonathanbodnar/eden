@@ -14,6 +14,7 @@ from src.ingestion.models.job_checkpoint import JobCheckpoint
 from src.ingestion.models.source_progress import SourceProgress
 from src.ingestion.models.contextual_statement import ContextualStatement
 from src.ingestion.models.source_intake_run import SourceIntakeRun
+from src.ingestion.models.object_image import ObjectImage
 
 __all__ = [
     "Base",
@@ -32,4 +33,5 @@ __all__ = [
     "SourceProgress",
     "ContextualStatement",
     "SourceIntakeRun",
+    "ObjectImage",
 ]

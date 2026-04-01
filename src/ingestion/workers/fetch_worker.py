@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
+import re
 from datetime import datetime, timezone
+from urllib.parse import urljoin, urlparse
 
 import httpx
 from sqlalchemy import and_, select, update
@@ -14,6 +17,7 @@ from src.ingestion.config import settings
 from src.ingestion.models.discovered_record import DiscoveredRecord
 from src.ingestion.models.enums import DiscoveredRecordStatus, JobType
 from src.ingestion.models.job_checkpoint import JobCheckpoint
+from src.ingestion.models.object_image import ObjectImage
 from src.ingestion.models.queued_job import QueuedJob
 from src.ingestion.models.raw_object import RawObject
 from src.ingestion.models.trusted_source import TrustedSource
@@ -22,6 +26,60 @@ from src.ingestion.storage.r2_client import R2Client, r2_client
 from src.ingestion.workers.base import BaseWorker
 
 logger = logging.getLogger(__name__)
+
+IMG_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".tif", ".tiff"}
+MAX_IMAGE_SIZE = 20 * 1024 * 1024  # 20 MB
+MAX_IMAGES_PER_PAGE = 30
+
+
+def _extract_image_urls(html: str, page_url: str) -> list[dict]:
+    """Extract image URLs and metadata from HTML content."""
+    images = []
+    seen_urls = set()
+
+    for match in re.finditer(
+        r'<img\s[^>]*?src=["\']([^"\']+)["\']([^>]*)>',
+        html, re.IGNORECASE | re.DOTALL,
+    ):
+        src = match.group(1).strip()
+        attrs = match.group(0)
+
+        if src.startswith("data:"):
+            continue
+
+        absolute = urljoin(page_url, src)
+        parsed = urlparse(absolute)
+
+        if not parsed.scheme.startswith("http"):
+            continue
+
+        ext = parsed.path.rsplit(".", 1)[-1].lower() if "." in parsed.path else ""
+
+        # Skip tiny icons/spacers
+        width_m = re.search(r'width=["\']?(\d+)', attrs, re.IGNORECASE)
+        height_m = re.search(r'height=["\']?(\d+)', attrs, re.IGNORECASE)
+        if width_m and int(width_m.group(1)) < 50:
+            continue
+        if height_m and int(height_m.group(1)) < 50:
+            continue
+
+        if absolute in seen_urls:
+            continue
+        seen_urls.add(absolute)
+
+        alt_m = re.search(r'alt=["\']([^"\']*)["\']', attrs, re.IGNORECASE)
+        alt_text = alt_m.group(1).strip() if alt_m else None
+
+        images.append({
+            "url": absolute,
+            "alt_text": alt_text,
+            "order": len(images),
+        })
+
+        if len(images) >= MAX_IMAGES_PER_PAGE:
+            break
+
+    return images
 
 
 class FetchWorker(BaseWorker):
@@ -127,14 +185,13 @@ class FetchWorker(BaseWorker):
         if not record.record_url.startswith(("http://", "https://")):
             raise ValueError(f"Invalid URL: {record.record_url}")
 
-        from urllib.parse import urlparse
         parsed = urlparse(record.record_url)
         if source.domain and parsed.netloc and source.domain not in parsed.netloc:
             raise ValueError(
                 f"URL domain {parsed.netloc} not in approved domain {source.domain}"
             )
 
-        response = await client.get(record.record_url)
+        response = await client.get(record.record_url, follow_redirects=True)
         response.raise_for_status()
         data = response.content
         content_type = response.headers.get("content-type", "")
@@ -178,4 +235,59 @@ class FetchWorker(BaseWorker):
         )
         session.add(raw_obj)
         await session.flush()
+
+        if "text/html" in content_type.lower():
+            await self._extract_and_store_images(
+                session, client, source, raw_obj, data.decode("utf-8", errors="replace"),
+                record.record_url,
+            )
+
         return raw_obj
+
+    async def _extract_and_store_images(
+        self,
+        session: AsyncSession,
+        client: httpx.AsyncClient,
+        source: TrustedSource,
+        raw_obj: RawObject,
+        html: str,
+        page_url: str,
+    ) -> int:
+        """Extract images from HTML page, store URLs (and optionally fetch to R2)."""
+        image_infos = _extract_image_urls(html, page_url)
+        if not image_infos:
+            return 0
+
+        stored = 0
+        for info in image_infos:
+            try:
+                img = ObjectImage(
+                    raw_object_id=raw_obj.id,
+                    trusted_source_id=source.id,
+                    image_url=info["url"],
+                    alt_text=info.get("alt_text"),
+                    image_order=info["order"],
+                )
+
+                try:
+                    head_resp = await client.head(
+                        info["url"], follow_redirects=True, timeout=10.0,
+                    )
+                    if head_resp.status_code == 200:
+                        img.content_type = head_resp.headers.get("content-type")
+                        cl = head_resp.headers.get("content-length")
+                        if cl and cl.isdigit():
+                            img.byte_size = int(cl)
+                except Exception:
+                    pass
+
+                session.add(img)
+                stored += 1
+            except Exception as exc:
+                logger.debug("Failed to record image %s: %s", info["url"], exc)
+
+        if stored:
+            await session.flush()
+            logger.info("Stored %d image references for %s", stored, raw_obj.external_id)
+
+        return stored

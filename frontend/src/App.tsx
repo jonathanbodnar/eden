@@ -5,6 +5,7 @@ import QueuePage from "./pages/QueuePage";
 import ProgressPage from "./pages/ProgressPage";
 import FailuresPage from "./pages/FailuresPage";
 import ContextPage from "./pages/ContextPage";
+import CollectionPage from "./pages/CollectionPage";
 
 export default function App() {
   return (
@@ -45,6 +46,11 @@ export default function App() {
                 Context Layer
               </NavLink>
             </li>
+            <li>
+              <NavLink to="/collection" className={({ isActive }) => (isActive ? "active" : "")}>
+                Collection
+              </NavLink>
+            </li>
           </ul>
         </nav>
       </aside>
@@ -56,6 +62,7 @@ export default function App() {
           <Route path="/progress" element={<ProgressPage />} />
           <Route path="/failures" element={<FailuresPage />} />
           <Route path="/context" element={<ContextPage />} />
+          <Route path="/collection" element={<CollectionPage />} />
         </Routes>
       </main>
     </div>

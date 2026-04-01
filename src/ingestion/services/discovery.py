@@ -18,8 +18,8 @@ logger = logging.getLogger(__name__)
 
 CRAWL_TIMEOUT = 15.0
 MAX_CONTENT_BYTES = 200_000
-MAX_PAGES = 200
-MAX_DEPTH = 3
+MAX_PAGES = 5000
+MAX_DEPTH = 6
 CONCURRENCY = 5
 USER_AGENT = "EdenBot/1.0 (research ingestion platform)"
 

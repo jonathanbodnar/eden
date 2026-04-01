@@ -35,3 +35,4 @@ class RawObject(UUIDPrimaryKeyMixin, Base):
     trusted_source = relationship("TrustedSource", back_populates="raw_objects")
     discovered_record = relationship("DiscoveredRecord", back_populates="raw_objects")
     source_records = relationship("SourceRecord", back_populates="raw_object")
+    images = relationship("ObjectImage", back_populates="raw_object", cascade="all, delete-orphan")
