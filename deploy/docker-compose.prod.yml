@@ -24,7 +24,7 @@ services:
 
   migrate:
     build:
-      context: .
+      context: ..
       target: migrate
     depends_on:
       postgres:
@@ -40,7 +40,7 @@ services:
 
   api:
     build:
-      context: .
+      context: ..
       target: api
     restart: always
     depends_on:
@@ -65,7 +65,7 @@ services:
 
   worker:
     build:
-      context: .
+      context: ..
       target: worker
     restart: always
     depends_on:
@@ -88,7 +88,7 @@ services:
 
   frontend:
     build:
-      context: .
+      context: ..
       dockerfile: Dockerfile.frontend
     restart: always
     depends_on:
