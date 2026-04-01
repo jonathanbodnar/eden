@@ -68,7 +68,12 @@ def _parse_cdli(art: dict) -> dict:
 
     for field in ("height", "width", "thickness"):
         if art.get(field):
-            meta.setdefault("dimensions", {})[field] = art[field]
+            meta.setdefault("dimensions_parsed", {})[field] = art[field]
+    dims = meta.get("dimensions_parsed", {})
+    if dims:
+        meta["dimensions"] = " x ".join(
+            f"{v}mm ({k})" for k, v in dims.items()
+        )
 
     period = art.get("period")
     if isinstance(period, dict):
@@ -78,39 +83,89 @@ def _parse_cdli(art: dict) -> dict:
 
     prov = art.get("provenience")
     if isinstance(prov, dict):
-        meta["origin_place"] = prov.get("name", str(prov))
+        meta["origin_place"] = prov.get("provenience", prov.get("name", str(prov)))
     elif prov:
         meta["origin_place"] = str(prov)
 
-    genre = art.get("genre")
-    if isinstance(genre, dict):
-        meta["genre"] = genre.get("name", str(genre))
-    elif genre:
-        meta["genre"] = str(genre)
+    meta["findspot_comments"] = art.get("findspot_comments", "")
+    meta["findspot_square"] = art.get("findspot_square", "")
 
-    lang = art.get("language")
-    if isinstance(lang, dict):
-        meta["language_family"] = lang.get("name", str(lang))
-    elif lang:
-        meta["language_family"] = str(lang)
+    genres = art.get("genres", [])
+    if genres:
+        genre_names = []
+        for g in genres:
+            if isinstance(g, dict):
+                ginfo = g.get("genre", {})
+                name = ginfo.get("genre", "") if isinstance(ginfo, dict) else str(ginfo)
+                comment = g.get("comments", "")
+                genre_names.append(f"{name}: {comment}".strip(": ") if comment else name)
+        meta["genre"] = "; ".join(genre_names) if genre_names else ""
+    else:
+        genre = art.get("genre")
+        if isinstance(genre, dict):
+            meta["genre"] = genre.get("name", str(genre))
+        elif genre:
+            meta["genre"] = str(genre)
 
-    material = art.get("material")
-    if isinstance(material, dict):
-        meta["medium"] = material.get("name", str(material))
-    elif material:
-        meta["medium"] = str(material)
+    languages = art.get("languages", [])
+    if languages:
+        lang_names = []
+        for l in languages:
+            if isinstance(l, dict):
+                linfo = l.get("language", {})
+                name = linfo.get("language", "") if isinstance(linfo, dict) else str(linfo)
+                if name and name != "undetermined":
+                    lang_names.append(name)
+        meta["language_family"] = ", ".join(lang_names) if lang_names else ""
+    if not meta.get("language_family"):
+        lang = art.get("language")
+        if isinstance(lang, dict):
+            meta["language_family"] = lang.get("name", str(lang))
+        elif lang:
+            meta["language_family"] = str(lang)
+
+    materials = art.get("materials", [])
+    if materials:
+        mat_names = []
+        for m in materials:
+            if isinstance(m, dict):
+                minfo = m.get("material", {})
+                mat_names.append(minfo.get("material", str(minfo)) if isinstance(minfo, dict) else str(minfo))
+        meta["medium"] = ", ".join(mat_names) if mat_names else ""
+    if not meta.get("medium"):
+        material = art.get("material")
+        if isinstance(material, dict):
+            meta["medium"] = material.get("name", str(material))
+        elif material:
+            meta["medium"] = str(material)
 
     art_type = art.get("artifact_type") or art.get("artifactType")
     if isinstance(art_type, dict):
-        meta["object_type"] = art_type.get("name", str(art_type))
+        meta["object_type"] = art_type.get("name", art_type.get("artifact_type", str(art_type)))
     elif art_type:
         meta["object_type"] = str(art_type)
 
-    collection = art.get("collection")
-    if isinstance(collection, dict):
-        meta["repository"] = collection.get("name", str(collection))
-    elif collection:
-        meta["repository"] = str(collection)
+    collections = art.get("collections", [])
+    if collections:
+        col = collections[0]
+        if isinstance(col, dict):
+            cinfo = col.get("collection", {})
+            if isinstance(cinfo, dict):
+                meta["repository"] = cinfo.get("collection", "")
+                meta["repository_url"] = cinfo.get("collection_url", "")
+                meta["repository_country"] = cinfo.get("country_iso", "")
+                lat = cinfo.get("location_latitude_wgs1984")
+                lon = cinfo.get("location_longitude_wgs1984")
+                if lat and lon:
+                    meta["repository_coords"] = {"lat": lat, "lon": lon}
+            else:
+                meta["repository"] = str(cinfo)
+    if not meta.get("repository"):
+        collection = art.get("collection")
+        if isinstance(collection, dict):
+            meta["repository"] = collection.get("name", str(collection))
+        elif collection:
+            meta["repository"] = str(collection)
 
     inscription = art.get("inscription")
     if isinstance(inscription, dict):
@@ -119,20 +174,56 @@ def _parse_cdli(art: dict) -> dict:
             meta["text"] = atf
             meta["text_format"] = "ATF"
 
+    composites = art.get("composites", [])
+    if composites:
+        meta["composites"] = []
+        for c in composites[:5]:
+            if isinstance(c, dict):
+                comp = c.get("composite", {})
+                meta["composites"].append({
+                    "composite_no": c.get("composite_no", ""),
+                    "designation": comp.get("designation", "") if isinstance(comp, dict) else "",
+                })
+
+    ext_res = art.get("external_resources", [])
+    if ext_res:
+        meta["external_resources"] = []
+        for er in ext_res[:10]:
+            if isinstance(er, dict):
+                res = er.get("external_resource", {})
+                if isinstance(res, dict):
+                    meta["external_resources"].append({
+                        "name": res.get("external_resource", ""),
+                        "abbrev": res.get("abbrev", ""),
+                        "url": (res.get("base_url", "") + er.get("external_resource_key", "")).strip(),
+                    })
+
     dates = art.get("dates_referenced")
     if dates and dates != "00.00.00.00":
         meta["dates"] = [{"label": dates, "type": "object_creation", "confidence": "uncertain"}]
 
     pubs = art.get("publications", [])
     if pubs:
-        meta["publications"] = [
-            {
-                "designation": p.get("publication", {}).get("designation", ""),
+        meta["publications"] = []
+        for p in pubs[:10]:
+            if not isinstance(p, dict):
+                continue
+            pub = p.get("publication", {})
+            entry = {
+                "designation": pub.get("designation", "") if isinstance(pub, dict) else "",
                 "exact_reference": p.get("exact_reference", ""),
             }
-            for p in pubs[:10]
-            if isinstance(p, dict)
-        ]
+            if isinstance(pub, dict):
+                entry["title"] = pub.get("title", "")
+                entry["year"] = pub.get("year")
+                authors = pub.get("authors", [])
+                if authors:
+                    entry["authors"] = [
+                        a.get("author", {}).get("author", "")
+                        for a in authors[:5]
+                        if isinstance(a, dict)
+                    ]
+            meta["publications"].append(entry)
 
     images = []
     for img_field in ("images", "photos"):
@@ -170,10 +261,17 @@ def _parse_met(obj: dict) -> dict:
     meta["credit_line"] = obj.get("creditLine", "")
     meta["repository"] = obj.get("repository", "")
 
-    meta["origin_place"] = " ".join(filter(None, [
-        obj.get("city"), obj.get("state"), obj.get("country"),
-        obj.get("region"), obj.get("subregion"), obj.get("locale"),
-    ])).strip()
+    origin_parts = [obj.get("city"), obj.get("state"), obj.get("country"),
+                     obj.get("region"), obj.get("subregion"), obj.get("locale")]
+    meta["origin_place"] = " ".join(filter(None, origin_parts)).strip()
+    if obj.get("geographyType"):
+        meta["geography_type"] = obj["geographyType"]
+    if obj.get("excavation"):
+        meta["excavation"] = obj["excavation"]
+    if obj.get("locus"):
+        meta["locus"] = obj["locus"]
+    if obj.get("river"):
+        meta["river"] = obj["river"]
 
     meta["date_label"] = obj.get("objectDate", "")
     dates = []
@@ -197,10 +295,9 @@ def _parse_met(obj: dict) -> dict:
     images = []
     if obj.get("primaryImage"):
         images.append(obj["primaryImage"])
-    if obj.get("primaryImageSmall"):
-        images.append(obj["primaryImageSmall"])
     for img in obj.get("additionalImages", []):
-        images.append(img)
+        if img and img not in images:
+            images.append(img)
     if images:
         meta["image_urls"] = images
 

@@ -87,6 +87,41 @@ class R2Client:
 
         return r2_key, checksum
 
+    def upload_image(
+        self,
+        source_slug: str,
+        external_id: str,
+        image_index: int,
+        data: bytes,
+        content_type: str = "image/jpeg",
+    ) -> tuple[str, str]:
+        """Upload an image file to R2. Returns (r2_key, checksum)."""
+        ext = "jpg"
+        if "png" in content_type:
+            ext = "png"
+        elif "gif" in content_type:
+            ext = "gif"
+        elif "webp" in content_type:
+            ext = "webp"
+        elif "tif" in content_type:
+            ext = "tiff"
+
+        now = datetime.now(timezone.utc)
+        r2_key = (
+            f"images/{source_slug}/{now.year}/{now.month:02d}/{now.day:02d}"
+            f"/{external_id}/img_{image_index:03d}.{ext}"
+        )
+        checksum = self.compute_checksum(data)
+
+        self._client.put_object(
+            Bucket=self._bucket,
+            Key=r2_key,
+            Body=data,
+            ContentType=content_type,
+        )
+        logger.info("Uploaded image: %s (%d bytes)", r2_key, len(data))
+        return r2_key, checksum
+
     def upload_derived(
         self,
         source_slug: str,

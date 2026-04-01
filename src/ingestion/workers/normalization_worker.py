@@ -181,7 +181,12 @@ class NormalizationWorker(BaseWorker):
 
     @staticmethod
     def _synthesize_description(meta: dict) -> str:
-        """Build a textual description from structured museum metadata."""
+        """Build a textual description from structured metadata.
+
+        Captures all factual context: object type, material, culture,
+        period, dynasty, findspot, excavation, geography, dimensions,
+        repository, genre, tags, and publications.
+        """
         parts: list[str] = []
 
         title = meta.get("title", "")
@@ -191,30 +196,75 @@ class NormalizationWorker(BaseWorker):
         obj_type = meta.get("object_type", "")
         medium = meta.get("medium", "")
         if obj_type and medium:
-            parts.append(f"{obj_type}, {medium}.")
+            parts.append(f"{obj_type}. Material: {medium}.")
         elif obj_type:
             parts.append(f"{obj_type}.")
         elif medium:
-            parts.append(f"Medium: {medium}.")
+            parts.append(f"Material: {medium}.")
 
         culture = meta.get("culture", "")
         period = meta.get("period", "")
+        dynasty = meta.get("dynasty", "")
+        reign = meta.get("reign", "")
         date_label = meta.get("date_label", "")
-        context_parts = [s for s in [culture, period, date_label] if s]
+        context_parts = [s for s in [culture, period, dynasty, reign, date_label] if s]
         if context_parts:
             parts.append(" | ".join(context_parts))
 
+        genre = meta.get("genre", "")
+        if genre:
+            parts.append(f"Genre: {genre}")
+
+        lang = meta.get("language_family", "")
+        if lang:
+            parts.append(f"Language: {lang}")
+
         geo = meta.get("geography") or {}
-        place_parts = [v for v in [geo.get("region"), geo.get("subregion"), geo.get("locale")] if v]
+        geo_type = meta.get("geography_type", geo.get("geographyType", ""))
         origin = meta.get("origin_place", "")
-        if place_parts:
-            parts.append(f"Origin: {', '.join(place_parts)}.")
+        excavation = meta.get("excavation", geo.get("excavation", ""))
+        locus = meta.get("locus", geo.get("locus", ""))
+        river = meta.get("river", geo.get("river", ""))
+
+        origin_line_parts = []
+        if geo_type and origin:
+            origin_line_parts.append(f"{geo_type}: {origin}")
         elif origin:
-            parts.append(f"Origin: {origin}.")
+            origin_line_parts.append(f"Origin: {origin}")
+        else:
+            place_parts = [v for v in [geo.get("region"), geo.get("subregion"),
+                                       geo.get("locale"), geo.get("city"),
+                                       geo.get("country")] if v]
+            if place_parts:
+                origin_line_parts.append(f"Origin: {', '.join(place_parts)}")
+
+        if excavation:
+            origin_line_parts.append(f"Excavation: {excavation}")
+        if locus:
+            origin_line_parts.append(f"Locus: {locus}")
+        if river:
+            origin_line_parts.append(f"River: {river}")
+
+        findspot = meta.get("findspot_comments", "")
+        if findspot:
+            origin_line_parts.append(f"Findspot: {findspot}")
+        findspot_sq = meta.get("findspot_square", "")
+        if findspot_sq:
+            origin_line_parts.append(f"Grid square: {findspot_sq}")
+
+        if origin_line_parts:
+            parts.append("\n".join(origin_line_parts))
 
         dims = meta.get("dimensions", "")
         if dims:
             parts.append(f"Dimensions: {dims}.")
+
+        museum_no = meta.get("museum_no", "")
+        excavation_no = meta.get("excavation_no", "")
+        if museum_no:
+            parts.append(f"Museum number: {museum_no}")
+        if excavation_no:
+            parts.append(f"Excavation number: {excavation_no}")
 
         repo = meta.get("repository", "")
         acc = meta.get("accession_number", "")
@@ -233,5 +283,29 @@ class NormalizationWorker(BaseWorker):
         if dept or classification:
             extra = [s for s in [dept, classification] if s]
             parts.append(f"Department: {', '.join(extra)}")
+
+        tags = meta.get("tags", [])
+        if tags and isinstance(tags, list):
+            parts.append(f"Tags: {', '.join(str(t) for t in tags)}")
+
+        composites = meta.get("composites", [])
+        if composites:
+            comp_descs = [c.get("designation", "") for c in composites if isinstance(c, dict) and c.get("designation")]
+            if comp_descs:
+                parts.append(f"Part of: {'; '.join(comp_descs)}")
+
+        pubs = meta.get("publications", [])
+        if pubs:
+            pub_lines = []
+            for p in pubs[:5]:
+                if not isinstance(p, dict):
+                    continue
+                ref = p.get("designation", "")
+                if p.get("exact_reference"):
+                    ref += f" {p['exact_reference']}"
+                if ref.strip():
+                    pub_lines.append(ref.strip())
+            if pub_lines:
+                parts.append("References: " + "; ".join(pub_lines))
 
         return "\n\n".join(parts)

@@ -270,7 +270,7 @@ class FetchWorker(BaseWorker):
         if is_api:
             image_urls = metadata.get("image_urls", [])
             if image_urls:
-                await self._store_api_images(session, source, raw_obj, image_urls)
+                await self._store_api_images(session, client, source, raw_obj, image_urls)
         elif "text/html" in content_type.lower():
             await self._extract_and_store_images(
                 session, client, source, raw_obj, data.decode("utf-8", errors="replace"),
@@ -282,28 +282,57 @@ class FetchWorker(BaseWorker):
     async def _store_api_images(
         self,
         session: AsyncSession,
+        client: httpx.AsyncClient,
         source: TrustedSource,
         raw_obj: RawObject,
         image_urls: list[str],
     ) -> int:
-        """Store image references from API metadata."""
+        """Download images and store in R2 for LLM training."""
         stored = 0
+        seen = set()
         for i, url in enumerate(image_urls[:MAX_IMAGES_PER_PAGE]):
+            if url in seen or not url.startswith("http"):
+                continue
+            seen.add(url)
             try:
+                resp = await client.get(url, follow_redirects=True, timeout=30.0)
+                if resp.status_code != 200:
+                    logger.debug("Image HTTP %d: %s", resp.status_code, url)
+                    continue
+                img_data = resp.content
+                if len(img_data) < 500:
+                    continue
+                if len(img_data) > MAX_IMAGE_SIZE:
+                    logger.debug("Image too large (%d bytes): %s", len(img_data), url)
+                    continue
+
+                ct = resp.headers.get("content-type", "image/jpeg")
+                r2_key, checksum = self.storage.upload_image(
+                    source_slug=source.slug,
+                    external_id=raw_obj.external_id,
+                    image_index=stored,
+                    data=img_data,
+                    content_type=ct,
+                )
+
                 img = ObjectImage(
                     raw_object_id=raw_obj.id,
                     trusted_source_id=source.id,
                     image_url=url,
-                    image_order=i,
+                    r2_key=r2_key,
+                    content_type=ct,
+                    byte_size=len(img_data),
+                    image_order=stored,
                 )
                 session.add(img)
                 stored += 1
+                await asyncio.sleep(0.1)
             except Exception as exc:
-                logger.debug("Failed to record API image %s: %s", url, exc)
+                logger.debug("Failed to download image %s: %s", url, exc)
 
         if stored:
             await session.flush()
-            logger.info("Stored %d API image refs for %s", stored, raw_obj.external_id)
+            logger.info("Downloaded %d images to R2 for %s", stored, raw_obj.external_id)
         return stored
 
     async def _extract_and_store_images(
