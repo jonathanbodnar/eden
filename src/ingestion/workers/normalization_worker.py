@@ -103,6 +103,13 @@ class NormalizationWorker(BaseWorker):
         """
         meta = raw_obj.raw_metadata_jsonb or {}
 
+        has_provenance = bool(
+            meta.get("origin_place")
+            or meta.get("findspot_comments")
+            or meta.get("excavation")
+            or meta.get("geography", {}).get("excavation")
+        )
+
         source_record = SourceRecord(
             trusted_source_id=source.id,
             raw_object_id=raw_obj.id,
@@ -112,15 +119,10 @@ class NormalizationWorker(BaseWorker):
             language_family=meta.get("language_family", source.default_language),
             origin_place_name=meta.get("origin_place"),
             repository_institution=meta.get("repository"),
-            provenance_status=ProvenanceStatus.UNKNOWN,
+            provenance_status=ProvenanceStatus.UNVERIFIED if has_provenance else ProvenanceStatus.UNKNOWN,
             record_status=RecordStatus.NORMALIZED,
-            metadata_jsonb=meta,
+            metadata_jsonb={k: v for k, v in meta.items() if k != "_raw"},
         )
-
-        if meta.get("medium"):
-            source_record.metadata_jsonb["medium"] = meta["medium"]
-        if meta.get("period"):
-            source_record.metadata_jsonb["period"] = meta["period"]
 
         session.add(source_record)
         await session.flush()
