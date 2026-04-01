@@ -708,9 +708,11 @@ def parse_dss_html(html: str, external_id: str) -> dict:
     date_m = re.search(r"Date:\s*(.+?)(?:Location:|Contents:|$)", plain)
     if date_m:
         date_str = date_m.group(1).strip().rstrip("_").strip()
-    loc_m = re.search(r"Location:\s*(.+?)(?:Contents:|$)", plain)
+    loc_m = re.search(r"Location:\s*(.+?)(?:Contents:|Language:|Date:|\d+[:\s]+\d+|\d+\s+[A-Z])", plain)
     if loc_m:
         location = loc_m.group(1).strip().rstrip("_").strip()
+        if len(location) > 200:
+            location = location[:200]
     cont_m = re.search(r"Contents:\s*(.+?)(?:\d+:\d+|\d+\s+[A-Z])", plain)
     if cont_m:
         contents_desc = cont_m.group(1).strip().rstrip("_").strip()

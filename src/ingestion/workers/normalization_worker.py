@@ -111,15 +111,20 @@ class NormalizationWorker(BaseWorker):
             or meta.get("geography", {}).get("excavation")
         )
 
+        def _trunc(val, maxlen=500):
+            if isinstance(val, str) and len(val) > maxlen:
+                return val[:maxlen]
+            return val
+
         source_record = SourceRecord(
             trusted_source_id=source.id,
             raw_object_id=raw_obj.id,
-            canonical_title=meta.get("title", f"Record {raw_obj.external_id}"),
+            canonical_title=_trunc(meta.get("title", f"Record {raw_obj.external_id}")),
             source_category=source.source_category,
-            culture=meta.get("culture"),
-            language_family=meta.get("language_family", source.default_language),
-            origin_place_name=meta.get("origin_place"),
-            repository_institution=meta.get("repository"),
+            culture=_trunc(meta.get("culture")),
+            language_family=_trunc(meta.get("language_family", source.default_language)),
+            origin_place_name=_trunc(meta.get("origin_place")),
+            repository_institution=_trunc(meta.get("repository")),
             provenance_status=ProvenanceStatus.UNVERIFIED if has_provenance else ProvenanceStatus.UNKNOWN,
             record_status=RecordStatus.NORMALIZED,
             latitude=meta.get("latitude"),
