@@ -1725,6 +1725,7 @@ _WIKI_SKIP_TITLE_KEYWORDS = {
     "video game", "film)", "movie)", "novel)", "TV series", "television",
     "album)", "song)", "band)", "manga)", "anime)", "comics)",
     "(game)", "card game", "board game", "role-playing game",
+    "(character)", "in popular culture", "in fiction",
     "football", "soccer", "basketball", "baseball", "cricket",
     "rugby", "tennis", "hockey",
     "university", "school", "college", "institute",
@@ -1749,6 +1750,8 @@ _WIKI_SKIP_SUBCAT_KEYWORDS = {
     "video game", "film", "novel", "television", "sport",
     "football", "people by", "ethnic", "diaspora", "cuisine",
     "modern", "contemporary", "21st-century", "20th-century",
+    "19th-century", "18th-century", "17th-century", "16th-century",
+    "in popular culture", "in fiction", "in media",
     "companies", "organizations", "schools", "universities",
     "archaeologist", "egyptologist", "assyriologist", "historian",
     "scholars", "researchers", "academics", "professors",
@@ -1760,6 +1763,7 @@ _WIKI_SKIP_SUBCAT_KEYWORDS = {
     "national team", "airport", "railway",
     "populated places", "cities in", "towns in", "villages in",
     "neighborhoods", "streets in",
+    "japanese legends", "japanese folklore",
 }
 
 

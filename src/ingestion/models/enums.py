@@ -181,3 +181,29 @@ class RunStatus(str, enum.Enum):
     FAILED = "failed"
     CANCELED = "canceled"
     PARTIAL = "partial"
+
+
+class AnswerMode(str, enum.Enum):
+    SOURCE = "source"
+    CONTEXT = "context"
+    SYNTHESIS = "synthesis"
+    UNSUPPORTED = "unsupported"
+
+
+class ChatRole(str, enum.Enum):
+    USER = "user"
+    ASSISTANT = "assistant"
+
+
+class SupportType(str, enum.Enum):
+    PRIMARY = "primary"
+    CORROBORATING = "corroborating"
+    CONTEXTUAL = "contextual"
+    TANGENTIAL = "tangential"
+
+
+class CanonBuildStatus(str, enum.Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"

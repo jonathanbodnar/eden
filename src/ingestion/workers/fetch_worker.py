@@ -33,6 +33,44 @@ IMG_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".tif", ".tiff"}
 MAX_IMAGE_SIZE = 20 * 1024 * 1024  # 20 MB
 MAX_IMAGES_PER_PAGE = 30
 
+_CE_DATE_RE = re.compile(
+    r"\b(\d{3,4})\s*(?:AD|CE)\b"
+    r"|\b(\d{1,2})(?:st|nd|rd|th)\s+century\b"
+    r"|\b(\d{4})\b",
+    re.IGNORECASE,
+)
+_BCE_DATE_RE = re.compile(r"\b\d{3,4}\s*(?:BC|BCE)\b", re.IGNORECASE)
+
+
+def _wiki_is_ancient(text: str, summary: str) -> bool:
+    """Return True if article content refers to ancient/BCE events.
+
+    Scans the first ~2000 chars of text plus the summary for BCE vs CE dates.
+    Articles with only CE/AD dates post-500 AD are considered modern.
+    Articles about mythology/religion categories without any dates are kept.
+    """
+    check_text = (summary or "") + " " + (text or "")[:2000]
+
+    if _BCE_DATE_RE.search(check_text):
+        return True
+
+    ce_matches = _CE_DATE_RE.findall(check_text)
+    if ce_matches:
+        years: list[int] = []
+        for ad_year, century_num, bare_year in ce_matches:
+            if ad_year:
+                years.append(int(ad_year))
+            elif century_num:
+                years.append(int(century_num) * 100)
+            elif bare_year:
+                y = int(bare_year)
+                if 100 < y < 2100:
+                    years.append(y)
+        if years and min(years) > 500:
+            return False
+
+    return True
+
 
 def _extract_image_urls(html: str, page_url: str) -> list[dict]:
     """Extract image URLs and metadata from HTML content."""
@@ -369,6 +407,9 @@ class FetchWorker(BaseWorker):
             categories = await page.categories
             page_id = await page.pageid
             fullurl = await page.fullurl
+
+            if not _wiki_is_ancient(text, summary):
+                return (record, None, f"Skipping modern content: {title}")
 
             image_urls: list[str] = []
             for img_title in list(images.keys())[:15]:
