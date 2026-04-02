@@ -1735,7 +1735,14 @@ async def _wiki_category_members(
         }
         if cmcontinue:
             params["cmcontinue"] = cmcontinue
-        resp = await client.get(WIKI_API, params=params, headers={"User-Agent": USER_AGENT})
+        for attempt in range(4):
+            resp = await client.get(WIKI_API, params=params, headers={"User-Agent": USER_AGENT})
+            if resp.status_code == 429:
+                await asyncio.sleep(2.0 * (attempt + 1))
+                continue
+            break
+        else:
+            break
         if resp.status_code != 200:
             break
         data = resp.json()
@@ -1743,7 +1750,7 @@ async def _wiki_category_members(
         cmcontinue = data.get("continue", {}).get("cmcontinue")
         if not cmcontinue or len(members) >= limit:
             break
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.5)
     return members
 
 
@@ -1811,11 +1818,11 @@ async def stream_wikipedia_ancient(max_pages: int = 200_000) -> AsyncIterator[Di
                             break
                     if sub_batch:
                         yield DiscoveryBatch(sub_batch, 1, 0, False)
-                    await asyncio.sleep(0.05)
+                    await asyncio.sleep(0.5)
 
                 if total % 5000 < 600:
                     logger.info("Wikipedia discovery: %d articles from %d categories", total, WIKI_SEED_CATEGORIES.index(seed_cat) + 1)
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(1.0)
             except Exception as exc:
                 logger.error("Wikipedia category %s error: %s", seed_cat, exc)
                 continue
@@ -1825,10 +1832,15 @@ async def stream_wikipedia_ancient(max_pages: int = 200_000) -> AsyncIterator[Di
             if total >= max_pages:
                 break
             try:
-                resp = await client.get(WIKI_API, params={
-                    "action": "query", "list": "search",
-                    "srsearch": query, "srlimit": 50, "format": "json",
-                }, headers={"User-Agent": USER_AGENT})
+                for attempt in range(4):
+                    resp = await client.get(WIKI_API, params={
+                        "action": "query", "list": "search",
+                        "srsearch": query, "srlimit": 50, "format": "json",
+                    }, headers={"User-Agent": USER_AGENT})
+                    if resp.status_code == 429:
+                        await asyncio.sleep(2.0 * (attempt + 1))
+                        continue
+                    break
                 if resp.status_code != 200:
                     continue
                 results = resp.json().get("query", {}).get("search", [])
@@ -1849,7 +1861,7 @@ async def stream_wikipedia_ancient(max_pages: int = 200_000) -> AsyncIterator[Di
                     total += 1
                 if batch:
                     yield DiscoveryBatch(batch, 1, 0, False)
-                await asyncio.sleep(0.2)
+                await asyncio.sleep(1.0)
             except Exception as exc:
                 logger.error("Wikipedia search '%s' error: %s", query, exc)
                 continue
