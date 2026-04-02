@@ -368,16 +368,61 @@ async def update_source_progress(
     trusted_source_id: uuid.UUID,
     **kwargs,
 ) -> None:
-    """Increment or set fields on source_progress."""
+    """Update source_progress with real counts from the database."""
+    from src.ingestion.models.discovered_record import DiscoveredRecord
+    from src.ingestion.models.enums import DiscoveredRecordStatus, RecordStatus
+    from src.ingestion.models.raw_object import RawObject
+    from src.ingestion.models.source_record import SourceRecord
+    from src.ingestion.models.source_version import SourceVersion
+    from src.ingestion.models.segment import Segment
+
+    counts: dict[str, int] = {}
+
+    if "discovered_count" in kwargs:
+        result = await session.execute(
+            select(func.count()).select_from(DiscoveredRecord)
+            .where(DiscoveredRecord.trusted_source_id == trusted_source_id)
+        )
+        counts["discovered_count"] = result.scalar() or 0
+
+    if "fetched_count" in kwargs:
+        result = await session.execute(
+            select(func.count()).select_from(RawObject)
+            .where(RawObject.trusted_source_id == trusted_source_id)
+        )
+        counts["fetched_count"] = result.scalar() or 0
+
+    if "normalized_count" in kwargs:
+        result = await session.execute(
+            select(func.count()).select_from(SourceRecord)
+            .where(SourceRecord.trusted_source_id == trusted_source_id)
+        )
+        counts["normalized_count"] = result.scalar() or 0
+
+    if "segmented_count" in kwargs:
+        result = await session.execute(
+            select(func.count(Segment.id))
+            .join(SourceVersion, Segment.source_version_id == SourceVersion.id)
+            .join(SourceRecord, SourceVersion.source_record_id == SourceRecord.id)
+            .where(SourceRecord.trusted_source_id == trusted_source_id)
+        )
+        counts["segmented_count"] = result.scalar() or 0
+
+    if "embedded_count" in kwargs:
+        counts["embedded_count"] = kwargs["embedded_count"]
+
+    if not counts:
+        counts = kwargs
+
     existing = await session.execute(
         select(SourceProgress).where(SourceProgress.trusted_source_id == trusted_source_id)
     )
     progress = existing.scalar_one_or_none()
     if not progress:
-        progress = SourceProgress(trusted_source_id=trusted_source_id, **kwargs)
+        progress = SourceProgress(trusted_source_id=trusted_source_id, **counts)
         session.add(progress)
     else:
-        for key, value in kwargs.items():
+        for key, value in counts.items():
             if hasattr(progress, key):
                 setattr(progress, key, value)
     progress.last_updated_at = datetime.now(timezone.utc)
