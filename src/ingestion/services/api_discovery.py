@@ -1715,6 +1715,36 @@ WIKI_SEARCH_QUERIES = [
 ]
 
 
+_WIKI_SKIP_TITLE_PREFIXES = (
+    "List of ", "Lists of ", "Index of ", "Outline of ",
+    "Template:", "Wikipedia:", "Portal:", "Draft:", "Category:",
+    "File:", "Help:", "Module:", "MediaWiki:", "Talk:",
+)
+_WIKI_SKIP_TITLE_KEYWORDS = {
+    "video game", "film)", "movie)", "novel)", "TV series", "television",
+    "album)", "song)", "band)", "manga)", "anime)", "comics)",
+    "(game)", "card game", "board game", "role-playing game",
+    "football", "soccer", "basketball", "baseball", "cricket",
+    "rugby", "tennis", "hockey",
+    "university", "school", "college", "institute",
+    "company", "corporation", "airline",
+    "ethnic", "diaspora", "cuisine", "restaurant",
+    "modern", "contemporary",
+    "municipality", "district", "county", "province",
+    "disambiguation",
+}
+
+
+def _wiki_title_ok(title: str) -> bool:
+    """Return True if this Wikipedia title looks like relevant ancient/historical content."""
+    if any(title.startswith(p) for p in _WIKI_SKIP_TITLE_PREFIXES):
+        return False
+    tl = title.lower()
+    if any(kw in tl for kw in _WIKI_SKIP_TITLE_KEYWORDS):
+        return False
+    return True
+
+
 async def stream_wikipedia_ancient(max_pages: int = 200_000) -> AsyncIterator[DiscoveryBatch]:
     """Spider Wikipedia categories and searches for ancient/BCE content using wikipedia-api library."""
     import wikipediaapi
@@ -1748,11 +1778,19 @@ async def stream_wikipedia_ancient(max_pages: int = 200_000) -> AsyncIterator[Di
                 if total >= max_pages:
                     break
                 if member.ns == wikipediaapi.Namespace.CATEGORY:
-                    subcats.append(title.removeprefix("Category:"))
+                    sub_name = title.removeprefix("Category:")
+                    sub_lower = sub_name.lower()
+                    if not any(skip in sub_lower for skip in (
+                        "video game", "film", "novel", "television", "sport",
+                        "football", "people by", "ethnic", "diaspora", "cuisine",
+                        "modern", "contemporary", "21st-century", "20th-century",
+                        "companies", "organizations", "schools", "universities",
+                    )):
+                        subcats.append(sub_name)
                     continue
                 if member.ns != wikipediaapi.Namespace.MAIN:
                     continue
-                if title in seen_titles:
+                if title in seen_titles or not _wiki_title_ok(title):
                     continue
                 seen_titles.add(title)
                 page_id = await member.pageid
@@ -1783,7 +1821,7 @@ async def stream_wikipedia_ancient(max_pages: int = 200_000) -> AsyncIterator[Di
                         break
                     if s_member.ns != wikipediaapi.Namespace.MAIN:
                         continue
-                    if s_title in seen_titles:
+                    if s_title in seen_titles or not _wiki_title_ok(s_title):
                         continue
                     seen_titles.add(s_title)
                     s_page_id = await s_member.pageid
@@ -1811,7 +1849,7 @@ async def stream_wikipedia_ancient(max_pages: int = 200_000) -> AsyncIterator[Di
             results = await wiki.search(query, limit=50)
             batch: list[DiscoveredPage] = []
             for title, page in results.pages.items():
-                if title in seen_titles:
+                if title in seen_titles or not _wiki_title_ok(title):
                     continue
                 seen_titles.add(title)
                 page_id = await page.pageid
