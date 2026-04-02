@@ -82,7 +82,7 @@ services:
       EDEN_ANTHROPIC_API_KEY: "${EDEN_ANTHROPIC_API_KEY:-}"
       EDEN_ANTHROPIC_MODEL: "${EDEN_ANTHROPIC_MODEL:-claude-sonnet-4-20250514}"
     deploy:
-      replicas: 8
+      replicas: 20
       resources:
         limits:
           memory: 512M
