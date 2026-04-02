@@ -321,7 +321,7 @@ class FetchWorker(BaseWorker):
                 image_urls = await self._resolve_wiki_images(client, image_urls)
             if image_urls:
                 await self._store_api_images(session, client, source, raw_obj, image_urls)
-        elif "text/html" in content_type.lower():
+        elif "text/html" in content_type.lower() and source.slug not in ("sacred-texts",):
             await self._extract_and_store_images(
                 session, client, source, raw_obj, data.decode("utf-8", errors="replace"),
                 record.record_url,
