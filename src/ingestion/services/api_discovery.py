@@ -1778,7 +1778,7 @@ def _wiki_title_ok(title: str) -> bool:
 
 
 async def stream_wikipedia_ancient(max_pages: int = 200_000) -> AsyncIterator[DiscoveryBatch]:
-    """Spider Wikipedia categories and searches for ancient/BCE content using wikipedia-api library."""
+    """Spider Wikipedia categories (4 levels deep) and searches for ancient/BCE content."""
     import wikipediaapi
 
     wiki = wikipediaapi.AsyncWikipedia(
@@ -1790,18 +1790,25 @@ async def stream_wikipedia_ancient(max_pages: int = 200_000) -> AsyncIterator[Di
 
     total = 0
     seen_titles: set[str] = set()
+    seen_cats: set[str] = set()
 
-    # Phase 1: Spider category trees (2 levels deep)
-    for seed_cat in WIKI_SEED_CATEGORIES:
+    async def _spider_category(
+        cat_name: str, depth: int, max_depth: int = 4,
+    ) -> AsyncIterator[DiscoveryBatch]:
+        nonlocal total
         if total >= max_pages:
-            break
+            return
+        if cat_name in seen_cats:
+            return
+        seen_cats.add(cat_name)
+
         try:
-            cat_page = wiki.page(f"Category:{seed_cat}")
+            cat_page = wiki.page(f"Category:{cat_name}")
             try:
                 members = await cat_page.categorymembers
             except Exception as exc:
-                logger.warning("Wikipedia category %s fetch failed: %s", seed_cat, exc)
-                continue
+                logger.warning("Wikipedia category %s fetch failed: %s", cat_name, exc)
+                return
 
             batch: list[DiscoveredPage] = []
             subcats: list[str] = []
@@ -1825,50 +1832,32 @@ async def stream_wikipedia_ancient(max_pages: int = 200_000) -> AsyncIterator[Di
                     url=f"https://en.wikipedia.org/wiki/{title.replace(' ', '_')}",
                     external_id=f"wp-{page_id}",
                     title=title[:300],
-                    content_hint=f"cat:{seed_cat}",
-                    depth=0,
+                    content_hint=f"cat:{cat_name}",
+                    depth=depth,
                 ))
                 total += 1
 
             if batch:
                 yield DiscoveryBatch(batch, 1, 0, False)
 
-            for sub_name in subcats[:30]:
-                if total >= max_pages:
-                    break
-                try:
-                    sub_page = wiki.page(f"Category:{sub_name}")
-                    sub_members = await sub_page.categorymembers
-                except Exception:
-                    continue
-
-                sub_batch: list[DiscoveredPage] = []
-                for s_title, s_member in sub_members.items():
+            if depth < max_depth:
+                for sub_name in subcats:
                     if total >= max_pages:
                         break
-                    if s_member.ns != wikipediaapi.Namespace.MAIN:
-                        continue
-                    if s_title in seen_titles or not _wiki_title_ok(s_title):
-                        continue
-                    seen_titles.add(s_title)
-                    s_page_id = await s_member.pageid
-                    sub_batch.append(DiscoveredPage(
-                        url=f"https://en.wikipedia.org/wiki/{s_title.replace(' ', '_')}",
-                        external_id=f"wp-{s_page_id}",
-                        title=s_title[:300],
-                        content_hint=f"cat:{sub_name}",
-                        depth=1,
-                    ))
-                    total += 1
-                if sub_batch:
-                    yield DiscoveryBatch(sub_batch, 1, 0, False)
+                    async for sub_batch in _spider_category(sub_name, depth + 1, max_depth):
+                        yield sub_batch
 
-            logger.info("Wikipedia discovery: %d articles after cat '%s'", total, seed_cat)
         except Exception as exc:
-            logger.error("Wikipedia category %s error: %s", seed_cat, exc)
-            continue
+            logger.error("Wikipedia category %s error: %s", cat_name, exc)
 
-    # Phase 2: Targeted search queries
+    for seed_cat in WIKI_SEED_CATEGORIES:
+        if total >= max_pages:
+            break
+        async for batch in _spider_category(seed_cat, depth=0):
+            yield batch
+        logger.info("Wikipedia discovery: %d articles after cat '%s' (%d cats visited)",
+                     total, seed_cat, len(seen_cats))
+
     for query in WIKI_SEARCH_QUERIES:
         if total >= max_pages:
             break
@@ -1894,7 +1883,8 @@ async def stream_wikipedia_ancient(max_pages: int = 200_000) -> AsyncIterator[Di
             logger.error("Wikipedia search '%s' error: %s", query, exc)
             continue
 
-    logger.info("Wikipedia ancient discovery complete: %d articles", total)
+    logger.info("Wikipedia ancient discovery complete: %d articles, %d categories visited",
+                total, len(seen_cats))
     yield DiscoveryBatch([], 0, 0, True)
 
 
