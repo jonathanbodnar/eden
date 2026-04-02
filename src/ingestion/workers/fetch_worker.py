@@ -337,23 +337,28 @@ class FetchWorker(BaseWorker):
     ) -> dict:
         """Fetch wikitext to extract structured infobox fields for Wikipedia articles."""
         page_id = external_id.removeprefix("wp-")
-        try:
-            resp = await client.get(
-                "https://en.wikipedia.org/w/api.php",
-                params={
-                    "action": "parse",
-                    "pageid": page_id,
-                    "prop": "wikitext",
-                    "format": "json",
-                },
-                timeout=15.0,
-            )
-            if resp.status_code == 200:
-                wikitext = resp.json().get("parse", {}).get("wikitext", {}).get("*", "")
-                if wikitext:
-                    api_json["_infobox_wikitext"] = wikitext
-        except Exception:
-            pass
+        for attempt in range(6):
+            try:
+                resp = await client.get(
+                    "https://en.wikipedia.org/w/api.php",
+                    params={
+                        "action": "parse",
+                        "pageid": page_id,
+                        "prop": "wikitext",
+                        "format": "json",
+                    },
+                    timeout=15.0,
+                )
+                if resp.status_code == 429:
+                    await asyncio.sleep(min(5.0 * (2 ** attempt), 60.0))
+                    continue
+                if resp.status_code == 200:
+                    wikitext = resp.json().get("parse", {}).get("wikitext", {}).get("*", "")
+                    if wikitext:
+                        api_json["_infobox_wikitext"] = wikitext
+                break
+            except Exception:
+                break
         return api_json
 
     @staticmethod
@@ -361,45 +366,23 @@ class FetchWorker(BaseWorker):
         client: httpx.AsyncClient,
         raw_urls: list[str],
     ) -> list[str]:
-        """Resolve Wikipedia File: titles to actual image URLs via imageinfo API."""
+        """Resolve Wikipedia File: titles to Wikimedia Commons URLs using MD5 hash path."""
+        import hashlib
         resolved: list[str] = []
-        file_titles = [u for u in raw_urls if u.startswith("File:")]
-        direct_urls = [u for u in raw_urls if u.startswith("http")]
-        resolved.extend(direct_urls)
-
-        for batch_start in range(0, len(file_titles), 10):
-            batch = file_titles[batch_start:batch_start + 10]
-            titles = "|".join(batch)
-            try:
-                resp = await client.get(
-                    "https://en.wikipedia.org/w/api.php",
-                    params={
-                        "action": "query",
-                        "titles": titles,
-                        "prop": "imageinfo",
-                        "iiprop": "url|mime",
-                        "iiurlwidth": 1200,
-                        "format": "json",
-                    },
-                    timeout=15.0,
-                )
-                if resp.status_code != 200:
-                    continue
-                pages = resp.json().get("query", {}).get("pages", {})
-                for page in pages.values():
-                    infos = page.get("imageinfo", [])
-                    if not infos:
-                        continue
-                    info = infos[0]
-                    mime = info.get("mime", "")
-                    if not mime.startswith("image/"):
-                        continue
-                    thumb = info.get("thumburl") or info.get("url", "")
-                    if thumb:
-                        resolved.append(thumb)
-            except Exception:
+        for url in raw_urls:
+            if url.startswith("http"):
+                resolved.append(url)
                 continue
-            await asyncio.sleep(0.2)
+            if not url.startswith("File:"):
+                continue
+            filename = url.removeprefix("File:").replace(" ", "_")
+            if any(filename.lower().endswith(ext) for ext in (".svg", ".ogv", ".webm", ".ogg")):
+                continue
+            md5 = hashlib.md5(filename.encode()).hexdigest()
+            commons_url = f"https://upload.wikimedia.org/wikipedia/commons/{md5[0]}/{md5[0:2]}/{filename}"
+            resolved.append(commons_url)
+            if len(resolved) >= 10:
+                break
         return resolved
 
     async def _store_api_images(
