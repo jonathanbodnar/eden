@@ -433,7 +433,10 @@ class FetchWorker(BaseWorker):
                 continue
             seen.add(url)
             try:
-                resp = await client.get(url, follow_redirects=True, timeout=30.0)
+                resp = await client.get(
+                    url, follow_redirects=True, timeout=30.0,
+                    headers={"User-Agent": "EdenIngestion/1.0 (https://projectedin.com; eden@projectedin.com)"},
+                )
                 if resp.status_code != 200:
                     logger.debug("Image HTTP %d: %s", resp.status_code, url)
                     continue
