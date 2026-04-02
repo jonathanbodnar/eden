@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from collections.abc import AsyncIterator
 from typing import NamedTuple
 
@@ -1490,6 +1491,98 @@ async def stream_tla(max_pages: int = 100_000) -> AsyncIterator[DiscoveryBatch]:
 
 
 # ---------------------------------------------------------------------------
+# Sacred Texts (via Wayback Machine) – BCE texts
+# ---------------------------------------------------------------------------
+
+SACRED_TEXTS_CATEGORIES = {
+    "egy": ("Egyptian", -3000, -300),
+    "ane": ("Ancient Near East", -3000, -300),
+    "hin": ("Hindu (Vedic/Epic)", -1500, 0),
+    "bud": ("Buddhism", -500, 0),
+    "cfu": ("Confucianism", -600, 0),
+    "tao": ("Taoism", -600, 0),
+    "zor": ("Zoroastrianism", -1500, -300),
+    "jai": ("Jainism", -600, 0),
+    "jud": ("Judaism", -1200, 0),
+    "cla": ("Classics (Greek/Roman)", -800, 0),
+    "sbe": ("Sacred Books of the East", -1500, 0),
+}
+
+CDX_API = "https://web.archive.org/cdx/search/cdx"
+
+
+async def stream_sacred_texts(max_pages: int = 100_000) -> AsyncIterator[DiscoveryBatch]:
+    """Discover BCE-era texts from sacred-texts.com via Wayback Machine CDX API."""
+    total = 0
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        for cat_path, (label, date_start, date_end) in SACRED_TEXTS_CATEGORIES.items():
+            if total >= max_pages:
+                break
+            try:
+                resp = await client.get(
+                    CDX_API,
+                    params={
+                        "url": f"sacred-texts.com/{cat_path}/*",
+                        "output": "json",
+                        "filter": ["statuscode:200", "mimetype:text/html"],
+                        "collapse": "urlkey",
+                        "fl": "timestamp,original",
+                        "limit": 20000,
+                    },
+                    headers={"User-Agent": USER_AGENT},
+                )
+                if resp.status_code != 200:
+                    logger.warning("CDX %d for %s", resp.status_code, cat_path)
+                    continue
+                rows = resp.json()
+                if not rows or len(rows) < 2:
+                    continue
+
+                batch: list[DiscoveredPage] = []
+                for row in rows[1:]:
+                    timestamp, original_url = row[0], row[1]
+                    original_url = original_url.replace("http://", "https://").replace(":80/", "/")
+                    if not original_url.endswith(".htm"):
+                        continue
+                    # Skip non-content pages
+                    url_lower = original_url.lower()
+                    if any(skip in url_lower for skip in ["/cdshop/", "/search", "contact.htm", "faq.htm", "/img/"]):
+                        continue
+
+                    path = re.sub(r"https?://[^/]+/", "", original_url)
+                    ext_id = f"st-{path.replace('/', '-').replace('.htm', '')}"
+                    if len(ext_id) > 250:
+                        ext_id = ext_id[:250]
+
+                    title_parts = path.replace("/", " > ").replace(".htm", "").replace("_", " ")
+                    title = f"{label}: {title_parts}"
+
+                    batch.append(DiscoveredPage(
+                        url=original_url,
+                        external_id=ext_id,
+                        title=title[:300],
+                        content_hint="sacred_text",
+                        depth=0,
+                    ))
+                    total += 1
+                    if total >= max_pages:
+                        break
+
+                if batch:
+                    for i in range(0, len(batch), 500):
+                        yield DiscoveryBatch(batch[i:i + 500], 1, 0, False)
+                logger.info("Sacred-texts %s: %d pages", cat_path, len(batch))
+                await asyncio.sleep(2.0)
+
+            except Exception as exc:
+                logger.error("Sacred-texts CDX error for %s: %s", cat_path, exc)
+                continue
+
+    logger.info("Sacred-texts discovery complete: %d pages", total)
+    yield DiscoveryBatch([], 0, 0, True)
+
+
+# ---------------------------------------------------------------------------
 # Dispatcher
 # ---------------------------------------------------------------------------
 
@@ -1515,6 +1608,7 @@ API_ADAPTERS: dict[str, str] = {
     "openalex": "openalex",
     "core": "core",
     "tla-egyptian": "tla",
+    "sacred-texts": "sacred-texts",
 }
 
 
@@ -1563,6 +1657,8 @@ def get_api_stream(slug: str, max_pages: int = 100_000, **kwargs) -> AsyncIterat
         return stream_core(api_key, max_pages=max_pages)
     if adapter == "tla":
         return stream_tla(max_pages=max_pages)
+    if adapter == "sacred-texts":
+        return stream_sacred_texts(max_pages=max_pages)
     return None
 
 

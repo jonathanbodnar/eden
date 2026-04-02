@@ -114,7 +114,7 @@ class FetchWorker(BaseWorker):
         is_api_source = source.ingestion_method == IngestionMethod.API
         empty_polls = 0
 
-        rate_limited_slugs = {"wikidata-locations", "pleiades", "tla-egyptian"}
+        rate_limited_slugs = {"wikidata-locations", "pleiades", "tla-egyptian", "sacred-texts"}
         if source.slug in rate_limited_slugs:
             concurrency = 3
             batch_size = 20
@@ -159,6 +159,9 @@ class FetchWorker(BaseWorker):
                             fetch_url = api_fetch_url(source.slug, record.external_id)
                         if not fetch_url:
                             fetch_url = record.record_url
+                        if source.slug == "sacred-texts" and fetch_url:
+                            clean = fetch_url.replace("http://", "https://").replace(":80/", "/")
+                            fetch_url = f"https://web.archive.org/web/2id_/{clean}"
                         if not fetch_url or not fetch_url.startswith(("http://", "https://")):
                             return (record, None, f"Invalid URL: {fetch_url}")
 
@@ -265,6 +268,9 @@ class FetchWorker(BaseWorker):
         elif source.slug == "dss-bible" and "text/html" in content_type.lower():
             from src.ingestion.services.api_fetch import parse_dss_html
             metadata = parse_dss_html(data.decode("utf-8", errors="replace"), record.external_id)
+        elif source.slug == "sacred-texts" and "text/html" in content_type.lower():
+            from src.ingestion.services.api_fetch import parse_sacred_texts_html
+            metadata = parse_sacred_texts_html(data.decode("utf-8", errors="replace"), record.external_id)
         else:
             metadata = {"headers": dict(response.headers)}
 

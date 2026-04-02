@@ -111,9 +111,7 @@ def api_fetch_url(slug: str, external_id: str) -> str | None:
         return f"https://api.core.ac.uk/v3/works/{core_id}"
 
     if slug == "tla-egyptian":
-        # external_id: tla-{dataset_short}-{row_idx}
         parts = external_id.removeprefix("tla-")
-        # Find last dash to split dataset_short from row_idx
         last_dash = parts.rfind("-")
         if last_dash < 0:
             return None
@@ -125,6 +123,9 @@ def api_fetch_url(slug: str, external_id: str) -> str | None:
             f"?dataset={ds_full}&config=default&split=train"
             f"&offset={row_idx}&length=1"
         )
+
+    if slug == "sacred-texts":
+        return None  # HTML scrape via Wayback, handled in fetch_worker
 
     return None
 
@@ -1424,5 +1425,90 @@ def _parse_tla(data: dict) -> dict:
     meta["origin_place"] = "Egypt"
     meta["is_public_domain"] = True
     meta["tags"] = ["hieroglyphic", "egyptian", "ancient text", "TLA"]
+
+    return meta
+
+
+# ---------------------------------------------------------------------------
+# Sacred Texts (sacred-texts.com via Wayback Machine) parser
+# ---------------------------------------------------------------------------
+
+_ST_CATEGORY_DATES = {
+    "egy": ("Egyptian", -3000, -300),
+    "ane": ("Ancient Near East", -3000, -300),
+    "hin": ("Hindu", -1500, 0),
+    "bud": ("Buddhism", -500, 0),
+    "cfu": ("Confucianism", -600, 0),
+    "tao": ("Taoism", -600, 0),
+    "zor": ("Zoroastrianism", -1500, -300),
+    "jai": ("Jainism", -600, 0),
+    "jud": ("Judaism", -1200, 0),
+    "cla": ("Classics", -800, 0),
+    "sbe": ("Sacred Books of the East", -1500, 0),
+}
+
+
+def parse_sacred_texts_html(html: str, external_id: str) -> dict:
+    """Parse a sacred-texts.com page fetched via Wayback Machine."""
+    meta: dict = {"source_api": "sacred-texts"}
+
+    title_m = re.search(r"<title[^>]*>([^<]+)</title>", html, re.IGNORECASE)
+    title = ""
+    if title_m:
+        title = _strip_html(title_m.group(1))
+        title = re.sub(r"\s*\|\s*Internet Sacred Text Archive\s*$", "", title)
+        title = re.sub(r"\s*\|\s*Sacred Texts Archive\s*$", "", title)
+    if not title:
+        title = external_id.replace("st-", "").replace("-", " ")
+    meta["title"] = title.strip()
+
+    desc_m = re.search(r'<meta\s+(?:name|property)="(?:og:)?description"\s+content="([^"]*)"', html, re.IGNORECASE)
+    if desc_m:
+        meta["description"] = _strip_html(desc_m.group(1))
+
+    body_text = html
+    for tag in ["<script[^>]*>.*?</script>", "<style[^>]*>.*?</style>",
+                "<head[^>]*>.*?</head>", "<nav[^>]*>.*?</nav>",
+                "<!-- BEGIN WAYBACK TOOLBAR INSERT -->.*?<!-- END WAYBACK TOOLBAR INSERT -->"]:
+        body_text = re.sub(tag, " ", body_text, flags=re.IGNORECASE | re.DOTALL)
+
+    hr_parts = re.split(r"<hr[^>]*>", body_text, flags=re.IGNORECASE)
+    if len(hr_parts) >= 3:
+        body_text = "<hr>".join(hr_parts[1:-1])
+
+    body_text = _strip_html(body_text)
+    body_text = re.sub(r"\n{3,}", "\n\n", body_text)
+    body_text = body_text.strip()
+
+    meta["text"] = body_text
+
+    path = external_id.removeprefix("st-")
+    cat = path.split("-")[0] if "-" in path else ""
+    cat_info = _ST_CATEGORY_DATES.get(cat)
+    if cat_info:
+        label, date_start, date_end = cat_info
+        meta["genre"] = label
+        meta["dates"] = [{
+            "type": "composition",
+            "start": date_start,
+            "end": date_end,
+            "label": f"{label} text ({abs(date_start)}-{abs(date_end)} BC)",
+            "confidence": "approximate",
+        }]
+
+    meta["language_family"] = "English"
+    translations = []
+    if body_text:
+        translations.append({
+            "language": "English",
+            "text": body_text,
+            "version_type": "translation",
+        })
+    meta["translations"] = translations
+
+    meta["is_public_domain"] = True
+    meta["tags"] = ["sacred text", "translation", "ancient"]
+    if cat_info:
+        meta["tags"].append(cat_info[0].lower())
 
     return meta
