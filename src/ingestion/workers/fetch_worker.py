@@ -114,7 +114,7 @@ class FetchWorker(BaseWorker):
         is_api_source = source.ingestion_method == IngestionMethod.API
         empty_polls = 0
 
-        rate_limited_slugs = {"wikidata-locations", "pleiades", "tla-egyptian", "sacred-texts"}
+        rate_limited_slugs = {"wikidata-locations", "pleiades", "tla-egyptian", "sacred-texts", "wikipedia-ancient"}
         if source.slug in rate_limited_slugs:
             concurrency = 3
             batch_size = 20
@@ -264,6 +264,8 @@ class FetchWorker(BaseWorker):
             api_json = response.json()
             if isinstance(api_json, list) and len(api_json) == 1:
                 api_json = api_json[0]
+            if source.slug == "wikipedia-ancient":
+                api_json = await self._enrich_wiki_infobox(client, record.external_id, api_json)
             metadata = parse_api_metadata(source.slug, api_json)
         elif source.slug == "dss-bible" and "text/html" in content_type.lower():
             from src.ingestion.services.api_fetch import parse_dss_html
@@ -315,6 +317,8 @@ class FetchWorker(BaseWorker):
 
         if is_api:
             image_urls = metadata.get("image_urls", [])
+            if image_urls and source.slug == "wikipedia-ancient":
+                image_urls = await self._resolve_wiki_images(client, image_urls)
             if image_urls:
                 await self._store_api_images(session, client, source, raw_obj, image_urls)
         elif "text/html" in content_type.lower():
@@ -324,6 +328,79 @@ class FetchWorker(BaseWorker):
             )
 
         return raw_obj
+
+    @staticmethod
+    async def _enrich_wiki_infobox(
+        client: httpx.AsyncClient,
+        external_id: str,
+        api_json: dict,
+    ) -> dict:
+        """Fetch wikitext to extract structured infobox fields for Wikipedia articles."""
+        page_id = external_id.removeprefix("wp-")
+        try:
+            resp = await client.get(
+                "https://en.wikipedia.org/w/api.php",
+                params={
+                    "action": "parse",
+                    "pageid": page_id,
+                    "prop": "wikitext",
+                    "format": "json",
+                },
+                timeout=15.0,
+            )
+            if resp.status_code == 200:
+                wikitext = resp.json().get("parse", {}).get("wikitext", {}).get("*", "")
+                if wikitext:
+                    api_json["_infobox_wikitext"] = wikitext
+        except Exception:
+            pass
+        return api_json
+
+    @staticmethod
+    async def _resolve_wiki_images(
+        client: httpx.AsyncClient,
+        raw_urls: list[str],
+    ) -> list[str]:
+        """Resolve Wikipedia File: titles to actual image URLs via imageinfo API."""
+        resolved: list[str] = []
+        file_titles = [u for u in raw_urls if u.startswith("File:")]
+        direct_urls = [u for u in raw_urls if u.startswith("http")]
+        resolved.extend(direct_urls)
+
+        for batch_start in range(0, len(file_titles), 10):
+            batch = file_titles[batch_start:batch_start + 10]
+            titles = "|".join(batch)
+            try:
+                resp = await client.get(
+                    "https://en.wikipedia.org/w/api.php",
+                    params={
+                        "action": "query",
+                        "titles": titles,
+                        "prop": "imageinfo",
+                        "iiprop": "url|mime",
+                        "iiurlwidth": 1200,
+                        "format": "json",
+                    },
+                    timeout=15.0,
+                )
+                if resp.status_code != 200:
+                    continue
+                pages = resp.json().get("query", {}).get("pages", {})
+                for page in pages.values():
+                    infos = page.get("imageinfo", [])
+                    if not infos:
+                        continue
+                    info = infos[0]
+                    mime = info.get("mime", "")
+                    if not mime.startswith("image/"):
+                        continue
+                    thumb = info.get("thumburl") or info.get("url", "")
+                    if thumb:
+                        resolved.append(thumb)
+            except Exception:
+                continue
+            await asyncio.sleep(0.2)
+        return resolved
 
     async def _store_api_images(
         self,

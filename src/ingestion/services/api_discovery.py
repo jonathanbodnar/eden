@@ -1583,6 +1583,282 @@ async def stream_sacred_texts(max_pages: int = 100_000) -> AsyncIterator[Discove
 
 
 # ---------------------------------------------------------------------------
+# Wikipedia Ancient World — category-spider + search discovery
+# ---------------------------------------------------------------------------
+
+WIKI_API = "https://en.wikipedia.org/w/api.php"
+
+WIKI_SEED_CATEGORIES = [
+    # Mesopotamia
+    "Ancient_Mesopotamia", "Sumerian_mythology", "Akkadian_literature",
+    "Babylonian_mythology", "Assyrian_mythology", "Cuneiform",
+    "Sumerian_literature", "Mesopotamian_religion", "Ziggurats",
+    "Ancient_Mesopotamian_cities", "Akkadian_Empire", "Babylonia",
+    "Assyria", "Ur", "Uruk",
+    # Egypt
+    "Ancient_Egyptian_religion", "Ancient_Egyptian_texts",
+    "Ancient_Egyptian_funerary_texts", "Egyptian_mythology",
+    "Pyramids_of_Egypt", "Ancient_Egyptian_temples",
+    "Ancient_Egyptian_tombs", "Pharaohs", "Hieroglyphs",
+    "Ancient_Egyptian_literature", "Ancient_Egyptian_society",
+    # Levant / Canaan / Ugarit / Israel
+    "Ancient_Canaanite_religion", "Ugarit", "Phoenicia",
+    "Ancient_Israel_and_Judah", "Hebrew_Bible", "Dead_Sea_Scrolls",
+    "Second_Temple_Judaism", "Israelite_religion",
+    "Ancient_Levant", "Philistines",
+    # Anatolia
+    "Hittites", "Hittite_mythology_and_religion", "Urartu",
+    "Phrygia", "Lydia", "Luwians",
+    # Iran / Persia / Zoroastrianism
+    "Zoroastrianism", "Avesta", "Achaemenid_Empire",
+    "Elamite_civilization", "Medes", "Ancient_Iranian_religion",
+    "Persepolis",
+    # Vedic India
+    "Vedas", "Vedic_period", "Rigveda", "Upanishads",
+    "Hindu_mythology", "Hindu_cosmology", "Brahmanas",
+    "Indus_Valley_civilisation", "Ancient_Indian_history",
+    # Epic India
+    "Mahabharata", "Ramayana", "Puranas",
+    "Hindu_texts", "Sanskrit_texts",
+    # Buddhism & Jainism
+    "Buddhist_texts", "Pali_Canon", "Early_Buddhism",
+    "Buddhist_mythology", "Jain_texts", "Jainism",
+    "Ashoka", "Stupas",
+    # China
+    "Shang_dynasty", "Zhou_dynasty", "Oracle_bones",
+    "Chinese_classics", "Chinese_mythology",
+    "Confucianism", "Taoism", "Warring_States_period",
+    "Ancient_Chinese_texts", "I_Ching",
+    # Korea / Japan
+    "Ancient_Korea", "Korean_mythology",
+    "Jōmon_period", "Yayoi_period", "Japanese_mythology",
+    # Central Asia / Steppe
+    "Scythians", "Saka", "Bactria", "Sogdia",
+    "Eurasian_Steppe", "Bronze_Age_Central_Asia",
+    # Greece
+    "Ancient_Greek_religion", "Greek_mythology",
+    "Homeric_epics", "Ancient_Greek_literature",
+    "Minoan_civilization", "Mycenaean_Greece",
+    "Ancient_Greek_temples", "Greek_tragedy",
+    "Pre-Socratic_philosophy", "Ancient_Greek_cities",
+    # Rome / Italy
+    "Etruscan_civilization", "Etruscan_mythology",
+    "Roman_mythology", "Roman_Republic",
+    "Religion_in_ancient_Rome", "Italic_peoples",
+    # Celtic
+    "Celtic_mythology", "Celts", "Gauls",
+    "Iron_Age_Europe", "Celtic_religion",
+    # Germanic / Nordic
+    "Norse_mythology", "Germanic_religion_(aboriginal)",
+    "Nordic_Bronze_Age", "Scandinavian_archaeology",
+    # Nubia / North Africa
+    "Kingdom_of_Kush", "Nubia", "Meroë",
+    "Carthage", "Phoenician_colonies",
+    # Sub-Saharan Africa
+    "Aksumite_Empire", "Horn_of_Africa", "Nok_culture",
+    "African_archaeology", "African_mythology",
+    # Mesoamerica
+    "Olmecs", "Maya_civilization", "Maya_mythology",
+    "Zapotec_civilization", "Mixtec", "Teotihuacan",
+    "Mesoamerican_writing_systems", "Mesoamerican_calendars",
+    "Mesoamerican_pyramids",
+    # South America / Andes
+    "Norte_Chico_civilization", "Chavín_culture",
+    "Paracas_culture", "Nazca_culture", "Moche_culture",
+    "Pre-Columbian_era", "Andean_civilizations",
+    "Inca_mythology",
+    # Oceania
+    "Australian_Aboriginal_mythology", "Dreamtime",
+    "Aboriginal_Australians", "Lapita_culture",
+    "Polynesian_mythology", "Polynesian_navigation",
+    # Cross-cutting
+    "Creation_myths", "Flood_myths", "Ancient_astronomy",
+    "Ancient_cosmology", "Archaeological_sites",
+    "Ancient_religions", "Ancient_literature",
+    "Oral_tradition", "Ancient_law", "King_lists",
+    "Ancient_trade", "Ancient_maps",
+    "Undeciphered_writing_systems", "Sacred_texts",
+]
+
+WIKI_SEARCH_QUERIES = [
+    "ancient creation myth", "Sumerian king list", "Epic of Gilgamesh",
+    "Enuma Elish", "Atrahasis", "Code of Hammurabi",
+    "Pyramid Texts", "Coffin Texts", "Book of the Dead Egyptian",
+    "Baal Cycle Ugarit", "Dead Sea Scrolls translation",
+    "Avesta Zoroastrian", "Gathas Zarathustra",
+    "Rigveda hymns", "Upanishad philosophy", "Manu flood myth",
+    "Mahabharata ancient", "Ramayana epic",
+    "Pali Canon Tipitaka", "Jataka tales",
+    "Oracle bone inscription Shang", "Tao Te Ching",
+    "Analects Confucius", "I Ching divination",
+    "Iliad Homer", "Odyssey Homer", "Theogony Hesiod",
+    "Orphic mysteries", "Eleusinian Mysteries",
+    "Etruscan tomb", "Roman foundation myth Romulus",
+    "Celtic sacred grove", "Druids ancient",
+    "Norse creation myth Ymir", "runic inscription ancient",
+    "Nubian pyramid Meroe", "Carthage Tophet",
+    "Olmec colossal head", "Popol Vuh creation",
+    "Maya Long Count calendar", "Zapotec Monte Alban",
+    "Caral Supe civilization", "Chavin de Huantar",
+    "Nazca Lines geoglyph", "Viracocha creator",
+    "Dreamtime Aboriginal", "songlines Aboriginal",
+    "Lapita pottery Pacific", "Polynesian migration",
+    "ancient flood narrative", "sacred mountain ancient",
+    "ancient astronomical observation", "megalith ancient",
+    "ancient trade route", "Silk Road ancient",
+    "ancient sacred river", "cuneiform tablet translation",
+    "hieroglyphic inscription translation", "ancient oracle",
+    "ziggurat temple", "ancient city ruins archaeological",
+    "ancient burial mound", "steppe nomad Scythian",
+    "Harappan seal Indus", "Linear A Minoan",
+    "Rosetta Stone", "ancient kingship divine",
+]
+
+
+async def _wiki_category_members(
+    client: httpx.AsyncClient,
+    category: str,
+    cmtype: str = "page",
+    limit: int = 500,
+) -> list[dict]:
+    """Fetch members of a Wikipedia category."""
+    members = []
+    cmcontinue = None
+    while True:
+        params = {
+            "action": "query",
+            "list": "categorymembers",
+            "cmtitle": f"Category:{category}",
+            "cmtype": cmtype,
+            "cmlimit": min(limit - len(members), 500),
+            "format": "json",
+        }
+        if cmcontinue:
+            params["cmcontinue"] = cmcontinue
+        resp = await client.get(WIKI_API, params=params, headers={"User-Agent": USER_AGENT})
+        if resp.status_code != 200:
+            break
+        data = resp.json()
+        members.extend(data.get("query", {}).get("categorymembers", []))
+        cmcontinue = data.get("continue", {}).get("cmcontinue")
+        if not cmcontinue or len(members) >= limit:
+            break
+        await asyncio.sleep(0.1)
+    return members
+
+
+async def stream_wikipedia_ancient(max_pages: int = 200_000) -> AsyncIterator[DiscoveryBatch]:
+    """Spider Wikipedia categories and searches for ancient/BCE content."""
+    total = 0
+    seen_titles: set[str] = set()
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        # Phase 1: Spider category trees (2 levels deep)
+        for seed_cat in WIKI_SEED_CATEGORIES:
+            if total >= max_pages:
+                break
+            try:
+                pages = await _wiki_category_members(client, seed_cat, cmtype="page", limit=500)
+                subcats = await _wiki_category_members(client, seed_cat, cmtype="subcat", limit=100)
+
+                batch: list[DiscoveredPage] = []
+                for page in pages:
+                    title = page.get("title", "")
+                    if not title or title in seen_titles:
+                        continue
+                    seen_titles.add(title)
+                    page_id = page.get("pageid", 0)
+                    ext_id = f"wp-{page_id}"
+                    batch.append(DiscoveredPage(
+                        url=f"https://en.wikipedia.org/wiki/{title.replace(' ', '_')}",
+                        external_id=ext_id,
+                        title=title[:300],
+                        content_hint=f"cat:{seed_cat}",
+                        depth=0,
+                    ))
+                    total += 1
+                    if total >= max_pages:
+                        break
+
+                if batch:
+                    yield DiscoveryBatch(batch, 1, 0, False)
+
+                # Go one level deeper into subcategories
+                for subcat in subcats[:30]:
+                    if total >= max_pages:
+                        break
+                    sub_name = subcat.get("title", "").removeprefix("Category:")
+                    if not sub_name:
+                        continue
+                    sub_pages = await _wiki_category_members(client, sub_name, cmtype="page", limit=200)
+                    sub_batch: list[DiscoveredPage] = []
+                    for sp in sub_pages:
+                        title = sp.get("title", "")
+                        if not title or title in seen_titles:
+                            continue
+                        seen_titles.add(title)
+                        page_id = sp.get("pageid", 0)
+                        ext_id = f"wp-{page_id}"
+                        sub_batch.append(DiscoveredPage(
+                            url=f"https://en.wikipedia.org/wiki/{title.replace(' ', '_')}",
+                            external_id=ext_id,
+                            title=title[:300],
+                            content_hint=f"cat:{sub_name}",
+                            depth=1,
+                        ))
+                        total += 1
+                        if total >= max_pages:
+                            break
+                    if sub_batch:
+                        yield DiscoveryBatch(sub_batch, 1, 0, False)
+                    await asyncio.sleep(0.05)
+
+                if total % 5000 < 600:
+                    logger.info("Wikipedia discovery: %d articles from %d categories", total, WIKI_SEED_CATEGORIES.index(seed_cat) + 1)
+                await asyncio.sleep(0.1)
+            except Exception as exc:
+                logger.error("Wikipedia category %s error: %s", seed_cat, exc)
+                continue
+
+        # Phase 2: Targeted search queries
+        for query in WIKI_SEARCH_QUERIES:
+            if total >= max_pages:
+                break
+            try:
+                resp = await client.get(WIKI_API, params={
+                    "action": "query", "list": "search",
+                    "srsearch": query, "srlimit": 50, "format": "json",
+                }, headers={"User-Agent": USER_AGENT})
+                if resp.status_code != 200:
+                    continue
+                results = resp.json().get("query", {}).get("search", [])
+                batch = []
+                for r in results:
+                    title = r.get("title", "")
+                    if not title or title in seen_titles:
+                        continue
+                    seen_titles.add(title)
+                    page_id = r.get("pageid", 0)
+                    batch.append(DiscoveredPage(
+                        url=f"https://en.wikipedia.org/wiki/{title.replace(' ', '_')}",
+                        external_id=f"wp-{page_id}",
+                        title=title[:300],
+                        content_hint=f"search:{query[:50]}",
+                        depth=0,
+                    ))
+                    total += 1
+                if batch:
+                    yield DiscoveryBatch(batch, 1, 0, False)
+                await asyncio.sleep(0.2)
+            except Exception as exc:
+                logger.error("Wikipedia search '%s' error: %s", query, exc)
+                continue
+
+    logger.info("Wikipedia ancient discovery complete: %d articles", total)
+    yield DiscoveryBatch([], 0, 0, True)
+
+
+# ---------------------------------------------------------------------------
 # Dispatcher
 # ---------------------------------------------------------------------------
 
@@ -1609,6 +1885,7 @@ API_ADAPTERS: dict[str, str] = {
     "core": "core",
     "tla-egyptian": "tla",
     "sacred-texts": "sacred-texts",
+    "wikipedia-ancient": "wp-ancient",
 }
 
 
@@ -1659,6 +1936,8 @@ def get_api_stream(slug: str, max_pages: int = 100_000, **kwargs) -> AsyncIterat
         return stream_tla(max_pages=max_pages)
     if adapter == "sacred-texts":
         return stream_sacred_texts(max_pages=max_pages)
+    if adapter == "wp-ancient":
+        return stream_wikipedia_ancient(max_pages=max_pages)
     return None
 
 
