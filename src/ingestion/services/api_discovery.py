@@ -1719,6 +1719,7 @@ _WIKI_SKIP_TITLE_PREFIXES = (
     "List of ", "Lists of ", "Index of ", "Outline of ",
     "Template:", "Wikipedia:", "Portal:", "Draft:", "Category:",
     "File:", "Help:", "Module:", "MediaWiki:", "Talk:",
+    "Timeline of ", "Bibliography of ", "Historiography of ",
 )
 _WIKI_SKIP_TITLE_KEYWORDS = {
     "video game", "film)", "movie)", "novel)", "TV series", "television",
@@ -1732,6 +1733,33 @@ _WIKI_SKIP_TITLE_KEYWORDS = {
     "modern", "contemporary",
     "municipality", "district", "county", "province",
     "disambiguation",
+    # Modern people / scholars
+    "archaeologist", "egyptologist", "assyriologist", "historian",
+    "philologist", "orientalist", "antiquarian", "curator",
+    "collector", "explorer", "expedition",
+    "museum", "gallery",
+    # Modern nations / politics
+    "government", "politics", "political party", "election",
+    "national team", "military of", "army of", "navy of",
+    "war of independence", "civil war",
+    # Modern infrastructure
+    "airport", "railway", "highway", "stadium",
+}
+_WIKI_SKIP_SUBCAT_KEYWORDS = {
+    "video game", "film", "novel", "television", "sport",
+    "football", "people by", "ethnic", "diaspora", "cuisine",
+    "modern", "contemporary", "21st-century", "20th-century",
+    "companies", "organizations", "schools", "universities",
+    "archaeologist", "egyptologist", "assyriologist", "historian",
+    "scholars", "researchers", "academics", "professors",
+    "births", "deaths", "alumni", "graduates",
+    "collectors", "curators", "explorers", "expeditions",
+    "museums", "galleries", "libraries",
+    "politics", "political", "government", "military",
+    "wars of", "battles of the",
+    "national team", "airport", "railway",
+    "populated places", "cities in", "towns in", "villages in",
+    "neighborhoods", "streets in",
 }
 
 
@@ -1780,12 +1808,7 @@ async def stream_wikipedia_ancient(max_pages: int = 200_000) -> AsyncIterator[Di
                 if member.ns == wikipediaapi.Namespace.CATEGORY:
                     sub_name = title.removeprefix("Category:")
                     sub_lower = sub_name.lower()
-                    if not any(skip in sub_lower for skip in (
-                        "video game", "film", "novel", "television", "sport",
-                        "football", "people by", "ethnic", "diaspora", "cuisine",
-                        "modern", "contemporary", "21st-century", "20th-century",
-                        "companies", "organizations", "schools", "universities",
-                    )):
+                    if not any(skip in sub_lower for skip in _WIKI_SKIP_SUBCAT_KEYWORDS):
                         subcats.append(sub_name)
                     continue
                 if member.ns != wikipediaapi.Namespace.MAIN:
