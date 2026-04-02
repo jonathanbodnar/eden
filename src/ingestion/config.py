@@ -10,8 +10,8 @@ class Settings(BaseSettings):
     # PostgreSQL
     database_url: str = "postgresql+asyncpg://eden:eden@localhost:5432/eden"
     database_url_sync: str = "postgresql://eden:eden@localhost:5432/eden"
-    db_pool_size: int = 20
-    db_max_overflow: int = 10
+    db_pool_size: int = 3
+    db_max_overflow: int = 2
 
     # Cloudflare R2
     r2_endpoint_url: str = ""
