@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from urllib.parse import urljoin, urlparse
 
 import httpx
-from sqlalchemy import and_, select, update
+from sqlalchemy import and_, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.ingestion.config import settings
@@ -276,16 +276,28 @@ class FetchWorker(BaseWorker):
         else:
             metadata = {"headers": dict(response.headers)}
 
+        checksum_val = R2Client.compute_checksum(data)
         existing = await session.execute(
             select(RawObject).where(
                 RawObject.trusted_source_id == source.id,
                 RawObject.external_id == record.external_id,
-                RawObject.checksum == R2Client.compute_checksum(data),
+                RawObject.checksum == checksum_val,
             )
         )
-        if existing.scalar_one_or_none():
-            logger.info("Duplicate content for %s, skipping upload", record.external_id)
-            return existing.scalar_one()
+        existing_obj = existing.scalar_one_or_none()
+        if existing_obj:
+            existing_img_count = await session.execute(
+                select(func.count()).select_from(ObjectImage).where(
+                    ObjectImage.raw_object_id == existing_obj.id
+                )
+            )
+            if (existing_img_count.scalar() or 0) > 0:
+                logger.info("Duplicate content for %s, skipping upload", record.external_id)
+                return existing_obj
+            if is_api and metadata.get("image_urls"):
+                await self._store_api_images(session, client, source, existing_obj, metadata["image_urls"])
+                await session.flush()
+            return existing_obj
 
         r2_key, checksum = self.storage.upload_raw(
             source_slug=source.slug,
