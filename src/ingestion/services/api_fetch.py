@@ -110,6 +110,22 @@ def api_fetch_url(slug: str, external_id: str) -> str | None:
         core_id = external_id.removeprefix("core-")
         return f"https://api.core.ac.uk/v3/works/{core_id}"
 
+    if slug == "tla-egyptian":
+        # external_id: tla-{dataset_short}-{row_idx}
+        parts = external_id.removeprefix("tla-")
+        # Find last dash to split dataset_short from row_idx
+        last_dash = parts.rfind("-")
+        if last_dash < 0:
+            return None
+        ds_short = parts[:last_dash]
+        row_idx = parts[last_dash + 1:]
+        ds_full = f"thesaurus-linguae-aegyptiae/{ds_short}"
+        return (
+            f"https://datasets-server.huggingface.co/rows"
+            f"?dataset={ds_full}&config=default&split=train"
+            f"&offset={row_idx}&length=1"
+        )
+
     return None
 
 
@@ -152,6 +168,8 @@ def parse_api_metadata(slug: str, data: dict) -> dict:
         return _parse_openalex(data)
     if slug == "core":
         return _parse_core(data)
+    if slug == "tla-egyptian":
+        return _parse_tla(data)
     return data
 
 
@@ -1314,5 +1332,97 @@ def _parse_core(data: dict) -> dict:
     repos = data.get("repositories", [])
     if repos:
         meta["repository"] = repos[0].get("name", "") if isinstance(repos[0], dict) else ""
+
+    return meta
+
+
+# ---------------------------------------------------------------------------
+# TLA (Thesaurus Linguae Aegyptiae) parser
+# ---------------------------------------------------------------------------
+
+def _parse_tla(data: dict) -> dict:
+    """Parse TLA Hugging Face dataset row (hieroglyphs + transliteration + translation)."""
+    rows = data.get("rows", [data])
+    row = rows[0].get("row", rows[0]) if isinstance(rows, list) and rows else data
+
+    meta: dict = {"_raw": data, "source_api": "tla"}
+
+    hieroglyphs = row.get("hieroglyphs", "")
+    transliteration = row.get("transliteration", "")
+    translation = row.get("translation", "")
+    glossing = row.get("glossing", "")
+    lemmatization = row.get("lemmatization", "")
+    upos = row.get("UPOS", "")
+
+    title_parts = []
+    if transliteration:
+        title_parts.append(transliteration[:80])
+    if hieroglyphs:
+        title_parts.append(hieroglyphs[:60])
+    meta["title"] = " — ".join(title_parts) if title_parts else "TLA Egyptian Text"
+
+    text_parts = []
+    if hieroglyphs:
+        text_parts.append(f"Hieroglyphs: {hieroglyphs}")
+    if transliteration:
+        text_parts.append(f"Transliteration: {transliteration}")
+    if glossing:
+        text_parts.append(f"Glossing: {glossing}")
+    if translation:
+        text_parts.append(f"Translation: {translation}")
+    meta["text"] = "\n".join(text_parts)
+
+    meta["language_family"] = "Egyptian"
+
+    translations = []
+    if hieroglyphs:
+        translations.append({
+            "language": "Egyptian (Hieroglyphic)",
+            "text": hieroglyphs,
+            "version_type": "original",
+        })
+    if transliteration:
+        translations.append({
+            "language": "Egyptian (Transliteration)",
+            "text": transliteration,
+        })
+    if translation:
+        lang = "German"
+        translations.append({
+            "language": lang,
+            "text": translation,
+        })
+    meta["translations"] = translations
+
+    if lemmatization:
+        meta["lemmatization"] = lemmatization
+    if upos:
+        meta["part_of_speech"] = upos
+    if glossing:
+        meta["glossing"] = glossing
+
+    dates = []
+    date_start = row.get("dateNotBefore")
+    date_end = row.get("dateNotAfter")
+    if date_start or date_end:
+        start_val = int(date_start) if date_start else None
+        end_val = int(date_end) if date_end else None
+        label_parts = []
+        if start_val is not None:
+            label_parts.append(f"{abs(start_val)} {'BC' if start_val < 0 else 'AD'}")
+        if end_val is not None:
+            label_parts.append(f"{abs(end_val)} {'BC' if end_val < 0 else 'AD'}")
+        dates.append({
+            "type": "composition",
+            "start": start_val if start_val else -3000,
+            "end": end_val if end_val else -300,
+            "label": " to ".join(label_parts),
+            "confidence": "approximate",
+        })
+    meta["dates"] = dates
+
+    meta["origin_place"] = "Egypt"
+    meta["is_public_domain"] = True
+    meta["tags"] = ["hieroglyphic", "egyptian", "ancient text", "TLA"]
 
     return meta

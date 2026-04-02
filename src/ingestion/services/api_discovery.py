@@ -1401,6 +1401,85 @@ async def stream_core(api_key: str = "", max_pages: int = 100_000) -> AsyncItera
 
 
 # ---------------------------------------------------------------------------
+# TLA (Thesaurus Linguae Aegyptiae) – Hugging Face datasets
+# ---------------------------------------------------------------------------
+
+TLA_HF_DATASETS = [
+    ("thesaurus-linguae-aegyptiae/tla-Earlier_Egyptian_original-v18-premium", "Earlier Egyptian"),
+    ("thesaurus-linguae-aegyptiae/tla-late_egyptian-v19-premium", "Late Egyptian"),
+    ("thesaurus-linguae-aegyptiae/tla-demotic-v18-premium", "Demotic"),
+]
+
+HF_ROWS_URL = "https://datasets-server.huggingface.co/rows"
+
+
+async def stream_tla(max_pages: int = 100_000) -> AsyncIterator[DiscoveryBatch]:
+    """Discover Egyptian hieroglyphic texts from TLA Hugging Face datasets."""
+    total = 0
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        for dataset_id, period_label in TLA_HF_DATASETS:
+            if total >= max_pages:
+                break
+            offset = 0
+            page_size = 100
+            while total < max_pages:
+                try:
+                    resp = await client.get(
+                        HF_ROWS_URL,
+                        params={
+                            "dataset": dataset_id,
+                            "config": "default",
+                            "split": "train",
+                            "offset": offset,
+                            "length": page_size,
+                        },
+                        headers={"User-Agent": USER_AGENT},
+                    )
+                    if resp.status_code != 200:
+                        logger.warning("TLA HF %d for %s offset %d", resp.status_code, dataset_id, offset)
+                        break
+                    data = resp.json()
+                    rows = data.get("rows", [])
+                    if not rows:
+                        break
+                    batch: list[DiscoveredPage] = []
+                    for row_obj in rows:
+                        row = row_obj.get("row", {})
+                        row_idx = row_obj.get("row_idx", offset)
+                        ds_short = dataset_id.rsplit("/", 1)[-1]
+                        ext_id = f"tla-{ds_short}-{row_idx}"
+                        title_parts = []
+                        hieroglyphs = row.get("hieroglyphs", "")
+                        if hieroglyphs:
+                            title_parts.append(hieroglyphs[:60])
+                        translation = row.get("translation", "")
+                        if translation:
+                            title_parts.append(translation[:120])
+                        title = " — ".join(title_parts) if title_parts else f"TLA {period_label} #{row_idx}"
+                        batch.append(DiscoveredPage(
+                            url=f"https://huggingface.co/datasets/{dataset_id}",
+                            external_id=ext_id,
+                            title=title[:300],
+                            content_hint="egyptian_text",
+                            depth=0,
+                        ))
+                        total += 1
+                        if total >= max_pages:
+                            break
+                    if batch:
+                        yield DiscoveryBatch(batch, 1, 0, False)
+                    if len(rows) < page_size:
+                        break
+                    offset += page_size
+                    await asyncio.sleep(0.3)
+                except Exception as exc:
+                    logger.error("TLA discovery error: %s", exc)
+                    break
+    logger.info("TLA discovery complete: %d texts", total)
+    yield DiscoveryBatch([], 0, 0, True)
+
+
+# ---------------------------------------------------------------------------
 # Dispatcher
 # ---------------------------------------------------------------------------
 
@@ -1425,6 +1504,7 @@ API_ADAPTERS: dict[str, str] = {
     "wikidata-locations": "wd-loc",
     "openalex": "openalex",
     "core": "core",
+    "tla-egyptian": "tla",
 }
 
 
@@ -1471,6 +1551,8 @@ def get_api_stream(slug: str, max_pages: int = 100_000, **kwargs) -> AsyncIterat
     if adapter == "core":
         api_key = kwargs.get("core_api_key", "")
         return stream_core(api_key, max_pages=max_pages)
+    if adapter == "tla":
+        return stream_tla(max_pages=max_pages)
     return None
 
 
