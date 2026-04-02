@@ -181,6 +181,8 @@ async def list_collection(
     culture: str | None = Query(None),
     search: str | None = Query(None),
     record_status: str | None = Query(None),
+    has_images: bool | None = Query(None),
+    sort_by: str = Query("newest", regex="^(newest|oldest|title|images)$"),
     offset: int = Query(0, ge=0),
     limit: int = Query(40, ge=1, le=100),
     session: AsyncSession = Depends(get_session),
@@ -196,16 +198,45 @@ async def list_collection(
         filters.append(SourceRecord.canonical_title.ilike(f"%{search}%"))
     if record_status:
         filters.append(SourceRecord.record_status == record_status)
+    if has_images is True:
+        filters.append(
+            SourceRecord.raw_object_id.in_(
+                select(ObjectImage.raw_object_id).distinct()
+            )
+        )
+    elif has_images is False:
+        filters.append(
+            ~SourceRecord.raw_object_id.in_(
+                select(ObjectImage.raw_object_id).distinct()
+            )
+        )
 
     count_q = select(func.count(SourceRecord.id))
     for f in filters:
         count_q = count_q.where(f)
     total = (await session.execute(count_q)).scalar() or 0
 
+    img_count_subq = (
+        select(func.count(ObjectImage.id))
+        .where(ObjectImage.raw_object_id == SourceRecord.raw_object_id)
+        .correlate(SourceRecord)
+        .scalar_subquery()
+    )
+
     query = select(SourceRecord)
     for f in filters:
         query = query.where(f)
-    query = query.order_by(SourceRecord.created_at.desc()).offset(offset).limit(limit)
+
+    if sort_by == "images":
+        query = query.order_by(img_count_subq.desc(), SourceRecord.created_at.desc())
+    elif sort_by == "oldest":
+        query = query.order_by(SourceRecord.created_at.asc())
+    elif sort_by == "title":
+        query = query.order_by(SourceRecord.canonical_title.asc())
+    else:
+        query = query.order_by(SourceRecord.created_at.desc())
+
+    query = query.offset(offset).limit(limit)
     result = await session.execute(query)
     records = result.scalars().all()
 

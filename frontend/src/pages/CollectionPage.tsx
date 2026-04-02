@@ -232,6 +232,8 @@ export default function CollectionPage() {
     source_category: "",
     culture: "",
     search: "",
+    has_images: "",
+    sort_by: "newest",
     offset: "0",
   });
 
@@ -348,10 +350,29 @@ export default function CollectionPage() {
             <option value="gazetteer">Gazetteer</option>
             <option value="public_domain_library">Public Domain Library</option>
           </select>
+          <select
+            className="input"
+            value={filters.has_images}
+            onChange={(e) => setFilters({ ...filters, has_images: e.target.value, offset: "0" })}
+          >
+            <option value="">All Records</option>
+            <option value="true">With Images</option>
+            <option value="false">Without Images</option>
+          </select>
+          <select
+            className="input"
+            value={filters.sort_by}
+            onChange={(e) => setFilters({ ...filters, sort_by: e.target.value, offset: "0" })}
+          >
+            <option value="newest">Newest First</option>
+            <option value="oldest">Oldest First</option>
+            <option value="images">Most Images</option>
+            <option value="title">Title A–Z</option>
+          </select>
           <button
             className="btn btn-ghost"
             onClick={() =>
-              setFilters({ trusted_source_id: "", source_category: "", culture: "", search: "", offset: "0" })
+              setFilters({ trusted_source_id: "", source_category: "", culture: "", search: "", has_images: "", sort_by: "newest", offset: "0" })
             }
           >
             Clear
