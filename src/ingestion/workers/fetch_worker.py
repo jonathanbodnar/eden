@@ -114,7 +114,7 @@ class FetchWorker(BaseWorker):
         is_api_source = source.ingestion_method == IngestionMethod.API
         empty_polls = 0
 
-        rate_limited_slugs = {"wikidata-locations", "pleiades"}
+        rate_limited_slugs = {"wikidata-locations", "pleiades", "tla-egyptian"}
         if source.slug in rate_limited_slugs:
             concurrency = 3
             batch_size = 20

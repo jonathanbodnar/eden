@@ -1424,19 +1424,29 @@ async def stream_tla(max_pages: int = 100_000) -> AsyncIterator[DiscoveryBatch]:
             page_size = 100
             while total < max_pages:
                 try:
-                    resp = await client.get(
-                        HF_ROWS_URL,
-                        params={
-                            "dataset": dataset_id,
-                            "config": "default",
-                            "split": "train",
-                            "offset": offset,
-                            "length": page_size,
-                        },
-                        headers={"User-Agent": USER_AGENT},
-                    )
-                    if resp.status_code != 200:
-                        logger.warning("TLA HF %d for %s offset %d", resp.status_code, dataset_id, offset)
+                    retries = 0
+                    resp = None
+                    while retries < 5:
+                        resp = await client.get(
+                            HF_ROWS_URL,
+                            params={
+                                "dataset": dataset_id,
+                                "config": "default",
+                                "split": "train",
+                                "offset": offset,
+                                "length": page_size,
+                            },
+                            headers={"User-Agent": USER_AGENT},
+                        )
+                        if resp.status_code == 429:
+                            wait = 10 * (2 ** retries)
+                            logger.warning("TLA HF 429, waiting %ds (retry %d)", wait, retries + 1)
+                            await asyncio.sleep(wait)
+                            retries += 1
+                            continue
+                        break
+                    if resp is None or resp.status_code != 200:
+                        logger.warning("TLA HF %d for %s offset %d", resp.status_code if resp else 0, dataset_id, offset)
                         break
                     data = resp.json()
                     rows = data.get("rows", [])
@@ -1471,7 +1481,7 @@ async def stream_tla(max_pages: int = 100_000) -> AsyncIterator[DiscoveryBatch]:
                     if len(rows) < page_size:
                         break
                     offset += page_size
-                    await asyncio.sleep(0.3)
+                    await asyncio.sleep(1.0)
                 except Exception as exc:
                     logger.error("TLA discovery error: %s", exc)
                     break
