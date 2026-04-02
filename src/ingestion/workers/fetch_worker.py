@@ -154,6 +154,8 @@ class FetchWorker(BaseWorker):
                     async with sem:
                         if source.slug in rate_limited_slugs:
                             await asyncio.sleep(0.5)
+                        if source.slug == "wikipedia-ancient":
+                            return await self._prefetch_wikipedia(record, client)
                         fetch_url = None
                         if is_api_source:
                             fetch_url = api_fetch_url(source.slug, record.external_id)
@@ -264,8 +266,6 @@ class FetchWorker(BaseWorker):
             api_json = response.json()
             if isinstance(api_json, list) and len(api_json) == 1:
                 api_json = api_json[0]
-            if source.slug == "wikipedia-ancient":
-                api_json = await self._enrich_wiki_infobox(client, record.external_id, api_json)
             metadata = parse_api_metadata(source.slug, api_json)
         elif source.slug == "dss-bible" and "text/html" in content_type.lower():
             from src.ingestion.services.api_fetch import parse_dss_html
@@ -317,8 +317,6 @@ class FetchWorker(BaseWorker):
 
         if is_api:
             image_urls = metadata.get("image_urls", [])
-            if image_urls and source.slug == "wikipedia-ancient":
-                image_urls = await self._resolve_wiki_images(client, image_urls)
             if image_urls:
                 await self._store_api_images(session, client, source, raw_obj, image_urls)
         elif "text/html" in content_type.lower() and source.slug not in ("sacred-texts",):
@@ -329,61 +327,95 @@ class FetchWorker(BaseWorker):
 
         return raw_obj
 
-    @staticmethod
-    async def _enrich_wiki_infobox(
+    async def _prefetch_wikipedia(
+        self,
+        record: DiscoveredRecord,
         client: httpx.AsyncClient,
-        external_id: str,
-        api_json: dict,
-    ) -> dict:
-        """Fetch wikitext to extract structured infobox fields for Wikipedia articles."""
-        page_id = external_id.removeprefix("wp-")
-        for attempt in range(6):
-            try:
-                resp = await client.get(
-                    "https://en.wikipedia.org/w/api.php",
-                    params={
-                        "action": "parse",
-                        "pageid": page_id,
-                        "prop": "wikitext",
-                        "format": "json",
-                    },
-                    timeout=15.0,
-                )
-                if resp.status_code == 429:
-                    await asyncio.sleep(min(5.0 * (2 ** attempt), 60.0))
-                    continue
-                if resp.status_code == 200:
-                    wikitext = resp.json().get("parse", {}).get("wikitext", {}).get("*", "")
-                    if wikitext:
-                        api_json["_infobox_wikitext"] = wikitext
-                break
-            except Exception:
-                break
-        return api_json
-
-    @staticmethod
-    async def _resolve_wiki_images(
-        client: httpx.AsyncClient,
-        raw_urls: list[str],
-    ) -> list[str]:
-        """Resolve Wikipedia File: titles to Wikimedia Commons URLs using MD5 hash path."""
+    ) -> tuple[DiscoveredRecord, httpx.Response | None, str | None]:
+        """Fetch a Wikipedia article using wikipedia-api library, return a synthetic response."""
+        import wikipediaapi
         import hashlib
-        resolved: list[str] = []
-        for url in raw_urls:
-            if url.startswith("http"):
-                resolved.append(url)
-                continue
-            if not url.startswith("File:"):
-                continue
-            filename = url.removeprefix("File:").replace(" ", "_")
-            if any(filename.lower().endswith(ext) for ext in (".svg", ".ogv", ".webm", ".ogg")):
-                continue
-            md5 = hashlib.md5(filename.encode()).hexdigest()
-            commons_url = f"https://upload.wikimedia.org/wikipedia/commons/{md5[0]}/{md5[0:2]}/{filename}"
-            resolved.append(commons_url)
-            if len(resolved) >= 10:
-                break
-        return resolved
+        import json as _json
+
+        wiki = wikipediaapi.AsyncWikipedia(
+            user_agent="EdenIngestion/1.0 (https://projectedin.com; eden@projectedin.com)",
+            language="en",
+            max_retries=5,
+            retry_wait=3.0,
+        )
+
+        title = record.title_hint or record.record_url.split("/wiki/")[-1].replace("_", " ")
+        try:
+            page = wiki.page(title)
+            if not await page.exists():
+                return (record, None, f"Wikipedia page does not exist: {title}")
+
+            text = await page.text
+            summary = await page.summary
+            coords = await page.coordinates
+            images = await page.images
+            categories = await page.categories
+            page_id = await page.pageid
+            fullurl = await page.fullurl
+
+            image_urls: list[str] = []
+            for img_title in list(images.keys())[:15]:
+                if any(skip in img_title.lower() for skip in [
+                    ".svg", ".ogv", ".webm", ".ogg", "icon", "logo",
+                    "flag", "commons-logo", "wikidata", "question_book",
+                    "edit-clear", "ambox", "padlock", "globe", "portal",
+                ]):
+                    continue
+                filename = img_title.removeprefix("File:").replace(" ", "_")
+                md5 = hashlib.md5(filename.encode()).hexdigest()
+                image_urls.append(
+                    f"https://upload.wikimedia.org/wikipedia/commons/{md5[0]}/{md5[0:2]}/{filename}"
+                )
+                if len(image_urls) >= 10:
+                    break
+
+            meta = {
+                "title": title,
+                "wikipedia_url": fullurl,
+                "text": text,
+                "summary": summary,
+                "image_urls": image_urls,
+                "source_api": "wikipedia",
+                "language_family": "English",
+                "is_public_domain": True,
+                "_raw": {"pageid": page_id, "title": title},
+            }
+
+            if coords:
+                c = coords[0]
+                meta["latitude"] = c.lat
+                meta["longitude"] = c.lon
+                meta["origin_place"] = title
+
+            cat_names = [
+                t.removeprefix("Category:") for t in categories.keys()
+                if not any(skip in t.lower() for skip in [
+                    "articles", "pages", "template", "cs1", "wikidata",
+                    "short description", "webarchive", "dmy dates",
+                    "mdy dates", "use american", "use british",
+                    "good articles", "featured articles",
+                ])
+            ]
+            if cat_names:
+                meta["tags"] = cat_names[:20]
+
+            payload = _json.dumps({"query": {"pages": {str(page_id): meta}}}).encode()
+
+            resp = httpx.Response(
+                status_code=200,
+                headers={"content-type": "application/json"},
+                content=payload,
+                request=httpx.Request("GET", fullurl or record.record_url),
+            )
+            return (record, resp, None)
+
+        except Exception as exc:
+            return (record, None, f"wikipedia-api error: {type(exc).__name__}: {exc}")
 
     async def _store_api_images(
         self,

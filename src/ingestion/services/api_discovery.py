@@ -1715,159 +1715,119 @@ WIKI_SEARCH_QUERIES = [
 ]
 
 
-async def _wiki_category_members(
-    client: httpx.AsyncClient,
-    category: str,
-    cmtype: str = "page",
-    limit: int = 500,
-) -> list[dict]:
-    """Fetch members of a Wikipedia category."""
-    members = []
-    cmcontinue = None
-    while True:
-        params = {
-            "action": "query",
-            "list": "categorymembers",
-            "cmtitle": f"Category:{category}",
-            "cmtype": cmtype,
-            "cmlimit": min(limit - len(members), 500),
-            "format": "json",
-        }
-        if cmcontinue:
-            params["cmcontinue"] = cmcontinue
-        resp = None
-        for attempt in range(10):
-            resp = await client.get(WIKI_API, params=params, headers={"User-Agent": USER_AGENT})
-            if resp.status_code == 429:
-                wait = min(5.0 * (2 ** attempt), 120.0)
-                logger.debug("Wiki 429 on %s, waiting %.0fs (attempt %d)", category, wait, attempt + 1)
-                await asyncio.sleep(wait)
-                continue
-            break
-        if resp is None or resp.status_code != 200:
-            break
-        data = resp.json()
-        members.extend(data.get("query", {}).get("categorymembers", []))
-        cmcontinue = data.get("continue", {}).get("cmcontinue")
-        if not cmcontinue or len(members) >= limit:
-            break
-        await asyncio.sleep(2.0)
-    return members
-
-
 async def stream_wikipedia_ancient(max_pages: int = 200_000) -> AsyncIterator[DiscoveryBatch]:
-    """Spider Wikipedia categories and searches for ancient/BCE content."""
+    """Spider Wikipedia categories and searches for ancient/BCE content using wikipedia-api library."""
+    import wikipediaapi
+
+    wiki = wikipediaapi.AsyncWikipedia(
+        user_agent="EdenIngestion/1.0 (https://projectedin.com; eden@projectedin.com)",
+        language="en",
+        max_retries=5,
+        retry_wait=3.0,
+    )
+
     total = 0
     seen_titles: set[str] = set()
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        # Phase 1: Spider category trees (2 levels deep)
-        for seed_cat in WIKI_SEED_CATEGORIES:
-            if total >= max_pages:
-                break
+    # Phase 1: Spider category trees (2 levels deep)
+    for seed_cat in WIKI_SEED_CATEGORIES:
+        if total >= max_pages:
+            break
+        try:
+            cat_page = wiki.page(f"Category:{seed_cat}")
             try:
-                pages = await _wiki_category_members(client, seed_cat, cmtype="page", limit=500)
-                subcats = await _wiki_category_members(client, seed_cat, cmtype="subcat", limit=100)
-
-                batch: list[DiscoveredPage] = []
-                for page in pages:
-                    title = page.get("title", "")
-                    if not title or title in seen_titles:
-                        continue
-                    seen_titles.add(title)
-                    page_id = page.get("pageid", 0)
-                    ext_id = f"wp-{page_id}"
-                    batch.append(DiscoveredPage(
-                        url=f"https://en.wikipedia.org/wiki/{title.replace(' ', '_')}",
-                        external_id=ext_id,
-                        title=title[:300],
-                        content_hint=f"cat:{seed_cat}",
-                        depth=0,
-                    ))
-                    total += 1
-                    if total >= max_pages:
-                        break
-
-                if batch:
-                    yield DiscoveryBatch(batch, 1, 0, False)
-
-                # Go one level deeper into subcategories
-                for subcat in subcats[:30]:
-                    if total >= max_pages:
-                        break
-                    sub_name = subcat.get("title", "").removeprefix("Category:")
-                    if not sub_name:
-                        continue
-                    sub_pages = await _wiki_category_members(client, sub_name, cmtype="page", limit=200)
-                    sub_batch: list[DiscoveredPage] = []
-                    for sp in sub_pages:
-                        title = sp.get("title", "")
-                        if not title or title in seen_titles:
-                            continue
-                        seen_titles.add(title)
-                        page_id = sp.get("pageid", 0)
-                        ext_id = f"wp-{page_id}"
-                        sub_batch.append(DiscoveredPage(
-                            url=f"https://en.wikipedia.org/wiki/{title.replace(' ', '_')}",
-                            external_id=ext_id,
-                            title=title[:300],
-                            content_hint=f"cat:{sub_name}",
-                            depth=1,
-                        ))
-                        total += 1
-                        if total >= max_pages:
-                            break
-                    if sub_batch:
-                        yield DiscoveryBatch(sub_batch, 1, 0, False)
-                    await asyncio.sleep(3.0)
-
-                if total % 5000 < 600:
-                    logger.info("Wikipedia discovery: %d articles from %d categories", total, WIKI_SEED_CATEGORIES.index(seed_cat) + 1)
-                await asyncio.sleep(3.0)
+                members = await cat_page.categorymembers
             except Exception as exc:
-                logger.error("Wikipedia category %s error: %s", seed_cat, exc)
+                logger.warning("Wikipedia category %s fetch failed: %s", seed_cat, exc)
                 continue
 
-        # Phase 2: Targeted search queries
-        for query in WIKI_SEARCH_QUERIES:
-            if total >= max_pages:
-                break
-            try:
-                resp = None
-                for attempt in range(10):
-                    resp = await client.get(WIKI_API, params={
-                        "action": "query", "list": "search",
-                        "srsearch": query, "srlimit": 50, "format": "json",
-                    }, headers={"User-Agent": USER_AGENT})
-                    if resp.status_code == 429:
-                        wait = min(5.0 * (2 ** attempt), 120.0)
-                        await asyncio.sleep(wait)
-                        continue
+            batch: list[DiscoveredPage] = []
+            subcats: list[str] = []
+
+            for title, member in members.items():
+                if total >= max_pages:
                     break
-                if resp is None or resp.status_code != 200:
+                if member.ns == wikipediaapi.Namespace.CATEGORY:
+                    subcats.append(title.removeprefix("Category:"))
                     continue
-                results = resp.json().get("query", {}).get("search", [])
-                batch = []
-                for r in results:
-                    title = r.get("title", "")
-                    if not title or title in seen_titles:
+                if member.ns != wikipediaapi.Namespace.MAIN:
+                    continue
+                if title in seen_titles:
+                    continue
+                seen_titles.add(title)
+                page_id = await member.pageid
+                batch.append(DiscoveredPage(
+                    url=f"https://en.wikipedia.org/wiki/{title.replace(' ', '_')}",
+                    external_id=f"wp-{page_id}",
+                    title=title[:300],
+                    content_hint=f"cat:{seed_cat}",
+                    depth=0,
+                ))
+                total += 1
+
+            if batch:
+                yield DiscoveryBatch(batch, 1, 0, False)
+
+            for sub_name in subcats[:30]:
+                if total >= max_pages:
+                    break
+                try:
+                    sub_page = wiki.page(f"Category:{sub_name}")
+                    sub_members = await sub_page.categorymembers
+                except Exception:
+                    continue
+
+                sub_batch: list[DiscoveredPage] = []
+                for s_title, s_member in sub_members.items():
+                    if total >= max_pages:
+                        break
+                    if s_member.ns != wikipediaapi.Namespace.MAIN:
                         continue
-                    seen_titles.add(title)
-                    page_id = r.get("pageid", 0)
-                    batch.append(DiscoveredPage(
-                        url=f"https://en.wikipedia.org/wiki/{title.replace(' ', '_')}",
-                        external_id=f"wp-{page_id}",
-                        title=title[:300],
-                        content_hint=f"search:{query[:50]}",
-                        depth=0,
+                    if s_title in seen_titles:
+                        continue
+                    seen_titles.add(s_title)
+                    s_page_id = await s_member.pageid
+                    sub_batch.append(DiscoveredPage(
+                        url=f"https://en.wikipedia.org/wiki/{s_title.replace(' ', '_')}",
+                        external_id=f"wp-{s_page_id}",
+                        title=s_title[:300],
+                        content_hint=f"cat:{sub_name}",
+                        depth=1,
                     ))
                     total += 1
-                if batch:
-                    yield DiscoveryBatch(batch, 1, 0, False)
-                await asyncio.sleep(3.0)
-            except Exception as exc:
-                logger.error("Wikipedia search '%s' error: %s", query, exc)
-                continue
+                if sub_batch:
+                    yield DiscoveryBatch(sub_batch, 1, 0, False)
+
+            logger.info("Wikipedia discovery: %d articles after cat '%s'", total, seed_cat)
+        except Exception as exc:
+            logger.error("Wikipedia category %s error: %s", seed_cat, exc)
+            continue
+
+    # Phase 2: Targeted search queries
+    for query in WIKI_SEARCH_QUERIES:
+        if total >= max_pages:
+            break
+        try:
+            results = await wiki.search(query, limit=50)
+            batch: list[DiscoveredPage] = []
+            for title, page in results.pages.items():
+                if title in seen_titles:
+                    continue
+                seen_titles.add(title)
+                page_id = await page.pageid
+                batch.append(DiscoveredPage(
+                    url=f"https://en.wikipedia.org/wiki/{title.replace(' ', '_')}",
+                    external_id=f"wp-{page_id}",
+                    title=title[:300],
+                    content_hint=f"search:{query[:50]}",
+                    depth=0,
+                ))
+                total += 1
+            if batch:
+                yield DiscoveryBatch(batch, 1, 0, False)
+        except Exception as exc:
+            logger.error("Wikipedia search '%s' error: %s", query, exc)
+            continue
 
     logger.info("Wikipedia ancient discovery complete: %d articles", total)
     yield DiscoveryBatch([], 0, 0, True)

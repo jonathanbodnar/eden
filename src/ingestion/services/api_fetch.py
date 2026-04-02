@@ -128,14 +128,7 @@ def api_fetch_url(slug: str, external_id: str) -> str | None:
         return None  # HTML scrape via Wayback, handled in fetch_worker
 
     if slug == "wikipedia-ancient":
-        page_id = external_id.removeprefix("wp-")
-        return (
-            f"https://en.wikipedia.org/w/api.php?action=query"
-            f"&prop=extracts|coordinates|pageimages|images|info|categories"
-            f"&explaintext=1&piprop=original&inprop=url"
-            f"&clcategories=50&imlimit=20"
-            f"&pageids={page_id}&format=json"
-        )
+        return None  # handled via wikipedia-api library in fetch_worker
 
     return None
 
@@ -1585,156 +1578,36 @@ def _filter_factual_text(text: str) -> str:
     return "\n".join(kept).strip()
 
 
-def _parse_wiki_infobox(wikitext: str) -> dict:
-    """Extract key-value pairs from Wikipedia infobox templates."""
-    facts: dict = {}
-    match = re.search(r"\{\{Infobox[^|]*\|", wikitext, re.IGNORECASE)
-    if not match:
-        return facts
-
-    start = match.start()
-    depth = 0
-    ib_text = ""
-    for i, ch in enumerate(wikitext[start:], start=start):
-        if wikitext[i:i+2] == "{{":
-            depth += 1
-        elif wikitext[i:i+2] == "}}":
-            depth -= 1
-            if depth == 0:
-                ib_text = wikitext[start:i+2]
-                break
-
-    if not ib_text:
-        return facts
-
-    for line in ib_text.split("\n"):
-        line = line.strip()
-        if not line.startswith("|"):
-            continue
-        line = line[1:]
-        if "=" not in line:
-            continue
-        key, _, val = line.partition("=")
-        key = key.strip().lower()
-        val = val.strip()
-
-        val = re.sub(r"\{\{[^}]*\|([^}|]*)\}\}", r"\1", val)
-        val = re.sub(r"\[\[(?:[^|\]]*\|)?([^\]]*)\]\]", r"\1", val)
-        val = re.sub(r"<[^>]+>", "", val)
-        val = val.strip()
-
-        if val and val != "{{none}}" and key not in (
-            "image_size", "map_size", "relief", "map_alt", "alt",
-            "caption", "image", "map_type",
-        ):
-            facts[key] = val
-
-    return facts
-
-
 def _parse_wikipedia(data: dict) -> dict:
-    """Parse Wikipedia API response, extracting only factual data."""
+    """Parse Wikipedia API response from the wikipedia-api library synthetic payload."""
     pages = data.get("query", {}).get("pages", {})
     if not pages:
         return {"_raw": data, "source_api": "wikipedia"}
     page = list(pages.values())[0]
 
-    meta: dict = {"_raw": {k: v for k, v in page.items() if k != "extract"}, "source_api": "wikipedia"}
+    meta: dict = {
+        "_raw": page.get("_raw", {}),
+        "source_api": "wikipedia",
+        "title": page.get("title", ""),
+        "wikipedia_url": page.get("wikipedia_url", ""),
+        "image_urls": page.get("image_urls", []),
+        "language_family": page.get("language_family", "English"),
+        "is_public_domain": True,
+    }
 
-    meta["title"] = page.get("title", "")
-    meta["wikipedia_url"] = page.get("fullurl", "")
-
-    full_text = page.get("extract", "")
+    full_text = page.get("text", "")
     meta["text"] = _filter_factual_text(full_text)
 
-    coords = page.get("coordinates", [])
-    if coords and isinstance(coords, list):
-        c = coords[0]
-        meta["latitude"] = c.get("lat")
-        meta["longitude"] = c.get("lon")
-        meta["origin_place"] = meta["title"]
+    if page.get("latitude") is not None:
+        meta["latitude"] = page["latitude"]
+        meta["longitude"] = page["longitude"]
+        meta["origin_place"] = page.get("title", "")
 
-    main_img = page.get("original", {})
-    if isinstance(main_img, dict) and main_img.get("source"):
-        meta["image_urls"] = [main_img["source"]]
-    else:
-        meta["image_urls"] = []
+    if page.get("tags"):
+        meta["tags"] = page["tags"]
 
-    all_images = page.get("images", [])
-    for img in all_images:
-        img_title = img.get("title", "")
-        if any(skip in img_title.lower() for skip in [
-            ".svg", "icon", "logo", "flag", "commons-logo",
-            "wikidata", "question_book", "edit-clear", "ambox",
-            "padlock", "globe", "portal", "wikiquote",
-        ]):
-            continue
-        if len(meta["image_urls"]) < 10:
-            meta["image_urls"].append(img_title)
-
-    categories = page.get("categories", [])
-    if categories:
-        meta["tags"] = [
-            c.get("title", "").removeprefix("Category:")
-            for c in categories[:20]
-            if not any(skip in c.get("title", "").lower() for skip in [
-                "articles", "pages", "template", "cs1", "wikidata",
-                "short description", "webarchive", "dmy dates",
-                "mdy dates", "use american", "use british",
-                "good articles", "featured articles",
-            ])
-        ]
-
-    infobox_wt = data.get("_infobox_wikitext", "")
-    if infobox_wt:
-        ib = _parse_wiki_infobox(infobox_wt)
-        if ib:
-            meta["infobox"] = ib
-            if "coordinates" in ib:
-                coord_match = re.search(
-                    r"(\d+)\|(\d+)\|(\d+)\|([NS])\|(\d+)\|(\d+)\|(\d+)\|([EW])",
-                    infobox_wt,
-                )
-                if coord_match:
-                    g = coord_match.groups()
-                    lat = int(g[0]) + int(g[1])/60 + int(g[2])/3600
-                    if g[3] == "S":
-                        lat = -lat
-                    lon = int(g[4]) + int(g[5])/60 + int(g[6])/3600
-                    if g[7] == "W":
-                        lon = -lon
-                    meta["latitude"] = lat
-                    meta["longitude"] = lon
-            if ib.get("built") and "latitude" not in meta:
-                meta.setdefault("origin_place", ib.get("location", ""))
-            for date_key in ("built", "founded", "established", "date", "period", "epochs"):
-                if date_key in ib:
-                    bc_match = re.search(r"(\d+)\s*(?:BC|BCE)", ib[date_key], re.IGNORECASE)
-                    date_entry: dict = {
-                        "type": "composition",
-                        "label": ib[date_key],
-                        "confidence": "approximate",
-                    }
-                    if bc_match:
-                        date_entry["start"] = -int(bc_match.group(1))
-                        ad_match = re.search(r"(\d+)\s*(?:AD|CE)\b", ib[date_key], re.IGNORECASE)
-                        if ad_match:
-                            date_entry["end"] = int(ad_match.group(1))
-                    meta.setdefault("dates", []).append(date_entry)
-                    break
-            for place_key in ("location", "region", "site_name", "place"):
-                if place_key in ib:
-                    meta.setdefault("origin_place", ib[place_key])
-                    break
-            if "area" in ib:
-                meta["measurements"] = ib["area"]
-            if "material" in ib and ib["material"]:
-                meta["material"] = ib["material"]
-            if "type" in ib:
-                meta["artifact_type"] = ib["type"]
-
-    if "dates" not in meta and full_text:
-        first_para = full_text[:1000]
+    if full_text:
+        first_para = full_text[:1500]
         bc_dates = re.findall(r"(\d{3,4})\s*(?:BC|BCE)", first_para, re.IGNORECASE)
         if bc_dates:
             years = sorted([int(d) for d in bc_dates], reverse=True)
@@ -1745,8 +1618,5 @@ def _parse_wikipedia(data: dict) -> dict:
                 "label": f"ca. {years[0]} BCE" + (f" – {years[-1]} BCE" if len(years) > 1 else ""),
                 "confidence": "approximate",
             }]
-
-    meta["language_family"] = "English"
-    meta["is_public_domain"] = True
 
     return meta
