@@ -144,7 +144,7 @@ async def run_source(
     run_type = body.run_type if body else RunType.FULL_INGEST
     requested_by = body.requested_by if body else None
     notes = body.notes if body else None
-    parallelism = min(body.parallelism, 20) if body and body.parallelism else 1
+    parallelism = min(body.parallelism, 50) if body and body.parallelism else 1
 
     skip_stages = body.skip_stages if body else None
 
