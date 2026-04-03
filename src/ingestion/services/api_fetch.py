@@ -8,6 +8,7 @@ The JSON is stored as the raw object content.
 from __future__ import annotations
 
 import json
+import html as html_mod
 import logging
 import re
 
@@ -24,7 +25,7 @@ def _strip_html(text: str) -> str:
         return ""
     text = re.sub(r"<br\s*/?>", "\n", text, flags=re.IGNORECASE)
     text = re.sub(r"<[^>]+>", " ", text)
-    text = text.replace("&nbsp;", " ").replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
+    text = html_mod.unescape(text)
     text = re.sub(r"\s+", " ", text).strip()
     return text
 
@@ -613,17 +614,18 @@ def _parse_europeana(data: dict) -> dict:
 
 def _parse_sefaria(data: dict) -> dict:
     meta: dict = {"_raw": data, "source_api": "sefaria"}
-    meta["title"] = data.get("ref", data.get("heRef", ""))
-    meta["book"] = data.get("book", "")
+    book_name = data.get("book", "")
+    meta["title"] = book_name or data.get("ref", data.get("heRef", ""))
+    meta["book"] = book_name
 
     en_text = data.get("text", "")
     if isinstance(en_text, list):
-        en_text = "\n".join(_flatten_text(en_text))
+        en_text = _format_book_text(book_name, en_text)
     en_text = re.sub(r"<[^>]+>", "", en_text).strip()
 
     he_text = data.get("he", "")
     if isinstance(he_text, list):
-        he_text = "\n".join(_flatten_text(he_text))
+        he_text = _format_book_text(book_name, he_text)
     he_text = re.sub(r"<[^>]+>", "", he_text).strip()
 
     meta["text"] = en_text if en_text else he_text
@@ -676,6 +678,27 @@ def _parse_sefaria(data: dict) -> dict:
     meta["is_public_domain"] = True
 
     return meta
+
+
+def _format_book_text(book: str, chapters: list) -> str:
+    """Format a whole-book Sefaria response (nested list of chapters) into
+    structured text with chapter headings and verse numbers."""
+    parts: list[str] = []
+    for i, chapter in enumerate(chapters, 1):
+        if isinstance(chapter, list):
+            verses = []
+            for j, verse in enumerate(chapter, 1):
+                if isinstance(verse, str) and verse.strip():
+                    verses.append(f"[{j}] {verse.strip()}")
+                elif isinstance(verse, list):
+                    flat = " ".join(s.strip() for s in _flatten_text(verse))
+                    if flat:
+                        verses.append(f"[{j}] {flat}")
+            if verses:
+                parts.append(f"\n== {book} Chapter {i} ==\n" + "\n".join(verses))
+        elif isinstance(chapter, str) and chapter.strip():
+            parts.append(f"\n== {book} Chapter {i} ==\n{chapter.strip()}")
+    return "\n".join(parts)
 
 
 def _flatten_text(obj) -> list[str]:
@@ -1525,12 +1548,21 @@ def parse_sacred_texts_html(html: str, external_id: str) -> dict:
 
 _THEORY_PATTERNS = re.compile(
     r"(?:scholars?\s+(?:believe|argue|suggest|theorize|debate|propose|interpret|speculate|contend|hypothesize))"
-    r"|(?:it\s+(?:is|has been)\s+(?:argued|suggested|theorized|proposed|debated|interpreted|speculated))"
+    r"|(?:it\s+(?:is|has been|was)\s+(?:argued|suggested|theorized|proposed|debated|interpreted|speculated))"
     r"|(?:(?:according to|in the view of|from the perspective of)\s+(?:some|many|most|several)\s+scholars)"
     r"|(?:the\s+(?:significance|meaning|symbolism|interpretation|implication|purpose)\s+(?:of|is|was|has))"
     r"|(?:this\s+(?:may|might|could|would)\s+(?:represent|suggest|indicate|reflect|symbolize))"
     r"|(?:(?:modern|contemporary|recent)\s+(?:scholarship|interpretation|analysis|theory|research)\s+(?:suggests|argues|proposes))"
-    r"|(?:there\s+is\s+(?:debate|disagreement|controversy|discussion)\s+(?:about|over|regarding))",
+    r"|(?:there\s+is\s+(?:debate|disagreement|controversy|discussion)\s+(?:about|over|regarding))"
+    r"|(?:(?:was|were)\s+(?:believed|thought|considered|imagined|assumed|supposed|understood|seen)\s+(?:to|as))"
+    r"|(?:(?:is|are|was|were)\s+(?:often|generally|commonly|typically|traditionally|usually|sometimes)\s+(?:seen|viewed|regarded|interpreted|understood|considered|thought)\s+(?:as|to))"
+    r"|(?:(?:it|this|they)\s+(?:is|are|was|were)\s+(?:often|generally|commonly|typically)\s+(?:believed|thought|assumed))"
+    r"|(?:egyptians?\s+(?:believed|thought|hoped|theorized|imagined|envisioned|considered|saw))"
+    r"|(?:(?:was|were)\s+essentially\s+thought)"
+    r"|(?:the\s+(?:belief|idea|concept|notion|view)\s+(?:that|was|is|continued|persisted))"
+    r"|(?:(?:deeply|firmly)\s+rooted\s+in\s+(?:the\s+)?(?:egyptian\s+)?belief)"
+    r"|(?:(?:this|the)\s+(?:belief|ideology|dogma|doctrine|concept)\s+(?:was|is|continued|suggests))"
+    r"|(?:the\s+(?:egyptian|ancient)\s+(?:concept|view|vision|idea)\s+of)",
     re.IGNORECASE,
 )
 
@@ -1578,6 +1610,118 @@ def _filter_factual_text(text: str) -> str:
     return "\n".join(kept).strip()
 
 
+_ANCIENT_SIGNALS = re.compile(
+    r"\b(?:"
+    # Dates
+    r"(?:BC|BCE|B\.C\.|B\.C\.E\.)"
+    r"|(?:\d{1,4}\s*(?:BC|BCE|B\.C\.))"
+    r"|(?:\d{1,2}(?:st|nd|rd|th)\s+century\s+(?:BC|BCE))"
+    # General ancient markers
+    r"|(?:ancient|antiquity|prehistoric|preclassic|pre-columbian|pre-dynastic|predynastic)"
+    r"|(?:pharaoh|dynasty|kingdom\s+of|empire\s+of|city-state|city\s+state)"
+    r"|(?:bronze\s+age|iron\s+age|neolith|chalcolithic|paleolith|mesolith)"
+    r"|(?:megalith|dolmen|menhir|cairn|barrow|tumulus|kurgan|burial\s+mound)"
+    # Mesopotamia
+    r"|(?:mesopotami|sumer|sumerian|akkad|akkadian|babylon|babylonian|assyr|assyrian)"
+    r"|(?:hittit|ugarit|hurrian|mitanni|elamit|kassite)"
+    r"|(?:cuneiform|ziggurat|enuma\s+elish|gilgamesh|atrahasis|hammurabi)"
+    r"|(?:ur\b|uruk|eridu|nineveh|nippur|lagash|kish\b|akkad\b)"
+    # Egypt
+    r"|(?:egypt(?:ian)?|pyramid|hieroglyph|papyrus|pharaoh|mummy|sarcophag)"
+    r"|(?:tomb\s+of|necropolis|obelisk|sphinx|scarab|cartouche)"
+    r"|(?:pyramid\s+text|coffin\s+text|book\s+of\s+the\s+dead|amduat)"
+    r"|(?:karnak|thebes|memphis|heliopolis|amarna|luxor\s+temple)"
+    # Levant / Canaan
+    r"|(?:phoenic|canaan|israelit|philistin|ugaritic|aramaic)"
+    r"|(?:dead\s+sea\s+scroll|baal\s+cycle|levant|israel(?:ite)?)"
+    r"|(?:nabataean|edomite|moabite|ammonite(?!\s+fossil))"
+    # Anatolia
+    r"|(?:hittit|luwian|phrygian|lydian|urartian|hattusa|gordion|troy)"
+    r"|(?:çatalhöyük|catalhoyuk|anatolian)"
+    # Iran / Persia
+    r"|(?:zoroastr|avesta|achaemenid|persepolis|elamit|median\s+empire)"
+    r"|(?:ahura\s+mazda|gathas|behistun|pasargadae|mede(?:s|an)?)"
+    # India / Vedic
+    r"|(?:vedic|rigveda|upanishad|mahabharat|ramayan|sanskrit)"
+    r"|(?:brahmana|aranyaka|samaveda|yajurveda|atharvaveda)"
+    r"|(?:indus\s+valley|harappa|mohenjo-?daro|harappan)"
+    r"|(?:puranas?|jataka|tipitaka|pali\s+canon|ashoka|stupa)"
+    r"|(?:buddhis[mt]|jainism|jain\b|mahavira)"
+    # China
+    r"|(?:oracle\s+bone|shang\s+dynasty|zhou\s+dynasty|warring\s+states)"
+    r"|(?:confuci|taoism|tao\s+te\s+ching|i\s+ching|analects)"
+    r"|(?:spring\s+and\s+autumn|eastern\s+zhou|hundred\s+schools)"
+    r"|(?:shan\s+hai\s+jing|classic\s+of\s+(?:poetry|documents|mountains))"
+    # Korea / Japan
+    r"|(?:gojoseon|dangun|kojiki|nihon\s+shoki|yayoi|jomon)"
+    r"|(?:korean\s+bronze|korean\s+ancient|kofun)"
+    # Central Asia / Steppe
+    r"|(?:scythian|saka\b|bactri|sogdian|pazyryk|eurasian\s+steppe)"
+    r"|(?:oxus\s+civilization|bmac\b|kushan)"
+    # Aegean / Greece
+    r"|(?:minoan|mycenae|mycenaean|linear\s+[ab]|trojan|homeric|olympi)"
+    r"|(?:greek\s+(?:myth|god|temple|philosoph|traged|lyric|epic|oracle))"
+    r"|(?:iliad|odyssey|theogony|hesiod|eleusinian|orphic)"
+    r"|(?:knossos|acropolis|parthenon|delphi|agora|polis\b)"
+    r"|(?:pre-socratic|plato|aristotle|stoic|epicurean)"
+    # Rome / Etruscans / Italic
+    r"|(?:roman\s+(?:empire|republic|myth|temple|forum|religion))"
+    r"|(?:etrusc|italic\s+people|roman\s+augury|founding\s+of\s+rome)"
+    # Celtic / Germanic / Norse
+    r"|(?:celtic|druid|gaul(?:s|ish)?|iron\s+age\s+europe|hallstatt|la\s+tène)"
+    r"|(?:norse|runic|nordic\s+bronze|germanic\s+pagan|eddas?|ymir)"
+    # Africa
+    r"|(?:nubia|kush|meroe|napatan|kerma\s+culture)"
+    r"|(?:carthag|punic|tophet|phoenician\s+colon)"
+    r"|(?:aksum|aksumite|nok\s+culture|bantu\s+expansion)"
+    # Mesoamerica
+    r"|(?:mayan?|olmec|zapotec|mixtec|teotihuacan|aztec)"
+    r"|(?:popol\s+vuh|maya\s+(?:script|codex|stela|calendar|glyph))"
+    r"|(?:long\s+count\s+calendar|monte\s+alban|la\s+venta)"
+    # South America / Andes
+    r"|(?:inca|nazca|chavin|moche|paracas|tiwanaku|wari\b)"
+    r"|(?:norte\s+chico|caral\b|andean|viracocha)"
+    # Oceania
+    r"|(?:dreamtime|songline|aboriginal\s+(?:australian|sacred|ritual))"
+    r"|(?:lapita|polynesian\s+(?:myth|navig|migration)|maori\s+(?:myth|creation))"
+    # Universal ancient themes
+    r"|(?:creation\s+myth|flood\s+myth|cosmogony|cosmolog)"
+    r"|(?:underworld|afterlife|deity|pantheon|sacred\s+(?:text|site|geography))"
+    r"|(?:sacrifice|ritual|oracle|divination|initiation\s+rite)"
+    r"|(?:oral\s+tradition|oral\s+epic|oral\s+canon|king\s+list)"
+    r"|(?:inscription|stele|ostracon|tablet|papyrus|codex|scroll)"
+    r"|(?:archaeolog|excavat|artifact|relic|antiquit)"
+    r"|(?:amphora|pottery|ceramic|mosaic|fresco|relief|sculpture|seal)"
+    r"|(?:mummy|sarcophag|necropolis|burial|funerary|tomb|crypt)"
+    r"|(?:temple|shrine|sanctuary|altar|sacred\s+precinct)"
+    r"|(?:silk\s+road|fertile\s+crescent|levant|anatolia|mesopotamia)"
+    r"|(?:trade\s+route|ancient\s+trade|sacred\s+route|pilgrimage)"
+    r")\b",
+    re.IGNORECASE,
+)
+
+_BIOLOGY_REJECT = re.compile(
+    r"(?:is\s+a\s+species\s+of|is\s+a\s+genus\s+of|is\s+a\s+(?:flowering\s+)?plant"
+    r"|family\s+(?:Fabaceae|Poaceae|Asteraceae|Rosaceae|Orchidaceae|Cactaceae|Malvaceae|Apocynaceae|Euphorbiaceae)"
+    r"|is\s+a\s+(?:perennial|annual|deciduous|evergreen|shrub|tree|herb|grass|fern|moss|lichen|fungus)"
+    r"|is\s+an?\s+(?:insect|bird|fish|spider|moth|butterfly|beetle|snake|lizard|frog|crab|snail|worm)"
+    r"|order\s+(?:Coleoptera|Lepidoptera|Diptera|Hymenoptera|Hemiptera)"
+    r"|(?:endemic\s+to|native\s+to|found\s+in\s+(?:the\s+)?(?:tropical|subtropical|temperate)))",
+    re.IGNORECASE,
+)
+
+
+def _is_ancient_relevant(title: str, text: str) -> bool:
+    """Check if a Wikipedia article is actually about the ancient world."""
+    if not text:
+        return False
+    check_text = text[:3000]
+    if _BIOLOGY_REJECT.search(check_text[:500]):
+        return False
+    hits = len(_ANCIENT_SIGNALS.findall(check_text))
+    return hits >= 2
+
+
 def _parse_wikipedia(data: dict) -> dict:
     """Parse Wikipedia API response from the wikipedia-api library synthetic payload."""
     pages = data.get("query", {}).get("pages", {})
@@ -1596,6 +1740,12 @@ def _parse_wikipedia(data: dict) -> dict:
     }
 
     full_text = page.get("text", "")
+
+    if not _is_ancient_relevant(meta["title"], full_text):
+        meta["_skip"] = True
+        meta["_skip_reason"] = "not ancient-world relevant"
+        return meta
+
     meta["text"] = _filter_factual_text(full_text)
 
     if page.get("latitude") is not None:
@@ -1618,5 +1768,111 @@ def _parse_wikipedia(data: dict) -> dict:
                 "label": f"ca. {years[0]} BCE" + (f" – {years[-1]} BCE" if len(years) > 1 else ""),
                 "confidence": "approximate",
             }]
+
+    return meta
+
+
+# ---------------------------------------------------------------------------
+# Project Gutenberg parser — plain text books
+# ---------------------------------------------------------------------------
+
+
+def parse_gutenberg_text(text: str, external_id: str) -> dict:
+    """Parse a Gutenberg plain text file."""
+    meta: dict = {"source_api": "gutenberg"}
+
+    start_markers = [
+        "*** START OF THE PROJECT GUTENBERG EBOOK",
+        "*** START OF THIS PROJECT GUTENBERG EBOOK",
+        "*END*THE SMALL PRINT",
+    ]
+    end_markers = [
+        "*** END OF THE PROJECT GUTENBERG EBOOK",
+        "*** END OF THIS PROJECT GUTENBERG EBOOK",
+        "End of the Project Gutenberg EBook",
+        "End of Project Gutenberg",
+    ]
+
+    body_start = 0
+    for marker in start_markers:
+        idx = text.find(marker)
+        if idx != -1:
+            body_start = text.index("\n", idx) + 1
+            break
+
+    body_end = len(text)
+    for marker in end_markers:
+        idx = text.find(marker)
+        if idx != -1:
+            body_end = idx
+            break
+
+    header = text[:body_start]
+    body = text[body_start:body_end].strip()
+
+    title_m = re.search(r"Title:\s*(.+)", header)
+    author_m = re.search(r"Author:\s*(.+)", header)
+    lang_m = re.search(r"Language:\s*(.+)", header)
+
+    title = title_m.group(1).strip() if title_m else external_id
+    meta["title"] = title
+    if author_m:
+        meta["author"] = author_m.group(1).strip()
+    meta["language_family"] = lang_m.group(1).strip() if lang_m else "English"
+
+    meta["text"] = body
+    meta["is_public_domain"] = True
+    meta["tags"] = ["gutenberg", "classical text", "translation"]
+
+    if body:
+        meta["translations"] = [{
+            "language": meta["language_family"],
+            "text": body,
+            "version_type": "translation",
+        }]
+
+    return meta
+
+
+# ---------------------------------------------------------------------------
+# Wikisource parser — HTML pages with historical texts
+# ---------------------------------------------------------------------------
+
+
+def parse_wikisource_html(html_text: str, external_id: str) -> dict:
+    """Parse a Wikisource HTML page."""
+    meta: dict = {"source_api": "wikisource"}
+
+    title_m = re.search(r"<title[^>]*>([^<]+)</title>", html_text, re.IGNORECASE)
+    title = ""
+    if title_m:
+        title = _strip_html(title_m.group(1))
+        title = re.sub(r"\s*[-–—]\s*Wikisource.*$", "", title)
+    if not title:
+        title = external_id.replace("ws-", "").replace("_", " ")
+    meta["title"] = title.strip()
+
+    body_text = html_text
+    for tag in [
+        "<script[^>]*>.*?</script>", "<style[^>]*>.*?</style>",
+        "<head[^>]*>.*?</head>", "<nav[^>]*>.*?</nav>",
+        '<div[^>]*class="[^"]*noprint[^"]*"[^>]*>.*?</div>',
+    ]:
+        body_text = re.sub(tag, " ", body_text, flags=re.IGNORECASE | re.DOTALL)
+
+    body_text = _strip_html(body_text)
+    body_text = re.sub(r"\n{3,}", "\n\n", body_text).strip()
+
+    meta["text"] = body_text
+    meta["language_family"] = "English"
+    meta["is_public_domain"] = True
+    meta["tags"] = ["wikisource", "historical text"]
+
+    if body_text:
+        meta["translations"] = [{
+            "language": "English",
+            "text": body_text,
+            "version_type": "translation",
+        }]
 
     return meta

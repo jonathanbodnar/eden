@@ -65,6 +65,7 @@ class SegmentationWorker(BaseWorker):
                 .where(SourceVersion.text_extracted != "")
                 .order_by(SourceVersion.created_at)
                 .limit(50)
+                .with_for_update(skip_locked=True)
             )
             batch = result.scalars().all()
 

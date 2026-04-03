@@ -144,6 +144,9 @@ async def run_source(
     run_type = body.run_type if body else RunType.FULL_INGEST
     requested_by = body.requested_by if body else None
     notes = body.notes if body else None
+    parallelism = min(body.parallelism, 20) if body and body.parallelism else 1
+
+    skip_stages = body.skip_stages if body else None
 
     run = await create_source_run(
         session,
@@ -151,6 +154,8 @@ async def run_source(
         run_type=run_type,
         requested_by=requested_by,
         notes=notes,
+        parallelism=parallelism,
+        skip_stages=skip_stages,
     )
     return SourceRunResponse.model_validate(run)
 

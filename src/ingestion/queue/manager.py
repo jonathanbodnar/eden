@@ -61,6 +61,9 @@ def _stages_for_run_type(run_type: RunType) -> list[JobType]:
     return list(PIPELINE_STAGES)
 
 
+PARALLELIZABLE_STAGES = {JobType.FETCH, JobType.NORMALIZE, JobType.SEGMENT, JobType.EMBED}
+
+
 async def create_source_run(
     session: AsyncSession,
     *,
@@ -68,11 +71,16 @@ async def create_source_run(
     run_type: RunType,
     requested_by: str | None = None,
     notes: str | None = None,
+    parallelism: int = 1,
+    skip_stages: list[str] | None = None,
 ) -> SourceRun:
     """Create a source run and enqueue ALL pipeline stages concurrently.
 
     All stages are queued at once so workers can run in parallel.
     Downstream workers poll for records as upstream produces them.
+    When parallelism > 1, multiple shard jobs are created for
+    fetch/normalize/segment/embed stages so multiple workers can
+    process the same source simultaneously.
     """
     run = SourceRun(
         trusted_source_id=trusted_source_id,
@@ -84,15 +92,18 @@ async def create_source_run(
     session.add(run)
     await session.flush()
 
-    stages = _stages_for_run_type(run_type)
+    _skip = {s.lower() for s in (skip_stages or [])}
+    stages = [s for s in _stages_for_run_type(run_type) if s.value not in _skip]
     for i, stage in enumerate(stages):
-        await enqueue_job(
-            session,
-            trusted_source_id=trusted_source_id,
-            job_type=stage,
-            source_run_id=run.id,
-            priority=100 + i,
-        )
+        shards = parallelism if stage in PARALLELIZABLE_STAGES else 1
+        for _shard in range(shards):
+            await enqueue_job(
+                session,
+                trusted_source_id=trusted_source_id,
+                job_type=stage,
+                source_run_id=run.id,
+                priority=100 + i,
+            )
 
     progress = await session.execute(
         select(SourceProgress).where(SourceProgress.trusted_source_id == trusted_source_id)
@@ -343,7 +354,11 @@ async def is_upstream_done(
     source_run_id: uuid.UUID,
     current_stage: JobType,
 ) -> bool:
-    """Check if the upstream pipeline stage has completed for this run."""
+    """Check if ALL upstream pipeline stage jobs have completed for this run.
+
+    With parallel sharding there can be multiple jobs for the same stage.
+    All of them must be finished before downstream considers upstream done.
+    """
     stages = list(PIPELINE_STAGES)
     try:
         idx = stages.index(current_stage)
@@ -359,8 +374,13 @@ async def is_upstream_done(
             QueuedJob.job_type == upstream,
         )
     )
-    status = result.scalar_one_or_none()
-    return status in (JobStatus.SUCCEEDED, JobStatus.FAILED, JobStatus.CANCELED, None)
+    statuses = result.scalars().all()
+    if not statuses:
+        return True
+    return all(
+        s in (JobStatus.SUCCEEDED, JobStatus.FAILED, JobStatus.CANCELED)
+        for s in statuses
+    )
 
 
 async def update_source_progress(

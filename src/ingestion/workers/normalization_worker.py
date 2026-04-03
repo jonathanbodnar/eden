@@ -54,7 +54,6 @@ class NormalizationWorker(BaseWorker):
         empty_polls = 0
 
         while True:
-            from sqlalchemy.orm import aliased
             result = await session.execute(
                 select(RawObject)
                 .where(RawObject.trusted_source_id == source.id)
@@ -63,6 +62,7 @@ class NormalizationWorker(BaseWorker):
                 ))
                 .order_by(RawObject.fetched_at)
                 .limit(200)
+                .with_for_update(skip_locked=True)
             )
             batch = result.scalars().all()
 
@@ -111,7 +111,9 @@ class NormalizationWorker(BaseWorker):
             or meta.get("geography", {}).get("excavation")
         )
 
-        def _trunc(val, maxlen=500):
+        def _to_str(val, maxlen=500):
+            if isinstance(val, list):
+                val = ", ".join(str(v) for v in val)
             if isinstance(val, str) and len(val) > maxlen:
                 return val[:maxlen]
             return val
@@ -119,12 +121,12 @@ class NormalizationWorker(BaseWorker):
         source_record = SourceRecord(
             trusted_source_id=source.id,
             raw_object_id=raw_obj.id,
-            canonical_title=_trunc(meta.get("title", f"Record {raw_obj.external_id}")),
+            canonical_title=_to_str(meta.get("title", f"Record {raw_obj.external_id}")),
             source_category=source.source_category,
-            culture=_trunc(meta.get("culture")),
-            language_family=_trunc(meta.get("language_family", source.default_language)),
-            origin_place_name=_trunc(meta.get("origin_place")),
-            repository_institution=_trunc(meta.get("repository")),
+            culture=_to_str(meta.get("culture")),
+            language_family=_to_str(meta.get("language_family", source.default_language)),
+            origin_place_name=_to_str(meta.get("origin_place")),
+            repository_institution=_to_str(meta.get("repository")),
             provenance_status=ProvenanceStatus.UNVERIFIED if has_provenance else ProvenanceStatus.UNKNOWN,
             record_status=RecordStatus.NORMALIZED,
             latitude=meta.get("latitude"),

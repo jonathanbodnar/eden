@@ -15,7 +15,7 @@ services:
     command:
       - "postgres"
       - "-c"
-      - "max_connections=400"
+      - "max_connections=600"
       - "-c"
       - "shared_buffers=4GB"
       - "-c"
@@ -96,7 +96,7 @@ services:
       EDEN_ANTHROPIC_API_KEY: "${EDEN_ANTHROPIC_API_KEY:-}"
       EDEN_ANTHROPIC_MODEL: "${EDEN_ANTHROPIC_MODEL:-claude-sonnet-4-20250514}"
     deploy:
-      replicas: 30
+      replicas: 60
       resources:
         limits:
           memory: 512M
@@ -116,3 +116,5 @@ services:
 
 volumes:
   pgdata:
+    external: true
+    name: eden_pgdata

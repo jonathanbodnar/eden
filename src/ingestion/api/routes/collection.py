@@ -5,7 +5,8 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,6 +21,7 @@ from src.ingestion.models.source_date import SourceDate
 from src.ingestion.models.source_record import SourceRecord
 from src.ingestion.models.source_version import SourceVersion
 from src.ingestion.models.trusted_source import TrustedSource
+from src.ingestion.storage.r2_client import r2_client
 
 router = APIRouter()
 
@@ -27,6 +29,7 @@ router = APIRouter()
 class ImageSummary(BaseModel):
     id: uuid.UUID
     image_url: str
+    r2_key: str | None = None
     alt_text: str | None
     caption: str | None
     image_order: int
@@ -296,6 +299,31 @@ async def list_collection(
         ))
 
     return CollectionListResponse(items=items, total=total)
+
+
+@router.get("/images/{image_id}/file")
+async def serve_image(
+    image_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+):
+    """Proxy an image from R2 storage."""
+    img = await session.get(ObjectImage, image_id)
+    if not img:
+        raise HTTPException(status_code=404, detail="Image not found")
+    if not img.r2_key:
+        raise HTTPException(status_code=404, detail="No R2 copy available")
+
+    try:
+        data = r2_client.download(img.r2_key)
+    except Exception:
+        raise HTTPException(status_code=502, detail="Failed to fetch image from storage")
+
+    content_type = img.content_type or "image/jpeg"
+    return Response(
+        content=data,
+        media_type=content_type,
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
 
 
 @router.get("/{record_id}", response_model=CollectionItemDetail)

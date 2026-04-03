@@ -24,6 +24,8 @@ class RunSourceRequest(BaseModel):
     run_type: RunType = RunType.FULL_INGEST
     requested_by: str | None = None
     notes: str | None = None
+    parallelism: int = 1
+    skip_stages: list[str] | None = None
 
 
 class QueuedJobResponse(BaseModel):

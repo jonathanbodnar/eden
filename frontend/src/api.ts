@@ -155,6 +155,7 @@ export interface IntakeAnalyzeResponse {
 export interface CollectionImage {
   id: string;
   image_url: string;
+  r2_key: string | null;
   alt_text: string | null;
   caption: string | null;
   image_order: number;

@@ -26,28 +26,33 @@ function Badge({ label, variant = "default" }: { label: string; variant?: string
   return <span className={cls}>{label}</span>;
 }
 
-function ImageGallery({ images }: { images: { image_url: string; alt_text: string | null }[] }) {
-  const [failedUrls, setFailedUrls] = useState<Set<string>>(new Set());
+function resolveImageSrc(img: { id: string; image_url: string; r2_key?: string | null }) {
+  if (img.r2_key) return `/api/collection/images/${img.id}/file`;
+  return img.image_url;
+}
+
+function ImageGallery({ images }: { images: { id: string; image_url: string; r2_key?: string | null; alt_text: string | null }[] }) {
+  const [failedIds, setFailedIds] = useState<Set<string>>(new Set());
 
   if (!images.length) {
     return <div className="collection-no-images">No images</div>;
   }
 
-  const valid = images.filter((i) => !failedUrls.has(i.image_url));
+  const valid = images.filter((i) => !failedIds.has(i.id));
   if (!valid.length) {
     return <div className="collection-no-images">Images unavailable</div>;
   }
 
   return (
     <div className="collection-gallery">
-      {valid.map((img, i) => (
+      {valid.map((img) => (
         <img
-          key={i}
-          src={img.image_url}
+          key={img.id}
+          src={resolveImageSrc(img)}
           alt={img.alt_text || ""}
           className="collection-thumb"
           loading="lazy"
-          onError={() => setFailedUrls((s) => new Set(s).add(img.image_url))}
+          onError={() => setFailedIds((s) => new Set(s).add(img.id))}
         />
       ))}
     </div>
@@ -77,9 +82,9 @@ function DetailModal({
               <h3>Images ({item.images.length})</h3>
               <div className="detail-gallery">
                 {item.images.map((img) => (
-                  <a key={img.id} href={img.image_url} target="_blank" rel="noopener noreferrer">
+                  <a key={img.id} href={resolveImageSrc(img)} target="_blank" rel="noopener noreferrer">
                     <img
-                      src={img.image_url}
+                      src={resolveImageSrc(img)}
                       alt={img.alt_text || ""}
                       className="detail-img"
                       loading="lazy"
