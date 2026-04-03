@@ -34,65 +34,89 @@ class DiscoveryBatch(NamedTuple):
 # CDLI  —  Cuneiform Digital Library Initiative
 # ---------------------------------------------------------------------------
 
-async def stream_cdli(max_pages: int = 100_000) -> AsyncIterator[DiscoveryBatch]:
-    """Paginate through GET /artifacts.json, yielding batches of 100."""
+async def stream_cdli(max_pages: int = 500_000) -> AsyncIterator[DiscoveryBatch]:
+    """Paginate through GET /artifacts.json, yielding batches of 100.
+
+    Resilient to transient errors — retries up to 5 times per page,
+    and skips individual bad pages rather than aborting the whole run.
+    """
     page = 1
     per_page = 100
     total_found = 0
+    consecutive_errors = 0
+    max_consecutive_errors = 20
 
-    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-        while total_found < max_pages:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=15.0)) as client:
+        while total_found < max_pages and consecutive_errors < max_consecutive_errors:
             url = f"https://cdli.earth/artifacts.json?page={page}&per_page={per_page}"
-            try:
-                resp = await client.get(
-                    url,
-                    headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
-                )
+            success = False
+            for attempt in range(5):
+                try:
+                    resp = await client.get(
+                        url,
+                        headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
+                    )
 
-                if resp.status_code != 200:
-                    logger.warning("CDLI API returned %d on page %d", resp.status_code, page)
-                    yield DiscoveryBatch([], 1, 1, True)
-                    return
+                    if resp.status_code == 404:
+                        logger.info("CDLI API returned 404 on page %d — end of catalog", page)
+                        yield DiscoveryBatch([], 0, 0, True)
+                        return
 
-                artifacts = resp.json()
-                if isinstance(artifacts, dict):
-                    artifacts = artifacts.get("data", artifacts.get("artifacts", []))
-                if not isinstance(artifacts, list) or not artifacts:
-                    yield DiscoveryBatch([], 1, 0, True)
-                    return
-
-                batch: list[DiscoveredPage] = []
-                for art in artifacts:
-                    art_id = art.get("id") or art.get("artifact_id")
-                    if not art_id:
+                    if resp.status_code != 200:
+                        logger.warning("CDLI API returned %d on page %d (attempt %d)", resp.status_code, page, attempt + 1)
+                        await asyncio.sleep(2 ** attempt)
                         continue
-                    title = art.get("designation", f"CDLI P{art_id:06d}" if isinstance(art_id, int) else f"CDLI {art_id}")
-                    batch.append(DiscoveredPage(
-                        url=f"https://cdli.earth/artifacts/{art_id}",
-                        external_id=f"cdli-{art_id}",
-                        title=str(title)[:300],
-                        content_hint="cuneiform artifact",
-                        depth=0,
-                    ))
-                    total_found += 1
-                    if total_found >= max_pages:
-                        break
 
-                is_last = len(artifacts) < per_page or total_found >= max_pages
-                yield DiscoveryBatch(batch, 1, 0, is_last)
+                    artifacts = resp.json()
+                    if isinstance(artifacts, dict):
+                        artifacts = artifacts.get("data", artifacts.get("artifacts", []))
+                    if not isinstance(artifacts, list) or not artifacts:
+                        logger.info("CDLI page %d returned empty — end of catalog", page)
+                        yield DiscoveryBatch([], 0, 0, True)
+                        return
 
-                if is_last:
-                    return
+                    batch: list[DiscoveredPage] = []
+                    for art in artifacts:
+                        art_id = art.get("id") or art.get("artifact_id")
+                        if not art_id:
+                            continue
+                        title = art.get("designation", f"CDLI P{art_id:06d}" if isinstance(art_id, int) else f"CDLI {art_id}")
+                        batch.append(DiscoveredPage(
+                            url=f"https://cdli.earth/artifacts/{art_id}",
+                            external_id=f"cdli-{art_id}",
+                            title=str(title)[:300],
+                            content_hint="cuneiform artifact",
+                            depth=0,
+                        ))
+                        total_found += 1
+                        if total_found >= max_pages:
+                            break
 
-                logger.info("CDLI page %d: %d artifacts (total: %d)", page, len(artifacts), total_found)
-                page += 1
-                await asyncio.sleep(0.3)
+                    is_last = len(artifacts) < per_page or total_found >= max_pages
+                    yield DiscoveryBatch(batch, 1, 0, is_last)
 
-            except Exception as exc:
-                logger.error("CDLI API error on page %d: %s", page, exc)
-                yield DiscoveryBatch([], 1, 1, True)
-                return
+                    if is_last:
+                        return
 
+                    success = True
+                    consecutive_errors = 0
+                    break
+
+                except Exception as exc:
+                    logger.warning("CDLI API error on page %d (attempt %d): %s", page, attempt + 1, exc)
+                    await asyncio.sleep(2 ** attempt)
+
+            if not success:
+                consecutive_errors += 1
+                logger.warning("CDLI page %d failed after 5 retries, skipping (consecutive=%d)", page, consecutive_errors)
+
+            if page % 200 == 0:
+                logger.info("CDLI discovery progress: page %d, %d artifacts found", page, total_found)
+            page += 1
+            await asyncio.sleep(0.15)
+
+    if consecutive_errors >= max_consecutive_errors:
+        logger.error("CDLI discovery aborted after %d consecutive errors at page %d", consecutive_errors, page)
     yield DiscoveryBatch([], 0, 0, True)
 
 
