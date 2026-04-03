@@ -22,6 +22,7 @@ from src.ingestion.queue.manager import (
     get_latest_checkpoint,
     heartbeat,
     is_upstream_done,
+    recover_stalled_jobs,
     save_checkpoint,
 )
 
@@ -45,8 +46,21 @@ class BaseWorker(ABC):
 
     async def run_loop(self, poll_interval: float = 2.0) -> None:
         logger.info("Worker %s starting run loop for %s", self.worker_id, self.job_types)
+        last_recovery = 0.0
         while self._running:
             try:
+                # Periodically recover stalled jobs from dead workers (every 2 min)
+                now = time.monotonic()
+                if now - last_recovery > 120:
+                    try:
+                        async with async_session_factory() as session:
+                            recovered = await recover_stalled_jobs(session)
+                            if recovered:
+                                logger.info("Auto-recovered %d stalled jobs", recovered)
+                    except Exception:
+                        pass
+                    last_recovery = now
+
                 async with async_session_factory() as session:
                     job = await claim_job(session, self.worker_id, self.job_types)
                     if job is None:
