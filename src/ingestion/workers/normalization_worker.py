@@ -118,10 +118,22 @@ class NormalizationWorker(BaseWorker):
                 return val[:maxlen]
             return val
 
+        title = _to_str(meta.get("title", f"Record {raw_obj.external_id}"))
+
+        existing = (await session.execute(
+            select(SourceRecord).where(
+                SourceRecord.trusted_source_id == source.id,
+                SourceRecord.canonical_title == title,
+            ).limit(1)
+        )).scalar_one_or_none()
+        if existing:
+            logger.info("Skipping duplicate: %s already exists for source %s", title, source.slug)
+            return
+
         source_record = SourceRecord(
             trusted_source_id=source.id,
             raw_object_id=raw_obj.id,
-            canonical_title=_to_str(meta.get("title", f"Record {raw_obj.external_id}")),
+            canonical_title=title,
             source_category=source.source_category,
             culture=_to_str(meta.get("culture")),
             language_family=_to_str(meta.get("language_family", source.default_language)),
