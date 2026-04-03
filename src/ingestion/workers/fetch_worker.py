@@ -39,21 +39,56 @@ _CE_DATE_RE = re.compile(
     r"|\b(\d{4})\b",
     re.IGNORECASE,
 )
-_BCE_DATE_RE = re.compile(r"\b\d{3,4}\s*(?:BC|BCE)\b", re.IGNORECASE)
+_BCE_DATE_RE = re.compile(r"\b\d{1,4}\s*(?:BC|BCE|B\.C\.|B\.C\.E\.)\b", re.IGNORECASE)
+
+# Strong ancient-world signals — must have at least 2 to pass without BCE dates
+_WIKI_ANCIENT_SIGNALS = re.compile(
+    r"\b(?:"
+    r"ancient|antiquity|prehistoric|preclassic|pre-columbian|predynastic"
+    r"|pharaoh|dynasty|empire|kingdom\s+of"
+    r"|mesopotamia|sumer(?:ian)?|akkad(?:ian)?|babylon(?:ian)?|assyr(?:ian)?"
+    r"|hittite|ugarit|hurrian|elamite|cuneiform|ziggurat"
+    r"|egypt(?:ian)?|pyramid|hieroglyph|papyrus|mummy|tomb"
+    r"|minoan|mycenae|mycenaean|trojan|homeric|linear\s+[ab]"
+    r"|greek\s+myth|roman\s+myth|olympian|zeus|athena|apollo|perseus"
+    r"|vedic|rigveda|upanishad|mahabharata|ramayana|brahman"
+    r"|buddhis[mt]|pali\s+canon|ashoka|stupa|dharma\s+(?:wheel|text)"
+    r"|zoroastr|avesta|achaemenid|persepolis"
+    r"|phoenician|canaanite|israelite|hebrew\s+bible|dead\s+sea\s+scroll"
+    r"|hittite|luwian|phrygian|urartian|anatolia(?:n)?"
+    r"|scythian|bactrian|sogdian|steppe\s+(?:nomad|people|culture)"
+    r"|oracle\s+bone|shang\s+dynasty|zhou\s+dynasty|warring\s+states"
+    r"|olmec|maya|zapotec|teotihuacan|popol\s+vuh"
+    r"|inca|nazca|chavin|andean\s+(?:civili|culture|mythol)"
+    r"|dreamtime|songline|lapita|polynesian\s+(?:myth|navig)"
+    r"|nubia|kush|meroe|carthage|etrusc"
+    r"|celtic|druid|norse\s+(?:myth|cosmo|god)|germanic\s+pagan"
+    r"|bronze\s+age|iron\s+age|neolithic|chalcolithic|megalith"
+    r"|inscription|stele|tablet|cuneiform|archaeological\s+(?:site|find|excav)"
+    r"|creation\s+myth|flood\s+myth|oral\s+tradition|sacred\s+text"
+    r"|ritual|sacrifice|divination|oracle|pantheon|deity"
+    r"|king\s+list|royal\s+annals|temple\s+hymn|funerary\s+text"
+    r")\b",
+    re.IGNORECASE,
+)
 
 
 def _wiki_is_ancient(text: str, summary: str) -> bool:
     """Return True if article content refers to ancient/BCE events.
 
-    Scans the first ~2000 chars of text plus the summary for BCE vs CE dates.
-    Articles with only CE/AD dates post-500 AD are considered modern.
-    Articles about mythology/religion categories without any dates are kept.
+    Rules (in order):
+    1. Has BCE date → keep
+    2. Has CE dates all > 500 AD → reject (clearly medieval/modern)
+    3. No dates but has 3+ ancient world signals → keep (mythology, oral traditions, etc.)
+    4. Otherwise → reject
     """
-    check_text = (summary or "") + " " + (text or "")[:2000]
+    check_text = (summary or "") + " " + (text or "")[:3000]
 
+    # Rule 1: BCE date present → always keep
     if _BCE_DATE_RE.search(check_text):
         return True
 
+    # Rule 2: Only late CE dates → reject
     ce_matches = _CE_DATE_RE.findall(check_text)
     if ce_matches:
         years: list[int] = []
@@ -66,10 +101,12 @@ def _wiki_is_ancient(text: str, summary: str) -> bool:
                 y = int(bare_year)
                 if 100 < y < 2100:
                     years.append(y)
-        if years and min(years) > 500:
+        if years and min(years) > 700:
             return False
 
-    return True
+    # Rule 3: No dates (or only early CE) — require strong ancient signals
+    signal_count = len(_WIKI_ANCIENT_SIGNALS.findall(check_text))
+    return signal_count >= 3
 
 
 def _extract_image_urls(html: str, page_url: str) -> list[dict]:
@@ -152,7 +189,7 @@ class FetchWorker(BaseWorker):
         is_api_source = source.ingestion_method == IngestionMethod.API
         empty_polls = 0
 
-        rate_limited_slugs = {"wikidata-locations", "pleiades", "tla-egyptian", "sacred-texts", "wikipedia-ancient"}
+        rate_limited_slugs = {"wikidata-locations", "pleiades", "tla-egyptian", "sacred-texts", "wikipedia-ancient", "gutenberg", "perseus", "british-museum", "wikisource"}
         if source.slug in rate_limited_slugs:
             concurrency = 3
             batch_size = 20
@@ -172,8 +209,18 @@ class FetchWorker(BaseWorker):
                         DiscoveredRecord.trusted_source_id == source.id,
                         DiscoveredRecord.status == DiscoveredRecordStatus.NEW,
                     ).order_by(DiscoveredRecord.external_id).limit(batch_size)
+                    .with_for_update(skip_locked=True)
                 )
                 batch = result.scalars().all()
+
+                if batch:
+                    claimed_ids = [r.id for r in batch]
+                    await session.execute(
+                        update(DiscoveredRecord)
+                        .where(DiscoveredRecord.id.in_(claimed_ids))
+                        .values(status=DiscoveredRecordStatus.QUEUED)
+                    )
+                    await session.commit()
 
                 if not batch:
                     upstream_done = await is_upstream_done(session, job.source_run_id, job.job_type)
@@ -261,8 +308,9 @@ class FetchWorker(BaseWorker):
                         continue
 
                     try:
-                        await self._store_response(session, client, source, record, response)
-                        batch_ok += 1
+                        result = await self._store_response(session, client, source, record, response)
+                        if result is not None:
+                            batch_ok += 1
                         await session.execute(
                             update(DiscoveredRecord)
                             .where(DiscoveredRecord.id == record.id)
@@ -311,8 +359,18 @@ class FetchWorker(BaseWorker):
         elif source.slug == "sacred-texts" and "text/html" in content_type.lower():
             from src.ingestion.services.api_fetch import parse_sacred_texts_html
             metadata = parse_sacred_texts_html(data.decode("utf-8", errors="replace"), record.external_id)
+        elif source.slug == "gutenberg" and "text/plain" in content_type.lower():
+            from src.ingestion.services.api_fetch import parse_gutenberg_text
+            metadata = parse_gutenberg_text(data.decode("utf-8", errors="replace"), record.external_id)
+        elif source.slug == "wikisource" and "text/html" in content_type.lower():
+            from src.ingestion.services.api_fetch import parse_wikisource_html
+            metadata = parse_wikisource_html(data.decode("utf-8", errors="replace"), record.external_id)
         else:
             metadata = {"headers": dict(response.headers)}
+
+        if metadata.get("_skip"):
+            logger.info("Skipping %s: %s", record.external_id, metadata.get("_skip_reason", "filtered"))
+            return None
 
         checksum_val = R2Client.compute_checksum(data)
         existing = await session.execute(
@@ -369,7 +427,7 @@ class FetchWorker(BaseWorker):
             image_urls = metadata.get("image_urls", [])
             if image_urls:
                 await self._store_api_images(session, client, source, raw_obj, image_urls)
-        elif "text/html" in content_type.lower() and source.slug not in ("sacred-texts",):
+        elif "text/html" in content_type.lower() and source.slug not in ("sacred-texts", "wikisource", "perseus"):
             await self._extract_and_store_images(
                 session, client, source, raw_obj, data.decode("utf-8", errors="replace"),
                 record.record_url,
@@ -413,10 +471,25 @@ class FetchWorker(BaseWorker):
 
             image_urls: list[str] = []
             for img_title in list(images.keys())[:15]:
-                if any(skip in img_title.lower() for skip in [
+                title_lower = img_title.lower()
+                if any(skip in title_lower for skip in [
                     ".svg", ".ogv", ".webm", ".ogg", "icon", "logo",
                     "flag", "commons-logo", "wikidata", "question_book",
                     "edit-clear", "ambox", "padlock", "globe", "portal",
+                    "wiki-", "wiktionary", "wikiquote", "wikisource",
+                    "symbol", "pictogram", "sign", "button", "arrow",
+                    "folder", "blue_pencil", "gnome", "nuvola", "crystal",
+                    "info_sign", "disambig", "stub", "red_pencil",
+                    "map_marker", "location_dot", "increase", "decrease",
+                ]):
+                    continue
+                if any(tpl in title_lower for tpl in [
+                    "pyramidi_aavikolla", "bible.malmesbury.arp",
+                    "the10commandments", "aleppo_codex_joshua",
+                    "046cupolaspietro", "cippus_-_louvre",
+                    "chaos_monster_and_sun_god", "adolf_behrman",
+                    "israel_relief_location_map", "near_east_non_political",
+                    "relief_location_map", "topographic_map",
                 ]):
                     continue
                 filename = img_title.removeprefix("File:").replace(" ", "_")
@@ -485,6 +558,12 @@ class FetchWorker(BaseWorker):
             if url in seen or not url.startswith("http"):
                 continue
             seen.add(url)
+            dupe_count = (await session.execute(
+                select(func.count(ObjectImage.id)).where(ObjectImage.image_url == url)
+            )).scalar() or 0
+            if dupe_count >= 3:
+                logger.debug("Skipping template image (used %d times): %s", dupe_count, url)
+                continue
             try:
                 resp = await client.get(
                     url, follow_redirects=True, timeout=30.0,
