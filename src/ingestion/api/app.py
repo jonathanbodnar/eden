@@ -2,6 +2,8 @@
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from src.ingestion.api.routes import archive, collection, context, intake, jobs, progress, sources
 from src.ingestion.config import settings
@@ -11,6 +13,9 @@ app = FastAPI(
     version="0.1.0",
     description="Source-governed ingestion pipeline admin API",
 )
+
+# Trust X-Forwarded-Proto/For headers from nginx so redirects use https://
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
 app.add_middleware(
     CORSMiddleware,

@@ -268,7 +268,7 @@ TANAKH_BOOKS = [
 ]
 
 async def stream_sefaria(max_pages: int = 100_000) -> AsyncIterator[DiscoveryBatch]:
-    """Discover individual chapters of Tanakh books (BC-era texts only)."""
+    """Discover whole Tanakh books from Sefaria (BC-era texts only)."""
     total = 0
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
         for book in TANAKH_BOOKS:
@@ -279,39 +279,25 @@ async def stream_sefaria(max_pages: int = 100_000) -> AsyncIterator[DiscoveryBat
                     f"https://www.sefaria.org/api/v2/index/{book.replace(' ', '_')}",
                     headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
                 )
-                if resp.status_code != 200:
-                    batch_item = DiscoveredPage(
-                        url=f"https://www.sefaria.org/{book.replace(' ', '_')}",
-                        external_id=f"sefaria-{book}",
-                        title=book,
-                        content_hint="tanakh",
-                        depth=0,
-                    )
-                    yield DiscoveryBatch([batch_item], 1, 0, False)
-                    total += 1
-                    continue
+                num_chapters = 1
+                if resp.status_code == 200:
+                    info = resp.json()
+                    schema = info.get("schema", {})
+                    length = schema.get("lengths", [0])
+                    num_chapters = length[0] if length else 1
 
-                info = resp.json()
-                schema = info.get("schema", {})
-                length = schema.get("lengths", [0])
-                num_chapters = length[0] if length else 1
-
-                batch: list[DiscoveredPage] = []
-                for ch in range(1, num_chapters + 1):
-                    ref = f"{book}.{ch}"
-                    batch.append(DiscoveredPage(
-                        url=f"https://www.sefaria.org/{book.replace(' ', '_')}.{ch}",
-                        external_id=f"sefaria-{ref}",
-                        title=f"{book} Chapter {ch}",
-                        content_hint="tanakh",
-                        depth=0,
-                    ))
-                    total += 1
-                    if total >= max_pages:
-                        break
-                if batch:
-                    yield DiscoveryBatch(batch, 1, 0, False)
-                    logger.info("Sefaria %s: %d chapters", book, len(batch))
+                slug = book.replace(" ", "_")
+                chapter_range = f"1-{num_chapters}" if num_chapters > 1 else "1"
+                batch_item = DiscoveredPage(
+                    url=f"https://www.sefaria.org/{slug}",
+                    external_id=f"sefaria-{book}.{chapter_range}",
+                    title=book,
+                    content_hint="tanakh",
+                    depth=0,
+                )
+                yield DiscoveryBatch([batch_item], 1, 0, False)
+                total += 1
+                logger.info("Sefaria: discovered %s (%d chapters)", book, num_chapters)
                 await asyncio.sleep(0.3)
             except Exception as exc:
                 logger.error("Sefaria error for %s: %s", book, exc)
@@ -1544,9 +1530,14 @@ async def stream_sacred_texts(max_pages: int = 100_000) -> AsyncIterator[Discove
                     original_url = original_url.replace("http://", "https://").replace(":80/", "/")
                     if not original_url.endswith(".htm"):
                         continue
-                    # Skip non-content pages
                     url_lower = original_url.lower()
                     if any(skip in url_lower for skip in ["/cdshop/", "/search", "contact.htm", "faq.htm", "/img/"]):
+                        continue
+
+                    filename = url_lower.rsplit("/", 1)[-1].replace(".htm", "")
+                    if filename in ("index", "index2", "00", "errata"):
+                        continue
+                    if filename.endswith("00") and len(filename) <= 6:
                         continue
 
                     path = re.sub(r"https?://[^/]+/", "", original_url)
@@ -1589,129 +1580,341 @@ async def stream_sacred_texts(max_pages: int = 100_000) -> AsyncIterator[Discove
 WIKI_API = "https://en.wikipedia.org/w/api.php"
 
 WIKI_SEED_CATEGORIES = [
-    # Mesopotamia
+    # ── MESOPOTAMIA ──────────────────────────────────────────────────────────
     "Ancient_Mesopotamia", "Sumerian_mythology", "Akkadian_literature",
     "Babylonian_mythology", "Assyrian_mythology", "Cuneiform",
     "Sumerian_literature", "Mesopotamian_religion", "Ziggurats",
     "Ancient_Mesopotamian_cities", "Akkadian_Empire", "Babylonia",
-    "Assyria", "Ur", "Uruk",
-    # Egypt
+    "Assyria", "Ur", "Uruk", "Eridu", "Nineveh", "Nippur", "Lagash",
+    "Sumerian_language", "Akkadian_language", "Sumerian_King_List",
+    "Enuma_Elish", "Epic_of_Gilgamesh", "Atrahasis_Epic",
+    "Mesopotamian_astronomy", "Babylonian_astrology",
+    "Mesopotamian_mythology", "Mesopotamian_law",
+    "Code_of_Hammurabi", "Sumerian_temple_hymns",
+    "Cylinder_seals", "Neo-Babylonian_Empire",
+    "Neo-Assyrian_Empire", "Old_Babylonian_Empire",
+    "Ancient_Mesopotamian_units_of_measurement",
+    "Mesopotamian_omen_literature",
+    # ── EGYPT ────────────────────────────────────────────────────────────────
     "Ancient_Egyptian_religion", "Ancient_Egyptian_texts",
     "Ancient_Egyptian_funerary_texts", "Egyptian_mythology",
     "Pyramids_of_Egypt", "Ancient_Egyptian_temples",
     "Ancient_Egyptian_tombs", "Pharaohs", "Hieroglyphs",
     "Ancient_Egyptian_literature", "Ancient_Egyptian_society",
-    # Levant / Canaan / Ugarit / Israel
+    "Pyramid_Texts", "Coffin_Texts", "Book_of_the_Dead",
+    "Ancient_Egyptian_deities", "Ancient_Egyptian_art",
+    "Ancient_Egyptian_architecture", "Ancient_Egyptian_papyri",
+    "Predynastic_Egypt", "Early_Dynastic_Period_(Egypt)",
+    "Old_Kingdom_of_Egypt", "Middle_Kingdom_of_Egypt",
+    "New_Kingdom_of_Egypt", "Late_Period_of_ancient_Egypt",
+    "Thebes,_Egypt", "Memphis,_Egypt", "Heliopolis_(ancient)",
+    "Karnak", "Valley_of_the_Kings", "Amarna",
+    "Egyptian_cosmology", "Egyptian_sacred_geography",
+    "Ancient_Egyptian_stelae", "Rosetta_Stone",
+    "Coptic_literature", "Demotic_(Egyptian)", "Ancient_Egyptian_scripts",
+    # ── LEVANT / CANAAN / PHOENICIA / UGARIT / ANCIENT ISRAEL ────────────────
     "Ancient_Canaanite_religion", "Ugarit", "Phoenicia",
     "Ancient_Israel_and_Judah", "Hebrew_Bible", "Dead_Sea_Scrolls",
     "Second_Temple_Judaism", "Israelite_religion",
-    "Ancient_Levant", "Philistines",
-    # Anatolia
+    "Ancient_Levant", "Philistines", "Baal_Cycle",
+    "Ugaritic_language", "Ugaritic_texts", "Phoenician_language",
+    "Phoenician_inscriptions", "Ancient_Israelite_cuisine",
+    "Temple_in_Jerusalem", "Solomon's_Temple",
+    "Judah_(biblical_kingdom)", "Kingdom_of_Israel_(united_monarchy)",
+    "Canaanite_languages", "Aramaic_language", "Nabataeans",
+    "Edom", "Moab", "Ammon_(Transjordan)",
+    # ── ANATOLIA ─────────────────────────────────────────────────────────────
     "Hittites", "Hittite_mythology_and_religion", "Urartu",
-    "Phrygia", "Lydia", "Luwians",
-    # Iran / Persia / Zoroastrianism
+    "Phrygia", "Lydia", "Luwians", "Hittite_language",
+    "Hittite_cuneiform", "Ancient_Anatolia", "Çatalhöyük",
+    "Troy", "Gordion", "Hattusa",
+    "Phrygian_language", "Lydian_language", "Hurrians",
+    "Mitanni", "Kizzuwatna",
+    # ── IRAN / PERSIA / ELAM / ZOROASTRIANISM ────────────────────────────────
     "Zoroastrianism", "Avesta", "Achaemenid_Empire",
     "Elamite_civilization", "Medes", "Ancient_Iranian_religion",
-    "Persepolis",
-    # Vedic India
+    "Persepolis", "Pasargadae", "Gathas",
+    "Avestan_language", "Old_Persian_language",
+    "Parthian_Empire", "Elamite_language",
+    "Iranian_mythology", "Ahura_Mazda",
+    "Behistun_Inscription", "Cyrus_the_Great",
+    "Darius_the_Great", "Xerxes_I",
+    # ── VEDIC INDIA / INDUS ──────────────────────────────────────────────────
     "Vedas", "Vedic_period", "Rigveda", "Upanishads",
     "Hindu_mythology", "Hindu_cosmology", "Brahmanas",
     "Indus_Valley_civilisation", "Ancient_Indian_history",
-    # Epic India
+    "Samaveda", "Yajurveda", "Atharvaveda",
+    "Aranyakas", "Sanskrit_literature",
+    "Vedic_mythology", "Vedic_Sanskrit",
+    "Harappa", "Mohenjo-daro", "Indus_script",
+    "Ancient_Indian_philosophy", "Mimamsa",
+    "Vedic_ritual", "Soma_(drink)",
+    # ── EPIC INDIA / EARLY HINDUISM ──────────────────────────────────────────
     "Mahabharata", "Ramayana", "Puranas",
     "Hindu_texts", "Sanskrit_texts",
-    # Buddhism & Jainism
+    "Hindu_epic_poetry", "Bhagavata_Purana",
+    "Vishnu_Purana", "Shiva_Purana",
+    "Ancient_Indian_epics", "Manu_Smriti",
+    # ── BUDDHISM / JAINISM ───────────────────────────────────────────────────
     "Buddhist_texts", "Pali_Canon", "Early_Buddhism",
     "Buddhist_mythology", "Jain_texts", "Jainism",
-    "Ashoka", "Stupas",
-    # China
+    "Ashoka", "Stupas", "Tipitaka",
+    "Theravada", "Jataka_tales", "Dhammapada",
+    "Jain_philosophy", "Mahavira",
+    "Buddhist_art", "Buddhist_pilgrimage_sites",
+    "Pali_language", "Buddhist_cosmology",
+    # ── SHANG / ZHOU CHINA ──────────────────────────────────────────────────
     "Shang_dynasty", "Zhou_dynasty", "Oracle_bones",
     "Chinese_classics", "Chinese_mythology",
     "Confucianism", "Taoism", "Warring_States_period",
     "Ancient_Chinese_texts", "I_Ching",
-    # Korea / Japan
+    "Spring_and_Autumn_period", "Eastern_Zhou_dynasty",
+    "Chinese_Bronze_Age", "Zhou_ritual_bronzes",
+    "Hundred_Schools_of_Thought",
+    "Book_of_Songs", "Book_of_Documents",
+    "Analects", "Tao_Te_Ching",
+    "Chinese_oracle_bone_script", "Chinese_bronzeware_script",
+    "Classic_of_Mountains_and_Seas", "Chinese_creation_myth",
+    "Legalism_(Chinese_philosophy)", "Mohism",
+    "Ancient_Chinese_astronomy",
+    # ── ANCIENT KOREA / JAPAN ────────────────────────────────────────────────
     "Ancient_Korea", "Korean_mythology",
+    "Gojoseon", "Three_Kingdoms_of_Korea",
     "Jōmon_period", "Yayoi_period", "Japanese_mythology",
-    # Central Asia / Steppe
+    "Kojiki", "Nihon_Shoki", "Kofun_period",
+    "Korean_Bronze_Age", "Korean_prehistoric_art",
+    # ── CENTRAL ASIA / STEPPE ───────────────────────────────────────────────
     "Scythians", "Saka", "Bactria", "Sogdia",
     "Eurasian_Steppe", "Bronze_Age_Central_Asia",
-    # Greece
+    "Oxus_civilization", "BMAC",
+    "Scythian_art", "Scythian_religion",
+    "Pazyryk_culture", "Saka_people",
+    "Kushan_Empire", "Sogdian_language",
+    "Ancient_Bactria", "Achaemenid_Bactria",
+    # ── MINOAN / MYCENAEAN / AEGEAN ──────────────────────────────────────────
+    "Minoan_civilization", "Mycenaean_Greece",
+    "Linear_A", "Linear_B", "Aegean_civilizations",
+    "Minoan_religion", "Minoan_art",
+    "Mycenaean_religion", "Bronze_Age_Greece",
+    "Knossos", "Akrotiri,_Santorini", "Tiryns",
+    "Mycenae", "Cyclopean_walls",
+    # ── ARCHAIC / CLASSICAL GREECE ───────────────────────────────────────────
     "Ancient_Greek_religion", "Greek_mythology",
     "Homeric_epics", "Ancient_Greek_literature",
-    "Minoan_civilization", "Mycenaean_Greece",
     "Ancient_Greek_temples", "Greek_tragedy",
     "Pre-Socratic_philosophy", "Ancient_Greek_cities",
-    # Rome / Italy
+    "Iliad", "Odyssey", "Theogony_(Hesiod)",
+    "Works_and_Days", "Greek_lyric_poetry",
+    "Eleusinian_Mysteries", "Orphism_(religion)",
+    "Olympian_gods", "Greek_hero_cult",
+    "Ancient_Greek_art", "Ancient_Greek_coinage",
+    "Delphi", "Olympia,_Greece", "Acropolis_of_Athens",
+    "Ancient_Sparta", "Ancient_Athens",
+    "Classical_Athens", "Hellenistic_period",
+    "Ancient_Greek_philosophy", "Plato", "Aristotle",
+    "Stoicism", "Epicureanism",
+    # ── ETRUSCAN / EARLY ROME / ITALIC ──────────────────────────────────────
     "Etruscan_civilization", "Etruscan_mythology",
     "Roman_mythology", "Roman_Republic",
     "Religion_in_ancient_Rome", "Italic_peoples",
-    # Celtic
+    "Etruscan_language", "Etruscan_art",
+    "Roman_religion", "Roman_augury",
+    "Founding_of_Rome", "Seven_Kings_of_Rome",
+    "Roman_Forum", "Roman_temples",
+    "Ancient_Roman_literature", "Latin_literature",
+    # ── CELTIC / IRON AGE EUROPE ────────────────────────────────────────────
     "Celtic_mythology", "Celts", "Gauls",
     "Iron_Age_Europe", "Celtic_religion",
-    # Germanic / Nordic
-    "Norse_mythology", "Germanic_religion_(aboriginal)",
+    "Celtic_art", "Celtic_languages",
+    "Druids", "Celtic_sacred_sites",
+    "Hallstatt_culture", "La_Tène_culture",
+    "Ancient_Ireland", "Insular_Celtic_languages",
+    "Celtic_polytheism",
+    # ── GERMANIC / NORDIC BRONZE & IRON AGE ─────────────────────────────────
+    "Norse_mythology", "Germanic_paganism",
     "Nordic_Bronze_Age", "Scandinavian_archaeology",
-    # Nubia / North Africa
+    "Norse_cosmology", "Eddas",
+    "Proto-Germanic_religion", "Germanic_tribes",
+    "Rock_art_in_Scandinavia", "Vendel_period",
+    # ── NUBIA / KUSH / NORTH AFRICA ─────────────────────────────────────────
     "Kingdom_of_Kush", "Nubia", "Meroë",
     "Carthage", "Phoenician_colonies",
-    # Sub-Saharan Africa
+    "Ancient_Sudan", "Kerma_culture",
+    "Napatan_period", "Nubian_pyramids",
+    "Punic_wars", "Punic_language",
+    "Berber_history", "Ancient_Libya",
+    "Cyrenaica", "Ancient_Carthage",
+    # ── HORN OF AFRICA / SUB-SAHARAN ────────────────────────────────────────
     "Aksumite_Empire", "Horn_of_Africa", "Nok_culture",
     "African_archaeology", "African_mythology",
-    # Mesoamerica
+    "Pre-Aksumite_period", "D'mt",
+    "Bantu_expansion", "Iron_Age_in_Africa",
+    "West_African_Bronze_Age",
+    # ── MESOAMERICA ─────────────────────────────────────────────────────────
     "Olmecs", "Maya_civilization", "Maya_mythology",
     "Zapotec_civilization", "Mixtec", "Teotihuacan",
     "Mesoamerican_writing_systems", "Mesoamerican_calendars",
-    "Mesoamerican_pyramids",
-    # South America / Andes
+    "Mesoamerican_pyramids", "Popol_Vuh",
+    "Maya_script", "Maya_Long_Count_calendar",
+    "Olmec_colossal_heads", "Olmec_religion",
+    "Monte_Albán", "Zapotec_writing",
+    "Izapa", "Tlatilco_culture",
+    "Mesoamerican_cosmology", "Mesoamerican_religion",
+    "Mesoamerican_literature",
+    # ── SOUTH AMERICA / ANDES ───────────────────────────────────────────────
     "Norte_Chico_civilization", "Chavín_culture",
     "Paracas_culture", "Nazca_culture", "Moche_culture",
     "Pre-Columbian_era", "Andean_civilizations",
-    "Inca_mythology",
-    # Oceania
+    "Inca_mythology", "Caral",
+    "Nazca_Lines", "Cupisnique_culture",
+    "Andean_cosmology", "Viracocha",
+    "Tiwanaku", "Wari_Empire",
+    # ── OCEANIA ──────────────────────────────────────────────────────────────
     "Australian_Aboriginal_mythology", "Dreamtime",
     "Aboriginal_Australians", "Lapita_culture",
     "Polynesian_mythology", "Polynesian_navigation",
-    # Cross-cutting
+    "Australian_Aboriginal_sacred_sites",
+    "Pacific_mythology", "Melanesian_mythology",
+    "Maori_mythology", "Hawaiian_mythology",
+    # ── CROSS-CUTTING THEMES ─────────────────────────────────────────────────
     "Creation_myths", "Flood_myths", "Ancient_astronomy",
     "Ancient_cosmology", "Archaeological_sites",
     "Ancient_religions", "Ancient_literature",
     "Oral_tradition", "Ancient_law", "King_lists",
     "Ancient_trade", "Ancient_maps",
     "Undeciphered_writing_systems", "Sacred_texts",
+    "Ancient_writing_systems", "Ancient_languages",
+    "Bronze_Age", "Iron_Age", "Neolithic",
+    "Chalcolithic", "Megalithic_architecture",
+    "Ancient_oral_literature", "Ancient_sacred_sites",
+    "Ancient_temples", "Ancient_inscriptions",
+    "Archaeological_cultures", "Funerary_art",
+    "Ritual_objects", "Ancient_cosmographies",
+    "Sacred_geography", "Ancient_trade_routes",
+    "Nomadic_pastoralism", "Ancient_agriculture",
+    "Mythology_by_culture", "Flood_geology_in_mythology",
 ]
 
 WIKI_SEARCH_QUERIES = [
-    "ancient creation myth", "Sumerian king list", "Epic of Gilgamesh",
-    "Enuma Elish", "Atrahasis", "Code of Hammurabi",
-    "Pyramid Texts", "Coffin Texts", "Book of the Dead Egyptian",
+    # Mesopotamia
+    "ancient creation myth Mesopotamia", "Sumerian king list",
+    "Epic of Gilgamesh", "Enuma Elish Babylonian creation",
+    "Atrahasis flood myth", "Code of Hammurabi",
+    "Sumerian temple hymn", "Sumerian flood myth",
+    "Akkadian mythology", "Babylonian cosmology",
+    "Assyrian royal annals", "Neo-Assyrian texts",
+    "cuneiform tablet translation", "Mesopotamian omen text",
+    "Uruk period archaeology", "Eridu ancient city",
+    "ziggurat ancient Mesopotamia", "cylinder seal Mesopotamia",
+    # Egypt
+    "Pyramid Texts ancient Egypt", "Coffin Texts ancient Egypt",
+    "Book of the Dead Egyptian", "Egyptian creation myth",
+    "pharaoh inscription ancient Egypt", "Egyptian papyrus ancient",
+    "hieroglyphic inscription translation", "ancient Egyptian tomb art",
+    "Egyptian Book of Gates", "Amduat Egyptian underworld",
+    "Karnak temple inscriptions", "Valley of the Kings burial",
+    "Egyptian kingship divine", "Amarna period religion",
+    # Levant
     "Baal Cycle Ugarit", "Dead Sea Scrolls translation",
-    "Avesta Zoroastrian", "Gathas Zarathustra",
-    "Rigveda hymns", "Upanishad philosophy", "Manu flood myth",
-    "Mahabharata ancient", "Ramayana epic",
-    "Pali Canon Tipitaka", "Jataka tales",
-    "Oracle bone inscription Shang", "Tao Te Ching",
-    "Analects Confucius", "I Ching divination",
-    "Iliad Homer", "Odyssey Homer", "Theogony Hesiod",
-    "Orphic mysteries", "Eleusinian Mysteries",
-    "Etruscan tomb", "Roman foundation myth Romulus",
-    "Celtic sacred grove", "Druids ancient",
-    "Norse creation myth Ymir", "runic inscription ancient",
-    "Nubian pyramid Meroe", "Carthage Tophet",
-    "Olmec colossal head", "Popol Vuh creation",
-    "Maya Long Count calendar", "Zapotec Monte Alban",
-    "Caral Supe civilization", "Chavin de Huantar",
-    "Nazca Lines geoglyph", "Viracocha creator",
-    "Dreamtime Aboriginal", "songlines Aboriginal",
-    "Lapita pottery Pacific", "Polynesian migration",
-    "ancient flood narrative", "sacred mountain ancient",
-    "ancient astronomical observation", "megalith ancient",
-    "ancient trade route", "Silk Road ancient",
-    "ancient sacred river", "cuneiform tablet translation",
-    "hieroglyphic inscription translation", "ancient oracle",
-    "ziggurat temple", "ancient city ruins archaeological",
-    "ancient burial mound", "steppe nomad Scythian",
-    "Harappan seal Indus", "Linear A Minoan",
-    "Rosetta Stone", "ancient kingship divine",
+    "Ugaritic mythology", "Phoenician inscription ancient",
+    "ancient Israelite religion", "Canaanite mythology",
+    "Hebrew Bible ancient layers", "Second Temple Judaism texts",
+    "Tel Dan inscription", "Siloam inscription",
+    # Anatolia
+    "Hittite mythology storm god", "Hittite royal annals",
+    "Hittite ritual texts", "Hittite cuneiform tablets",
+    "Luwian hieroglyphic inscription", "Urartian inscription",
+    "Troy archaeology Bronze Age", "Çatalhöyük ritual",
+    # Iran / Persia
+    "Avesta Zoroastrian texts", "Gathas Zarathustra",
+    "Achaemenid royal inscription", "Behistun inscription",
+    "Elamite cuneiform", "ancient Iranian cosmology",
+    "Zoroastrian creation myth", "Persian sacred fire temple",
+    # Vedic India
+    "Rigveda hymns ancient", "Upanishad philosophy ancient",
+    "Vedic ritual ancient India", "Atharva Veda",
+    "Brahmana texts Vedic", "Vedic creation myth",
+    "Indus Valley seal", "Harappa ritual archaeology",
+    "Manu flood myth India", "Soma ritual Vedic",
+    # Epic India
+    "Mahabharata ancient layers", "Ramayana ancient epic",
+    "Puranic cosmology", "Hindu flood myth Manu",
+    "Mahabharata war archaeology",
+    # Buddhism / Jainism
+    "Pali Canon Tipitaka early Buddhism", "Jataka tales ancient",
+    "Dhammapada ancient text", "Buddhist cosmology ancient",
+    "Ashoka edict inscription", "early Jain texts Agamas",
+    "stupa archaeology ancient India",
+    # China
+    "Oracle bone inscription Shang dynasty",
+    "Tao Te Ching ancient", "Analects Confucius",
+    "I Ching divination ancient", "Book of Songs Shijing",
+    "Classic Mountains Seas Chinese mythology",
+    "Zhou dynasty ritual bronze", "Chinese creation myth Pangu",
+    "Huainanzi cosmology", "Shan Hai Jing",
+    # Korea / Japan
+    "Gojoseon ancient Korea mythology", "Dangun foundation myth",
+    "Kojiki Japanese mythology", "Nihon Shoki ancient",
+    "Yayoi period ritual Japan", "Jomon archaeology Japan",
+    # Central Asia / Steppe
+    "Scythian burial mound kurgan", "Scythian art animal style",
+    "BMAC Oxus civilization Bronze Age",
+    "Bactrian mythology ancient", "steppe nomad religion",
+    "Pazyryk burial ritual", "Sogdian ancient texts",
+    # Aegean
+    "Linear A Minoan undeciphered", "Linear B Mycenaean",
+    "Minoan religion bull cult", "Mycenaean shaft grave",
+    "Bronze Age Aegean collapse",
+    # Greece
+    "Iliad Homer epic", "Odyssey Homer",
+    "Theogony Hesiod creation", "Works and Days Hesiod",
+    "Orphic mysteries ancient", "Eleusinian Mysteries initiation",
+    "Greek oracle Delphi", "ancient Greek hero cult",
+    "Greek lyric poetry archaic", "pre-Socratic cosmology",
+    "Olympian gods Greek", "ancient Greek temple ritual",
+    # Etruscans / Rome
+    "Etruscan tomb inscription", "Etruscan haruspicy divination",
+    "Roman foundation myth Romulus", "Roman augury religion",
+    "Roman Republic religion sacred", "Latin literature ancient",
+    # Celtic
+    "Celtic sacred grove nemeton", "Druids ancient ritual",
+    "Celtic mythology ancient", "La Tène ritual site",
+    "Celtic oral tradition", "Irish mythology ancient layers",
+    # Norse / Germanic
+    "Norse creation myth Ymir", "Eddas cosmology",
+    "runic inscription ancient", "Nordic Bronze Age rock art",
+    "Germanic religion ancient", "Norse mythology ancient",
+    # Nubia / North Africa
+    "Nubian pyramid Meroe ancient", "Kingdom of Kush religion",
+    "Napatan temple inscriptions", "Carthage Tophet sacrifice",
+    "Punic religious inscription", "ancient Libya Berber",
+    # Sub-Saharan Africa
+    "Nok terracotta Nigeria ancient", "Aksumite inscription ancient",
+    "Pre-Aksumite ritual Ethiopia", "West African oral tradition ancient",
+    "Iron Age Africa archaeology",
+    # Mesoamerica
+    "Olmec colossal head sacred", "Popol Vuh creation myth",
+    "Maya Long Count calendar ancient", "Zapotec Monte Alban inscription",
+    "Teotihuacan pyramid cosmology", "Maya stela inscription",
+    "Maya codex ancient", "Mesoamerican creation myth",
+    "Olmec religion La Venta", "Maya astronomical text",
+    # South America
+    "Caral Supe Norte Chico ancient", "Chavin de Huantar cult",
+    "Nazca Lines geoglyph ancient", "Viracocha creator Andes",
+    "Paracas burial ritual", "Moche ritual sacrifice",
+    "Andean flood myth Viracocha",
+    # Oceania
+    "Dreamtime Aboriginal sacred", "songlines Aboriginal Australia",
+    "Aboriginal rock art ancient", "Lapita pottery Pacific archaeology",
+    "Polynesian navigation ancient", "Maori creation myth ancient",
+    "Hawaiian mythology creation",
+    # Cross-cutting
+    "ancient flood narrative worldwide", "sacred mountain ancient religion",
+    "ancient astronomical observation", "megalith ancient ritual",
+    "ancient oral tradition preserved", "undeciphered ancient script",
+    "ancient king list", "ancient law code",
+    "ancient trade route archaeology", "sacred geography ancient",
+    "ancient burial ritual worldwide", "cosmogony ancient religion",
 ]
 
 
@@ -1734,6 +1937,10 @@ _WIKI_SKIP_TITLE_KEYWORDS = {
     "modern", "contemporary",
     "municipality", "district", "county", "province",
     "disambiguation",
+    # Musical instruments (modern/folk)
+    "fiddle", "violin", "guitar", "banjo", "mandolin", "ukulele",
+    "accordion", "harmonica", "piano", "drum kit", "bass guitar",
+    "folk music", "folk dance", "folk song",
     # Modern people / scholars
     "archaeologist", "egyptologist", "assyriologist", "historian",
     "philologist", "orientalist", "antiquarian", "curator",
@@ -1745,6 +1952,24 @@ _WIKI_SKIP_TITLE_KEYWORDS = {
     "war of independence", "civil war",
     # Modern infrastructure
     "airport", "railway", "highway", "stadium",
+    # Biology / botany / zoology
+    "(plant)", "(insect)", "(bird)", "(fish)", "(spider)", "(moth)",
+    "(butterfly)", "(beetle)", "(genus)", "(species)", "(fungus)",
+    "(lichen)", "(moss)", "(fern)", "(algae)", "(snake)", "(lizard)",
+    "(frog)", "(crab)", "(snail)", "(worm)", "(fly)", "(wasp)",
+    "(bee)", "(ant)", "cultivar", "hybrid)",
+    # Geography / weather / geology
+    "monsoon", "climate", "weather", "earthquake", "volcano",
+    "river basin", "watershed", "glacier",
+    # Astronomy (modern)
+    "(asteroid)", "(comet)", "(mineral)", "crater)",
+    # Sports / broadcasting
+    "broadcaster", "sportscaster", "commentator",
+    "championship", "tournament", "league",
+    "f.c.", "a.f.c.", "fc)",
+    # Modern religion
+    "church)", "parish", "diocese", "congregation",
+    "mosque)", "synagogue)",
 }
 _WIKI_SKIP_SUBCAT_KEYWORDS = {
     "video game", "film", "novel", "television", "sport",
@@ -1889,6 +2114,349 @@ async def stream_wikipedia_ancient(max_pages: int = 200_000) -> AsyncIterator[Di
 
 
 # ---------------------------------------------------------------------------
+# Project Gutenberg — ancient and classical texts
+# ---------------------------------------------------------------------------
+
+GUTENBERG_SEARCH_URL = "https://gutendex.com/books"
+
+GUTENBERG_ANCIENT_SUBJECTS = [
+    "Ancient history", "Classical literature", "Greek literature",
+    "Latin literature", "Mythology", "Ancient Rome", "Ancient Greece",
+    "Egypt -- History", "Mesopotamia", "Sumerian", "Babylonia",
+    "Assyria", "Persian Empire", "Vedic", "Sanskrit literature",
+    "Hindu mythology", "Buddhism", "Zoroastrianism", "Bible",
+    "Dead Sea scrolls", "Archaeology", "Cuneiform", "Hieroglyphics",
+    "Epic poetry", "Homer", "Virgil", "Ovid", "Hesiod", "Plato",
+    "Aristotle", "Herodotus", "Thucydides", "Plutarch", "Tacitus",
+    "Julius Caesar", "Cicero", "Seneca", "Marcus Aurelius",
+    "Confucius", "Taoism", "Mahabharata", "Ramayana",
+    "Gilgamesh", "Beowulf",
+]
+
+
+async def stream_gutenberg(max_pages: int = 200_000) -> AsyncIterator[DiscoveryBatch]:
+    """Discover ancient/classical texts from Project Gutenberg via Gutendex API."""
+    total = 0
+    seen_ids: set[int] = set()
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        for subject in GUTENBERG_ANCIENT_SUBJECTS:
+            if total >= max_pages:
+                break
+            url: str | None = GUTENBERG_SEARCH_URL
+            params: dict = {"topic": subject, "languages": "en", "mime_type": "text/plain"}
+            page_num = 0
+            while url and total < max_pages and page_num < 50:
+                try:
+                    resp = await client.get(url, params=params if page_num == 0 else None)
+                    if resp.status_code != 200:
+                        logger.warning("Gutenberg %d for %s", resp.status_code, subject)
+                        break
+                    data = resp.json()
+                    results = data.get("results", [])
+                    if not results:
+                        break
+
+                    batch: list[DiscoveredPage] = []
+                    for book in results:
+                        book_id = book.get("id")
+                        if not book_id or book_id in seen_ids:
+                            continue
+                        seen_ids.add(book_id)
+
+                        title = book.get("title", f"Gutenberg #{book_id}")
+                        authors = ", ".join(
+                            a.get("name", "") for a in book.get("authors", [])
+                        )
+                        if authors:
+                            title = f"{title} — {authors}"
+
+                        formats = book.get("formats", {})
+                        text_url = (
+                            formats.get("text/plain; charset=utf-8")
+                            or formats.get("text/plain; charset=us-ascii")
+                            or formats.get("text/plain")
+                        )
+                        if not text_url:
+                            continue
+
+                        batch.append(DiscoveredPage(
+                            url=text_url,
+                            external_id=f"gutenberg-{book_id}",
+                            title=title[:300],
+                            content_hint="classical_text",
+                            depth=0,
+                        ))
+                        total += 1
+                        if total >= max_pages:
+                            break
+
+                    if batch:
+                        yield DiscoveryBatch(batch, 1, 0, False)
+
+                    url = data.get("next")
+                    params = {}
+                    page_num += 1
+                    await asyncio.sleep(0.5)
+                except Exception as exc:
+                    logger.error("Gutenberg discovery error for %s: %s", subject, exc)
+                    break
+
+            logger.info("Gutenberg subject '%s': %d total so far", subject, total)
+
+    logger.info("Gutenberg discovery complete: %d books", total)
+    yield DiscoveryBatch([], 0, 0, True)
+
+
+# ---------------------------------------------------------------------------
+# Perseus Digital Library — Greek/Latin texts with translations
+# ---------------------------------------------------------------------------
+
+PERSEUS_CATALOG_URL = "https://scaife-cts.perseus.org/api/cts"
+
+
+async def stream_perseus(max_pages: int = 100_000) -> AsyncIterator[DiscoveryBatch]:
+    """Discover texts from the Perseus Digital Library via Scaife CTS API."""
+    total = 0
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        try:
+            resp = await client.get(
+                f"{PERSEUS_CATALOG_URL}?request=GetCapabilities",
+                headers={"Accept": "application/xml"},
+            )
+            if resp.status_code != 200:
+                logger.warning("Perseus CTS catalog returned %d", resp.status_code)
+                yield DiscoveryBatch([], 0, 0, True)
+                return
+
+            xml = resp.text
+            urns = re.findall(r'urn="([^"]+)"', xml)
+
+            batch: list[DiscoveredPage] = []
+            for urn in urns:
+                if total >= max_pages:
+                    break
+                label_match = re.search(
+                    rf'urn="{re.escape(urn)}"[^>]*>\s*<label[^>]*>([^<]+)',
+                    xml, re.DOTALL,
+                )
+                label = label_match.group(1).strip() if label_match else urn.split(":")[-1]
+
+                batch.append(DiscoveredPage(
+                    url=f"{PERSEUS_CATALOG_URL}?request=GetPassage&urn={urn}",
+                    external_id=f"perseus-{urn.replace(':', '-')}",
+                    title=label[:300],
+                    content_hint="classical_text",
+                    depth=0,
+                ))
+                total += 1
+
+                if len(batch) >= 500:
+                    yield DiscoveryBatch(batch, 1, 0, False)
+                    batch = []
+
+            if batch:
+                yield DiscoveryBatch(batch, 1, 0, False)
+        except Exception as exc:
+            logger.error("Perseus discovery error: %s", exc)
+
+    logger.info("Perseus discovery complete: %d texts", total)
+    yield DiscoveryBatch([], 0, 0, True)
+
+
+# ---------------------------------------------------------------------------
+# British Museum — 4M+ objects via collection API
+# ---------------------------------------------------------------------------
+
+BM_SEARCH_URL = "https://www.britishmuseum.org/api/_search"
+
+BM_ANCIENT_QUERIES = [
+    "ancient egypt", "mesopotamia", "assyrian", "babylonian", "sumerian",
+    "greek antiquities", "roman antiquities", "ancient near east",
+    "cuneiform tablet", "egyptian mummy", "bronze age",
+    "iron age", "minoan", "mycenaean", "etruscan",
+    "phoenician", "persian empire", "hellenistic",
+    "ancient china", "ancient india", "viking",
+    "celtic", "anglo-saxon", "medieval manuscript",
+]
+
+
+async def stream_british_museum(max_pages: int = 200_000) -> AsyncIterator[DiscoveryBatch]:
+    """Discover objects from the British Museum collection API."""
+    total = 0
+    seen_ids: set[str] = set()
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        for query in BM_ANCIENT_QUERIES:
+            if total >= max_pages:
+                break
+            page_from = 0
+            page_size = 100
+            consecutive_empty = 0
+            while total < max_pages and consecutive_empty < 3:
+                try:
+                    resp = await client.post(
+                        BM_SEARCH_URL,
+                        json={
+                            "keyword": query,
+                            "from": page_from,
+                            "size": page_size,
+                        },
+                        headers={"User-Agent": USER_AGENT},
+                    )
+                    if resp.status_code != 200:
+                        logger.warning("BM API %d for %s", resp.status_code, query)
+                        break
+                    data = resp.json()
+                    hits = data.get("hits", {}).get("hits", [])
+                    if not hits:
+                        consecutive_empty += 1
+                        break
+
+                    consecutive_empty = 0
+                    batch: list[DiscoveredPage] = []
+                    for hit in hits:
+                        src = hit.get("_source", {})
+                        obj_id = hit.get("_id", "")
+                        if not obj_id or obj_id in seen_ids:
+                            continue
+                        seen_ids.add(obj_id)
+
+                        title = src.get("title", [{}])
+                        if isinstance(title, list):
+                            title = title[0].get("value", "") if title else ""
+                        title = title or f"BM Object {obj_id}"
+
+                        batch.append(DiscoveredPage(
+                            url=f"https://www.britishmuseum.org/collection/object/{obj_id}",
+                            external_id=f"bm-{obj_id}",
+                            title=title[:300],
+                            content_hint="museum_object",
+                            depth=0,
+                        ))
+                        total += 1
+                        if total >= max_pages:
+                            break
+
+                    if batch:
+                        yield DiscoveryBatch(batch, 1, 0, False)
+
+                    page_from += page_size
+                    await asyncio.sleep(1.0)
+                except Exception as exc:
+                    logger.error("BM discovery error for %s: %s", query, exc)
+                    break
+
+            logger.info("BM query '%s': %d total so far", query, total)
+
+    logger.info("British Museum discovery complete: %d objects", total)
+    yield DiscoveryBatch([], 0, 0, True)
+
+
+# ---------------------------------------------------------------------------
+# Wikisource — full texts of public domain historical works
+# ---------------------------------------------------------------------------
+
+WIKISOURCE_API = "https://en.wikisource.org/w/api.php"
+
+WIKISOURCE_SEED_CATEGORIES = [
+    "Ancient_texts", "Classical_texts", "Egyptian_texts",
+    "Mesopotamian_texts", "Buddhist_texts", "Hindu_texts",
+    "Greek_texts", "Latin_texts", "Religious_texts",
+    "Chinese_classics", "Confucian_texts", "Taoist_texts",
+    "Jewish_texts", "Biblical_texts", "Zoroastrian_texts",
+    "Vedic_texts", "Sanskrit_texts", "Ancient_history",
+    "Ancient_Roman_texts", "Epic_poetry", "Mythological_texts",
+    "Philosophical_texts", "Historical_texts",
+]
+
+
+async def stream_wikisource(max_pages: int = 200_000) -> AsyncIterator[DiscoveryBatch]:
+    """Discover full-text historical works from Wikisource."""
+    total = 0
+    seen_titles: set[str] = set()
+    seen_cats: set[str] = set()
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        async def _spider_category(
+            cat_name: str, depth: int, max_depth: int = 3,
+        ) -> AsyncIterator[DiscoveryBatch]:
+            nonlocal total
+            if total >= max_pages or cat_name in seen_cats:
+                return
+            seen_cats.add(cat_name)
+
+            cmcontinue: str | None = ""
+            while cmcontinue is not None and total < max_pages:
+                params: dict = {
+                    "action": "query",
+                    "list": "categorymembers",
+                    "cmtitle": f"Category:{cat_name}",
+                    "cmlimit": "500",
+                    "cmtype": "page|subcat",
+                    "format": "json",
+                }
+                if cmcontinue:
+                    params["cmcontinue"] = cmcontinue
+
+                try:
+                    resp = await client.get(
+                        WIKISOURCE_API, params=params,
+                        headers={"User-Agent": USER_AGENT},
+                    )
+                    if resp.status_code != 200:
+                        break
+                    data = resp.json()
+                except Exception:
+                    break
+
+                members = data.get("query", {}).get("categorymembers", [])
+                batch: list[DiscoveredPage] = []
+                subcats: list[str] = []
+
+                for m in members:
+                    ns = m.get("ns", 0)
+                    page_title = m.get("title", "")
+
+                    if ns == 14:
+                        subcats.append(page_title.removeprefix("Category:"))
+                    elif ns == 0 and page_title not in seen_titles:
+                        seen_titles.add(page_title)
+                        slug = page_title.replace(" ", "_")
+                        batch.append(DiscoveredPage(
+                            url=f"https://en.wikisource.org/wiki/{slug}",
+                            external_id=f"ws-{slug[:200]}",
+                            title=page_title[:300],
+                            content_hint="historical_text",
+                            depth=depth,
+                        ))
+                        total += 1
+                        if total >= max_pages:
+                            break
+
+                if batch:
+                    yield DiscoveryBatch(batch, 1, 0, False)
+
+                cmcontinue = data.get("continue", {}).get("cmcontinue")
+                await asyncio.sleep(0.3)
+
+            if depth < max_depth:
+                for sub in subcats:
+                    if total >= max_pages:
+                        break
+                    async for sub_batch in _spider_category(sub, depth + 1, max_depth):
+                        yield sub_batch
+
+        for seed_cat in WIKISOURCE_SEED_CATEGORIES:
+            if total >= max_pages:
+                break
+            async for batch in _spider_category(seed_cat, depth=0):
+                yield batch
+            logger.info("Wikisource: %d texts after cat '%s'", total, seed_cat)
+
+    logger.info("Wikisource discovery complete: %d texts, %d categories", total, len(seen_cats))
+    yield DiscoveryBatch([], 0, 0, True)
+
+
+# ---------------------------------------------------------------------------
 # Dispatcher
 # ---------------------------------------------------------------------------
 
@@ -1916,6 +2484,10 @@ API_ADAPTERS: dict[str, str] = {
     "tla-egyptian": "tla",
     "sacred-texts": "sacred-texts",
     "wikipedia-ancient": "wp-ancient",
+    "gutenberg": "gutenberg",
+    "perseus": "perseus",
+    "british-museum": "bm",
+    "wikisource": "wikisource",
 }
 
 
@@ -1968,6 +2540,14 @@ def get_api_stream(slug: str, max_pages: int = 100_000, **kwargs) -> AsyncIterat
         return stream_sacred_texts(max_pages=max_pages)
     if adapter == "wp-ancient":
         return stream_wikipedia_ancient(max_pages=max_pages)
+    if adapter == "gutenberg":
+        return stream_gutenberg(max_pages=max_pages)
+    if adapter == "perseus":
+        return stream_perseus(max_pages=max_pages)
+    if adapter == "bm":
+        return stream_british_museum(max_pages=max_pages)
+    if adapter == "wikisource":
+        return stream_wikisource(max_pages=max_pages)
     return None
 
 
