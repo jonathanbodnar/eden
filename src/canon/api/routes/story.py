@@ -66,6 +66,22 @@ def _infer_culture_from_entity(name: str, summary: str) -> list[str]:
     return cultures
 
 
+def _build_merge_reasoning(entity_name: str, entity_summary: str | None, archetype_name: str, cultures: list[str]) -> str:
+    """Build a meaningful explanation of why this entity belongs to the archetype."""
+    culture_str = cultures[0] if cultures else "its tradition"
+    summary_snippet = ""
+    if entity_summary:
+        first_sentence = entity_summary.split(". ")[0].rstrip(".")
+        if len(first_sentence) < 150:
+            summary_snippet = first_sentence
+        else:
+            summary_snippet = first_sentence[:147] + "..."
+
+    if summary_snippet:
+        return f"{culture_str} tradition: {summary_snippet}. Shares core attributes and cosmological role with other identities in this archetype."
+    return f"Represents the {archetype_name} concept within the {culture_str} tradition. Shares core attributes and cosmological role with other identities in this archetype."
+
+
 @router.get("/epochs")
 async def get_story_epochs(session: AsyncSession = Depends(get_session)):
     """Get all epochs with story chapter counts for book navigation."""
@@ -350,6 +366,9 @@ async def get_entity_merge_breakdown(
                 other_cultures = _infer_culture_from_entity(other_name, other_summary or "")
 
             evidence = r.get("evidence_json") or {}
+            db_reasoning = evidence.get("reasoning", "")
+            if not db_reasoning and other_name:
+                db_reasoning = _build_merge_reasoning(other_name, other_summary, entity_info["name"], other_cultures)
             equivalences.append({
                 "equivalent_id": str(other_id),
                 "equivalent_type": other_type,
@@ -358,7 +377,7 @@ async def get_entity_merge_breakdown(
                 "cultures": other_cultures,
                 "merge_basis": r["merge_basis"],
                 "confidence": r["confidence"],
-                "reasoning": evidence.get("reasoning", ""),
+                "reasoning": db_reasoning,
                 "role_match": evidence.get("role_match"),
                 "action_match": evidence.get("action_match"),
                 "context_match": evidence.get("context_match"),
@@ -426,7 +445,12 @@ async def get_entity_merge_breakdown(
                 "cultures": aka_cultures,
                 "merge_basis": "narrative_convergence",
                 "confidence": 0.85,
-                "reasoning": f"Identified as the same archetype entity across cultures by narrative synthesis (Law 8: Entity Convergence)",
+                "reasoning": _build_merge_reasoning(
+                    found_entity.canonical_name,
+                    found_entity.summary,
+                    entity_info["name"],
+                    aka_cultures,
+                ),
                 "role_match": True,
                 "action_match": True,
                 "context_match": True,
@@ -493,7 +517,12 @@ async def get_entity_merge_breakdown(
         "cultures": primary_cultures,
         "merge_basis": "primary_resolution",
         "confidence": 1.0,
-        "reasoning": "Resolved canonical entity in the database",
+        "reasoning": _build_merge_reasoning(
+            entity_info["name"],
+            entity_info.get("summary"),
+            entity_info["name"],
+            primary_cultures,
+        ),
         "role_match": True,
         "action_match": True,
         "context_match": True,
