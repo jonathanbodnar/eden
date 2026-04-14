@@ -507,4 +507,10 @@ export const api = {
     cachedGet<CultureVariant[]>(`/story/chapters/${storyChapterId}/culture-variants${q ? `?q=${encodeURIComponent(q)}` : ''}`),
   getStoryCultureDetail: (storyChapterId: string, culture: string) =>
     cachedGet<CultureVariant>(`/story/chapters/${storyChapterId}/culture-detail?culture=${encodeURIComponent(culture)}`),
+
+  generateChapterAudio: (chapterId: string) =>
+    request<{ status: string; size_bytes?: number }>(`/story/chapters/${chapterId}/audio`, { method: 'POST' }),
+
+  getChapterAudioUrl: (chapterId: string) =>
+    `${BASE}/story/chapters/${chapterId}/audio`,
 }

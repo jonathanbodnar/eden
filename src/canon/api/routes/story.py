@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import logging
+import re
 import uuid as _uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import Response
 from sqlalchemy import select, func, distinct, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.canon.config import settings
 from src.canon.database import get_session
 from src.canon.models.canonical_epoch import CanonicalEpoch
 from src.canon.models.canonical_actor import CanonicalActor
@@ -762,3 +766,157 @@ async def _get_chapter_images(session: AsyncSession, story_chapter_id) -> list[d
         }
         for j in jobs
     ]
+
+
+# ── Audio TTS endpoints ───────────────────────────────────────────────────
+
+_ENTITY_RE = re.compile(r"\[\[(actor|event|place):([^\]]+)\]\]")
+
+
+def _strip_annotations(narrative: str) -> str:
+    """Remove [[type:Name]] markup, keeping just the entity name."""
+    return _ENTITY_RE.sub(r"\2", narrative)
+
+
+@router.head("/chapters/{story_chapter_id}/audio")
+@router.get("/chapters/{story_chapter_id}/audio")
+async def get_chapter_audio(
+    story_chapter_id: str,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    """Serve cached MP3 audio for a chapter, with Range header support."""
+    cid = _uuid.UUID(story_chapter_id)
+    row = (await session.execute(
+        text("SELECT audio_data, duration_seconds FROM story_chapter_audio WHERE story_chapter_id = :cid"),
+        {"cid": str(cid)},
+    )).first()
+
+    if not row:
+        raise HTTPException(404, "Audio not generated yet")
+
+    audio_bytes: bytes = row[0]
+    total = len(audio_bytes)
+
+    range_header = request.headers.get("range")
+    if range_header:
+        try:
+            range_spec = range_header.replace("bytes=", "")
+            start_str, end_str = range_spec.split("-")
+            start = int(start_str) if start_str else 0
+            end = int(end_str) if end_str else total - 1
+            end = min(end, total - 1)
+            chunk = audio_bytes[start : end + 1]
+            return Response(
+                content=chunk,
+                status_code=206,
+                media_type="audio/mpeg",
+                headers={
+                    "Content-Range": f"bytes {start}-{end}/{total}",
+                    "Accept-Ranges": "bytes",
+                    "Content-Length": str(len(chunk)),
+                },
+            )
+        except Exception:
+            pass
+
+    return Response(
+        content=audio_bytes,
+        media_type="audio/mpeg",
+        headers={
+            "Accept-Ranges": "bytes",
+            "Content-Length": str(total),
+        },
+    )
+
+
+@router.post("/chapters/{story_chapter_id}/audio")
+async def generate_chapter_audio(
+    story_chapter_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    """Generate TTS audio via Cartesia and cache the MP3."""
+    cid = _uuid.UUID(story_chapter_id)
+
+    existing = (await session.execute(
+        text("SELECT id FROM story_chapter_audio WHERE story_chapter_id = :cid"),
+        {"cid": str(cid)},
+    )).first()
+    if existing:
+        return {"status": "already_exists"}
+
+    chapter = await session.get(StoryChapter, cid)
+    if not chapter:
+        raise HTTPException(404, "Chapter not found")
+
+    outline = await session.get(StoryOutline, chapter.story_outline_id) if chapter.story_outline_id else None
+    title = outline.title if outline else "Chapter"
+
+    clean_text = _strip_annotations(chapter.narrative_text or "")
+    transcript = f"{title}\n\n{clean_text}"
+
+    if not settings.cartesia_api_key:
+        raise HTTPException(500, "Cartesia API key not configured")
+
+    try:
+        async with httpx.AsyncClient(timeout=300) as client:
+            resp = await client.post(
+                "https://api.cartesia.ai/tts/bytes",
+                headers={
+                    "X-API-Key": settings.cartesia_api_key,
+                    "Cartesia-Version": "2026-03-01",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model_id": "sonic-3",
+                    "transcript": transcript,
+                    "voice": {
+                        "mode": "id",
+                        "id": settings.cartesia_voice_id,
+                    },
+                    "language": "en",
+                    "output_format": {
+                        "container": "mp3",
+                        "sample_rate": 44100,
+                        "bit_rate": 128000,
+                    },
+                    "generation_config": {
+                        "speed": 0.9,
+                        "emotion": "contemplative",
+                    },
+                },
+            )
+            if resp.status_code != 200:
+                logger.error("Cartesia TTS error %s: %s", resp.status_code, resp.text[:500])
+                raise HTTPException(502, f"Cartesia TTS error: {resp.status_code}")
+
+            audio_bytes = resp.content
+    except httpx.HTTPError as e:
+        logger.exception("Cartesia request failed")
+        raise HTTPException(502, f"Cartesia request failed: {e}")
+
+    word_count = len(transcript.split())
+    estimated_duration = word_count / 2.5
+
+    await session.execute(
+        text("""
+            INSERT INTO story_chapter_audio (story_chapter_id, audio_data, duration_seconds, file_size_bytes, voice_id, model_id)
+            VALUES (:cid, :audio, :dur, :size, :voice, :model)
+            ON CONFLICT (story_chapter_id) DO UPDATE SET
+                audio_data = EXCLUDED.audio_data,
+                duration_seconds = EXCLUDED.duration_seconds,
+                file_size_bytes = EXCLUDED.file_size_bytes,
+                created_at = now()
+        """),
+        {
+            "cid": str(cid),
+            "audio": audio_bytes,
+            "dur": estimated_duration,
+            "size": len(audio_bytes),
+            "voice": settings.cartesia_voice_id,
+            "model": "sonic-3",
+        },
+    )
+    await session.commit()
+
+    return {"status": "generated", "size_bytes": len(audio_bytes), "estimated_duration": estimated_duration}

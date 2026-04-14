@@ -72,3 +72,20 @@ body {
   0%, 100% { opacity: 0.4; }
   50% { opacity: 1; }
 }
+
+@media (max-width: 767px) {
+  ::-webkit-scrollbar {
+    width: 3px;
+  }
+
+  body {
+    -webkit-text-size-adjust: 100%;
+  }
+}
+
+@media (max-width: 1023px) {
+  :root {
+    --left-width: 0px;
+    --right-width: 360px;
+  }
+}

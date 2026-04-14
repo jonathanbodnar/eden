@@ -4,8 +4,12 @@ import type { StoryChapter, StoryEpoch, StoryEvidence, CultureVariant } from '..
 import BookNav from '../components/story/BookNav'
 import NarrativeReader from '../components/story/NarrativeReader'
 import EvidencePanel from '../components/story/EvidencePanel'
+import AudioPlayerBar from '../components/story/AudioPlayerBar'
+import { useMediaQuery, MOBILE, TABLET } from '../hooks/useMediaQuery'
 
 export default function StoryModeLayout() {
+  const isMobile = useMediaQuery(MOBILE)
+  const isTablet = useMediaQuery(TABLET)
   const [epochs, setEpochs] = useState<StoryEpoch[]>([])
   const [chapters, setChapters] = useState<StoryChapter[]>([])
   const [activeChapterId, setActiveChapterId] = useState<string | null>(null)
@@ -15,6 +19,10 @@ export default function StoryModeLayout() {
   } | null>(null)
   const [activeCulture, setActiveCulture] = useState<CultureVariant | null>(null)
   const [loading, setLoading] = useState(true)
+
+  const [leftOpen, setLeftOpen] = useState(false)
+  const [rightOpen, setRightOpen] = useState(false)
+  const [audioChapterId, setAudioChapterId] = useState<string | null>(null)
 
   useEffect(() => {
     Promise.all([api.getStoryEpochs(), api.getStoryChapters()])
@@ -38,7 +46,8 @@ export default function StoryModeLayout() {
   const handleEntityClick = useCallback((entityType: string, entityId: string, entityName: string) => {
     setActiveCulture(null)
     setSelectedEntity({ entityType, entityId, entityName })
-  }, [])
+    if (isMobile || isTablet) setRightOpen(true)
+  }, [isMobile, isTablet])
 
   const handleClearEntity = useCallback(() => {
     setSelectedEntity(null)
@@ -49,7 +58,22 @@ export default function StoryModeLayout() {
     if (variant) setSelectedEntity(null)
   }, [])
 
+  const handleSelectChapter = useCallback((id: string) => {
+    setActiveChapterId(id)
+    if (isMobile) setLeftOpen(false)
+  }, [isMobile])
+
+  const handlePlayChapter = useCallback((chapterId: string) => {
+    setAudioChapterId(chapterId)
+  }, [])
+
+  const handleAudioChapterChange = useCallback((chapterId: string) => {
+    setAudioChapterId(chapterId)
+    setActiveChapterId(chapterId)
+  }, [])
+
   const activeChapter = chapters.find(c => c.id === activeChapterId) || null
+  const showPlayer = audioChapterId !== null
 
   if (loading) {
     return (
@@ -78,33 +102,174 @@ export default function StoryModeLayout() {
     )
   }
 
+  const compactHeader = isMobile || (isTablet && !leftOpen)
+
   return (
-    <div style={{
-      display: 'grid',
-      gridTemplateColumns: '280px 1fr 360px',
-      height: '100%',
-      overflow: 'hidden',
-    }}>
-      <BookNav
-        epochs={epochs}
-        chapters={chapters}
-        activeChapterId={activeChapterId}
-        onSelectChapter={setActiveChapterId}
-      />
-      <NarrativeReader
-        chapters={chapters}
-        activeChapterId={activeChapterId}
-        onChapterInView={setActiveChapterId}
-        onEntityClick={handleEntityClick}
-        onCultureSelect={handleCultureSelect}
-      />
-      <EvidencePanel
-        chapter={activeChapter}
-        evidence={evidence}
-        selectedEntity={selectedEntity}
-        onClearEntity={handleClearEntity}
-        activeCulture={activeCulture}
-      />
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      {/* Mobile/Tablet header bar */}
+      {compactHeader && (
+        <div style={{
+          height: 48,
+          flexShrink: 0,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 12,
+          padding: '0 12px',
+          background: 'var(--bg-secondary)',
+          borderBottom: '1px solid var(--border)',
+          zIndex: 20,
+        }}>
+          <button
+            onClick={() => setLeftOpen(!leftOpen)}
+            style={{
+              background: 'none', border: 'none', cursor: 'pointer',
+              color: leftOpen ? 'var(--gold)' : 'var(--text-secondary)',
+              fontSize: 20, padding: 4, lineHeight: 1,
+            }}
+            aria-label="Table of contents"
+          >
+            &#9776;
+          </button>
+          <div style={{
+            flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            fontSize: 13, fontWeight: 600, color: 'var(--text-primary)',
+          }}>
+            {activeChapter?.chapter_title || 'EDIN'}
+          </div>
+          <button
+            onClick={() => setRightOpen(!rightOpen)}
+            style={{
+              background: 'none', border: 'none', cursor: 'pointer',
+              color: rightOpen ? 'var(--gold)' : 'var(--text-secondary)',
+              fontSize: 18, padding: 4, lineHeight: 1,
+            }}
+            aria-label="Evidence panel"
+          >
+            &#9881;
+          </button>
+        </div>
+      )}
+
+      {/* Main content area */}
+      <div style={{
+        flex: 1,
+        display: 'grid',
+        gridTemplateColumns: isMobile ? '1fr'
+          : isTablet ? '1fr 360px'
+          : '280px 1fr 360px',
+        overflow: 'hidden',
+        position: 'relative',
+      }}>
+        {/* Left panel: BookNav */}
+        {isMobile || isTablet ? (
+          <>
+            {leftOpen && (
+              <div
+                onClick={() => setLeftOpen(false)}
+                style={{
+                  position: 'fixed', inset: 0,
+                  background: 'rgba(0,0,0,0.5)',
+                  zIndex: 30,
+                }}
+              />
+            )}
+            <div style={{
+              position: 'fixed',
+              top: 0, left: 0, bottom: 0,
+              width: isMobile ? '85vw' : 320,
+              maxWidth: 360,
+              transform: leftOpen ? 'translateX(0)' : 'translateX(-100%)',
+              transition: 'transform 0.25s ease',
+              zIndex: 31,
+              background: 'var(--bg-secondary)',
+              boxShadow: leftOpen ? '4px 0 20px rgba(0,0,0,0.4)' : 'none',
+            }}>
+              <BookNav
+                epochs={epochs}
+                chapters={chapters}
+                activeChapterId={activeChapterId}
+                onSelectChapter={handleSelectChapter}
+                onClose={() => setLeftOpen(false)}
+              />
+            </div>
+          </>
+        ) : (
+          <BookNav
+            epochs={epochs}
+            chapters={chapters}
+            activeChapterId={activeChapterId}
+            onSelectChapter={handleSelectChapter}
+          />
+        )}
+
+        {/* Center: NarrativeReader */}
+        <NarrativeReader
+          chapters={chapters}
+          activeChapterId={activeChapterId}
+          onChapterInView={setActiveChapterId}
+          onEntityClick={handleEntityClick}
+          onCultureSelect={handleCultureSelect}
+          onPlayChapter={handlePlayChapter}
+          isMobile={isMobile}
+        />
+
+        {/* Right panel: EvidencePanel */}
+        {isMobile ? (
+          <>
+            {rightOpen && (
+              <div
+                onClick={() => setRightOpen(false)}
+                style={{
+                  position: 'fixed', inset: 0,
+                  background: 'rgba(0,0,0,0.5)',
+                  zIndex: 30,
+                }}
+              />
+            )}
+            <div style={{
+              position: 'fixed',
+              top: 0, right: 0, bottom: 0,
+              width: '85vw',
+              maxWidth: 400,
+              transform: rightOpen ? 'translateX(0)' : 'translateX(100%)',
+              transition: 'transform 0.25s ease',
+              zIndex: 31,
+              background: 'var(--bg-secondary)',
+              boxShadow: rightOpen ? '-4px 0 20px rgba(0,0,0,0.4)' : 'none',
+              display: 'flex',
+              flexDirection: 'column',
+              height: '100%',
+              overflow: 'hidden',
+            }}>
+              <EvidencePanel
+                chapter={activeChapter}
+                evidence={evidence}
+                selectedEntity={selectedEntity}
+                onClearEntity={handleClearEntity}
+                activeCulture={activeCulture}
+              />
+            </div>
+          </>
+        ) : (
+          <EvidencePanel
+            chapter={activeChapter}
+            evidence={evidence}
+            selectedEntity={selectedEntity}
+            onClearEntity={handleClearEntity}
+            activeCulture={activeCulture}
+          />
+        )}
+      </div>
+
+      {/* Audio Player Bar */}
+      {showPlayer && (
+        <AudioPlayerBar
+          chapterId={audioChapterId}
+          chapters={chapters}
+          onChapterChange={handleAudioChapterChange}
+          onClose={() => setAudioChapterId(null)}
+        />
+      )}
     </div>
   )
 }

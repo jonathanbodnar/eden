@@ -8,6 +8,8 @@ interface Props {
   onChapterInView: (id: string) => void
   onEntityClick?: (entityType: string, entityId: string, entityName: string) => void
   onCultureSelect?: (variant: CultureVariant | null) => void
+  onPlayChapter?: (chapterId: string) => void
+  isMobile?: boolean
 }
 
 const ENTITY_COLORS: Record<string, string> = {
@@ -349,7 +351,7 @@ function ChapterViewSelector({
   )
 }
 
-export default function NarrativeReader({ chapters, activeChapterId, onChapterInView, onEntityClick, onCultureSelect }: Props) {
+export default function NarrativeReader({ chapters, activeChapterId, onChapterInView, onEntityClick, onCultureSelect, onPlayChapter, isMobile }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const chapterRefs = useRef<Map<string, HTMLDivElement>>(new Map())
   const userScrolling = useRef(false)
@@ -452,7 +454,7 @@ export default function NarrativeReader({ chapters, activeChapterId, onChapterIn
         background: 'var(--bg-primary)',
       }}
     >
-      <div style={{ maxWidth: 720, margin: '0 auto', padding: '40px 24px 120px' }}>
+      <div style={{ maxWidth: 720, margin: '0 auto', padding: isMobile ? '24px 16px 120px' : '40px 24px 120px' }}>
         {chapters.map((ch, idx) => {
           const prevEpoch = idx > 0 ? chapters[idx - 1].epoch_id : null
           const showEpochHeader = ch.epoch_id !== prevEpoch
@@ -497,15 +499,50 @@ export default function NarrativeReader({ chapters, activeChapterId, onChapterIn
               )}
 
               <div style={{ marginBottom: 24 }}>
-                <h2 style={{
-                  fontSize: 20,
-                  fontWeight: 600,
-                  color: 'var(--text-primary)',
-                  fontFamily: "'Georgia', 'Times New Roman', serif",
-                  marginBottom: 4,
-                }}>
-                  {ch.chapter_title}
-                </h2>
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                  <h2 style={{
+                    flex: 1,
+                    fontSize: isMobile ? 18 : 20,
+                    fontWeight: 600,
+                    color: 'var(--text-primary)',
+                    fontFamily: "'Georgia', 'Times New Roman', serif",
+                    marginBottom: 4,
+                  }}>
+                    {ch.chapter_title}
+                  </h2>
+                  {onPlayChapter && (
+                    <button
+                      onClick={() => onPlayChapter(ch.id)}
+                      title="Listen to this chapter"
+                      style={{
+                        background: 'none',
+                        border: '1px solid var(--border)',
+                        borderRadius: '50%',
+                        width: 32,
+                        height: 32,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        cursor: 'pointer',
+                        color: 'var(--gold)',
+                        fontSize: 14,
+                        flexShrink: 0,
+                        marginTop: 2,
+                        transition: 'border-color 0.15s, background 0.15s',
+                      }}
+                      onMouseOver={e => {
+                        (e.currentTarget as HTMLElement).style.borderColor = 'var(--gold)'
+                        ;(e.currentTarget as HTMLElement).style.background = 'rgba(212,168,83,0.1)'
+                      }}
+                      onMouseOut={e => {
+                        (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)'
+                        ;(e.currentTarget as HTMLElement).style.background = 'none'
+                      }}
+                    >
+                      &#9654;
+                    </button>
+                  )}
+                </div>
                 {ch.time_hint && (
                   <div style={{ fontSize: 13, color: 'var(--gold)', fontWeight: 500 }}>
                     {ch.time_hint}

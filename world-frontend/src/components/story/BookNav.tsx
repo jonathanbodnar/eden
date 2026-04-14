@@ -6,6 +6,7 @@ interface Props {
   chapters: StoryChapter[]
   activeChapterId: string | null
   onSelectChapter: (id: string) => void
+  onClose?: () => void
 }
 
 function formatDate(y: number | null): string {
@@ -14,7 +15,7 @@ function formatDate(y: number | null): string {
   return `${y} CE`
 }
 
-export default function BookNav({ epochs, chapters, activeChapterId, onSelectChapter }: Props) {
+export default function BookNav({ epochs, chapters, activeChapterId, onSelectChapter, onClose }: Props) {
   const [expandedEpoch, setExpandedEpoch] = useState<string | null>(
     epochs.length > 0 ? epochs[0].id : null
   )
