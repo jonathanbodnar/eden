@@ -132,6 +132,14 @@ NARRATIVE_SYSTEM_PROMPT = """You are the narrator of a unified ancient world his
 - Include specific names, places, and details from the sources
 - This should read like an alternative bible — profound, sweeping, specific
 
+## MANDATORY CROSS-CULTURAL BALANCE:
+- You MUST include accounts from AT LEAST 6 different cultural traditions per chapter
+- Balance coverage: Mesopotamian, Egyptian, Vedic/Hindu, Greek, Chinese, Mesoamerican, Norse, Japanese, Polynesian, African, Native American, Persian — use ALL that are relevant
+- Do NOT let any single culture dominate more than ~25% of the narrative
+- When a culture's account is thin, still note it: "In the East, the same primordial waters are remembered as..."
+- The goal is a PLANETARY history, not a Near Eastern history with footnotes from elsewhere
+- If the provided entities skew toward certain cultures, you must STILL seek balance using the themes and equivalences provided
+
 ## ENTITY ANNOTATION (CRITICAL):
 When you mention a key entity (god, being, hero, place, event) for the FIRST time in the chapter, wrap it with double brackets like this:
   [[actor:Enki]] or [[actor:The Craftsman God]] or [[event:The Great Flood]] or [[place:Eridu]]
@@ -333,9 +341,11 @@ Design 5-15 thematic chapters that weave ALL these cultures and traditions toget
 
         equivalences = await self._gather_equivalences(session)
         if equivalences:
-            parts.append("\n## VERIFIED ENTITY EQUIVALENCES:")
-            for eq in equivalences[:15]:
-                parts.append(f"  - {eq.get('primary_entity_type', '')} ↔ {eq.get('equivalent_entity_type', '')} ({eq.get('merge_basis', '')})")
+            parts.append("\n## VERIFIED CROSS-CULTURAL ENTITY EQUIVALENCES:")
+            parts.append("These entities are THE SAME being/place across cultures. MERGE them in your narrative:")
+            for eq in equivalences:
+                equivs = ", ".join(eq["equivalents"][:8])
+                parts.append(f"  - {eq['primary_name']} = {equivs}")
 
         return "\n".join(parts)
 
@@ -632,9 +642,11 @@ Design 5-15 thematic chapters that weave ALL these cultures and traditions toget
 
         equivalences = await self._gather_equivalences(session)
         if equivalences:
-            parts.append("\n## VERIFIED ENTITY EQUIVALENCES (merge these names in your narrative):")
-            for eq in equivalences[:15]:
-                parts.append(f"  - {eq.get('primary_entity_type', '')} ↔ {eq.get('equivalent_entity_type', '')} ({eq.get('merge_basis', '')})")
+            parts.append("\n## VERIFIED CROSS-CULTURAL ENTITY EQUIVALENCES:")
+            parts.append("These entities are THE SAME being/place across cultures. MERGE them in your narrative:")
+            for eq in equivalences:
+                equivs = ", ".join(eq["equivalents"][:8])
+                parts.append(f"  - {eq['primary_name']} = {equivs}")
 
         if prior_narrative:
             parts.append(f"\n## PRIOR CHAPTER (continue seamlessly from here):\n...{prior_narrative[-1500:]}")
@@ -686,16 +698,44 @@ Design 5-15 thematic chapters that weave ALL these cultures and traditions toget
     # -----------------------------------------------------------------------
 
     async def _gather_equivalences(self, session: AsyncSession) -> list[dict]:
+        """Fetch entity equivalences with human-readable names for the prompt."""
         try:
             result = await session.execute(text("""
-                SELECT primary_entity_type, primary_entity_id,
-                       equivalent_entity_type, equivalent_entity_id,
-                       merge_basis, confidence, evidence_json
-                FROM entity_equivalences
-                ORDER BY confidence DESC LIMIT 50
+                SELECT
+                    ee.primary_entity_type,
+                    COALESCE(
+                        (SELECT canonical_name FROM canonical_actors WHERE id = ee.primary_entity_id),
+                        (SELECT canonical_name FROM canonical_events WHERE id = ee.primary_entity_id),
+                        (SELECT canonical_name FROM canonical_places WHERE id = ee.primary_entity_id),
+                        'Unknown'
+                    ) as primary_name,
+                    COALESCE(
+                        (SELECT canonical_name FROM canonical_actors WHERE id = ee.equivalent_entity_id),
+                        (SELECT canonical_name FROM canonical_events WHERE id = ee.equivalent_entity_id),
+                        (SELECT canonical_name FROM canonical_places WHERE id = ee.equivalent_entity_id),
+                        'Unknown'
+                    ) as equivalent_name,
+                    ee.confidence,
+                    ee.merge_basis
+                FROM entity_equivalences ee
+                ORDER BY ee.confidence DESC
+                LIMIT 80
             """))
-            return [dict(row._mapping) for row in result.all()]
+            rows = result.all()
+            # Group by primary name to show all aliases together
+            groups: dict[str, list[str]] = {}
+            for row in rows:
+                pname = row[1]
+                ename = row[2]
+                if pname not in groups:
+                    groups[pname] = []
+                groups[pname].append(ename)
+            return [
+                {"primary_name": pname, "equivalents": equivs, "type": "cross-cultural"}
+                for pname, equivs in groups.items()
+            ]
         except Exception:
+            logger.warning("Failed to gather equivalences", exc_info=True)
             return []
 
     async def _call_deepseek(self, prompt: str, *, system: str = NARRATIVE_SYSTEM_PROMPT) -> dict:
