@@ -179,11 +179,28 @@ async def run_alias_merges(session: AsyncSession = Depends(get_session)):
 
 
 @router.post("/run-narrative")
-async def run_narrative(session: AsyncSession = Depends(get_session)):
-    """Generate unified narrative for all chapters using DeepSeek."""
+async def run_narrative(
+    epoch_orders: str | None = None,
+    max_chapters: int | None = None,
+    skip_existing: bool = True,
+    background_tasks: BackgroundTasks = BackgroundTasks(),
+    session: AsyncSession = Depends(get_session),
+):
+    """Generate unified narrative. Each chapter is committed individually for live progress.
+
+    Args:
+        epoch_orders: comma-separated epoch_order values (e.g. "0,1,2,3"), omit for all
+        max_chapters: stop after N chapters, omit for unlimited
+        skip_existing: skip chapters that already have a StoryChapter (default True)
+    """
+    orders = [int(x.strip()) for x in epoch_orders.split(",")] if epoch_orders else None
     svc = NarrativeSynthesizer()
-    result = await svc.run_full_synthesis(session)
-    await session.commit()
+    result = await svc.run_full_synthesis(
+        session,
+        epoch_orders=orders,
+        max_chapters=max_chapters,
+        skip_existing=skip_existing,
+    )
     return result
 
 

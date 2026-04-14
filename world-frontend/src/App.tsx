@@ -37,7 +37,7 @@ function TabBar() {
         marginRight: 20,
         letterSpacing: '0.5px',
       }}>
-        EDEN
+        EDIN
       </span>
       {tabs.map(t => (
         <button

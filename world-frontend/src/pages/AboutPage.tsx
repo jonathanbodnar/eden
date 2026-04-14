@@ -117,7 +117,7 @@ export default function AboutPage() {
             maxWidth: 600,
             margin: '0 auto',
           }}>
-            Eden synthesizes a unified account of human origin and history from the world's
+            EDIN synthesizes a unified account of human origin and history from the world's
             oldest surviving texts, artifacts, and traditions — governed by 16 immutable laws
             that ensure source fidelity, cross-cultural fairness, and structural integrity.
           </p>

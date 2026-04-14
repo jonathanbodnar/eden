@@ -309,17 +309,27 @@ class NarrativeSynthesizer:
 
         return "\n".join(parts)
 
-    async def _call_deepseek(self, prompt: str) -> dict:
-        if not settings.deepseek_api_key:
-            return {
-                "narrative_text": "Narrative synthesis requires DeepSeek API key.",
-                "key_claims": [],
-                "image_prompts": [],
-            }
+    async def _call_llm(self, prompt: str) -> dict:
+        if settings.deepseek_api_key:
+            return await self._call_openai_compatible(
+                url=f"{settings.deepseek_base_url.rstrip('/')}/chat/completions",
+                api_key=settings.deepseek_api_key,
+                model=settings.deepseek_model,
+                prompt=prompt,
+            )
+        if settings.anthropic_api_key:
+            return await self._call_anthropic(prompt)
+        return {
+            "narrative_text": "No LLM API key configured (set WORLD_DEEPSEEK_API_KEY or WORLD_ANTHROPIC_API_KEY).",
+            "key_claims": [],
+            "image_prompts": [],
+        }
 
-        url = f"{settings.deepseek_base_url.rstrip('/')}/chat/completions"
+    async def _call_openai_compatible(
+        self, url: str, api_key: str, model: str, prompt: str
+    ) -> dict:
         payload = {
-            "model": settings.deepseek_model,
+            "model": model,
             "messages": [
                 {"role": "system", "content": NARRATIVE_SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
@@ -327,27 +337,51 @@ class NarrativeSynthesizer:
             "temperature": 0.4,
             "max_tokens": 8192,
         }
-        headers = {
-            "Authorization": f"Bearer {settings.deepseek_api_key}",
-            "Content-Type": "application/json",
-        }
-
+        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
         try:
             async with httpx.AsyncClient(timeout=180.0) as client:
                 resp = await client.post(url, json=payload, headers=headers)
                 resp.raise_for_status()
                 data = resp.json()
-
             raw = data["choices"][0]["message"]["content"]
-            raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
-            json_match = re.search(r"\{.*\}", raw, re.DOTALL)
-            if json_match:
-                return json.loads(json_match.group())
-            logger.warning("No JSON found in DeepSeek narrative response")
-            return {"narrative_text": raw[:5000], "key_claims": [], "image_prompts": []}
+            return self._parse_llm_response(raw)
         except Exception:
-            logger.exception("DeepSeek narrative synthesis call failed")
+            logger.exception("OpenAI-compatible narrative call failed")
             return {"narrative_text": "", "key_claims": [], "image_prompts": []}
+
+    async def _call_anthropic(self, prompt: str) -> dict:
+        url = "https://api.anthropic.com/v1/messages"
+        payload = {
+            "model": settings.anthropic_model,
+            "max_tokens": 8192,
+            "system": NARRATIVE_SYSTEM_PROMPT,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        headers = {
+            "x-api-key": settings.anthropic_api_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=180.0) as client:
+                resp = await client.post(url, json=payload, headers=headers)
+                resp.raise_for_status()
+                data = resp.json()
+            raw = data["content"][0]["text"]
+            return self._parse_llm_response(raw)
+        except Exception:
+            logger.exception("Anthropic narrative call failed")
+            return {"narrative_text": "", "key_claims": [], "image_prompts": []}
+
+    def _parse_llm_response(self, raw: str) -> dict:
+        raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
+        json_match = re.search(r"\{.*\}", raw, re.DOTALL)
+        if json_match:
+            try:
+                return json.loads(json_match.group())
+            except json.JSONDecodeError:
+                logger.warning("Invalid JSON in LLM narrative response")
+        return {"narrative_text": raw[:5000], "key_claims": [], "image_prompts": []}
 
     async def synthesize_chapter(
         self, session: AsyncSession, chapter: CanonicalChapter, prior_narrative: str | None = None
@@ -355,7 +389,7 @@ class NarrativeSynthesizer:
         """Generate the narrative for a single chapter."""
         ctx = await self._gather_chapter_context(session, chapter, prior_narrative)
         prompt = self._build_narrative_prompt(ctx)
-        result = await self._call_deepseek(prompt)
+        result = await self._call_llm(prompt)
 
         narrative = result.get("narrative_text", "")
         claims = result.get("key_claims", [])
@@ -387,11 +421,26 @@ class NarrativeSynthesizer:
         session.add(story)
         return story
 
-    async def run_full_synthesis(self, session: AsyncSession) -> dict:
-        """Generate narrative for all chapters in epoch/chapter order."""
+    async def run_full_synthesis(
+        self,
+        session: AsyncSession,
+        *,
+        epoch_orders: list[int] | None = None,
+        max_chapters: int | None = None,
+        skip_existing: bool = False,
+    ) -> dict:
+        """Generate narrative for chapters in epoch/chapter order.
+
+        Args:
+            epoch_orders: limit to specific epoch_order values (e.g. [0,1,2,3])
+            max_chapters: stop after this many chapters
+            skip_existing: if True, skip chapters that already have a StoryChapter
+        """
         epochs_q = select(CanonicalEpoch).where(
             CanonicalEpoch.is_current.is_(True)
         ).order_by(CanonicalEpoch.epoch_order)
+        if epoch_orders is not None:
+            epochs_q = epochs_q.where(CanonicalEpoch.epoch_order.in_(epoch_orders))
         epochs = (await session.execute(epochs_q)).scalars().all()
 
         total_chapters = 0
@@ -406,13 +455,33 @@ class NarrativeSynthesizer:
             chapters = (await session.execute(chapters_q)).scalars().all()
 
             for ch in chapters:
-                logger.info("Synthesizing narrative: %s", ch.title)
+                if max_chapters is not None and total_chapters >= max_chapters:
+                    break
+
+                if skip_existing:
+                    existing = (await session.execute(
+                        select(StoryChapter.id).where(StoryChapter.chapter_id == ch.id).limit(1)
+                    )).scalar_one_or_none()
+                    if existing:
+                        sv = (await session.execute(
+                            select(StoryChapter.narrative_text).where(StoryChapter.chapter_id == ch.id)
+                            .order_by(StoryChapter.synthesis_version.desc()).limit(1)
+                        )).scalar_one_or_none()
+                        if sv:
+                            prior_narrative = sv
+                        continue
+
+                logger.info("Synthesizing [%d/%s] %s", total_chapters + 1, max_chapters or "all", ch.title)
                 story = await self.synthesize_chapter(session, ch, prior_narrative)
                 prior_narrative = story.narrative_text
                 total_chapters += 1
                 total_words += story.word_count or 0
-                await session.flush()
 
-        await session.flush()
+                await session.commit()
+                logger.info("  → committed chapter %d (%d words)", total_chapters, story.word_count or 0)
+
+            if max_chapters is not None and total_chapters >= max_chapters:
+                break
+
         logger.info("Synthesized %d chapters, ~%d words total", total_chapters, total_words)
         return {"chapters_synthesized": total_chapters, "total_words": total_words}
