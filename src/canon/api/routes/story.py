@@ -406,6 +406,8 @@ async def get_culture_variants(
             continue
         # Strip trailing " Tradition" that may remain
         cname = _re.sub(r'\s+Tradition$', '', cname).strip()
+        if not cname or len(cname) < 2 or cname.startswith('<'):
+            continue
         cultures[cname] = cultures.get(cname, 0) + 1
 
     if q:
