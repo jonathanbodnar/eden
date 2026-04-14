@@ -166,7 +166,7 @@ class NarrativeSynthesizer:
     # -----------------------------------------------------------------------
 
     async def plan_epoch_outline(
-        self, session: AsyncSession, epoch: CanonicalEpoch
+        self, _session: AsyncSession | None, epoch: CanonicalEpoch
     ) -> list[StoryOutline]:
         """Use DeepSeek to design unified thematic chapters for one epoch.
 
@@ -177,12 +177,13 @@ class NarrativeSynthesizer:
 
         logger.info("Planning outline for epoch: %s", epoch.title)
 
-        # Phase A: Read data (fast DB queries, then release connection)
-        summary = await self._build_epoch_summary(session, epoch)
+        # Phase A: Read data in a short-lived session
         epoch_id = epoch.id
         epoch_title = epoch.title
         time_start = epoch.time_start
         time_end = epoch.time_end
+        async with async_session_factory() as read_session:
+            summary = await self._build_epoch_summary(read_session, epoch)
 
         prompt = f"""# EPOCH: {epoch_title}
 Time range: {time_start or 'Mythological/undated'} to {time_end or 'Mythological/undated'}
@@ -238,7 +239,6 @@ Design 5-15 thematic chapters that weave ALL these cultures and traditions toget
         """Plan outlines for all (or selected) epochs."""
         from src.canon.database import async_session_factory
 
-        # Load epochs in a quick read session
         async with async_session_factory() as read_session:
             q = select(CanonicalEpoch).where(
                 CanonicalEpoch.is_current.is_(True)
@@ -249,9 +249,8 @@ Design 5-15 thematic chapters that weave ALL these cultures and traditions toget
 
         total = 0
         for epoch in epochs:
-            async with async_session_factory() as epoch_session:
-                outlines = await self.plan_epoch_outline(epoch_session, epoch)
-                total += len(outlines)
+            outlines = await self.plan_epoch_outline(None, epoch)
+            total += len(outlines)
 
         return {"epochs_planned": len(epochs), "total_chapters_planned": total}
 
@@ -346,7 +345,7 @@ Design 5-15 thematic chapters that weave ALL these cultures and traditions toget
 
     async def synthesize_unified_chapter(
         self,
-        session: AsyncSession,
+        _session: AsyncSession | None,
         outline: StoryOutline,
         epoch: CanonicalEpoch,
         prior_narrative: str | None = None,
@@ -359,7 +358,8 @@ Design 5-15 thematic chapters that weave ALL these cultures and traditions toget
         from src.canon.database import async_session_factory
 
         # Phase A: Build prompt (read DB, then release connection)
-        prompt = await self._build_unified_prompt(session, outline, epoch, prior_narrative)
+        async with async_session_factory() as read_session:
+            prompt = await self._build_unified_prompt(read_session, outline, epoch, prior_narrative)
         outline_id = outline.id
         epoch_id = epoch.id
 
@@ -511,8 +511,7 @@ Design 5-15 thematic chapters that weave ALL these cultures and traditions toget
                             continue
 
                 logger.info("Synthesizing [%d] %s / %s", total_chapters + 1, epoch.title, outline.title)
-                async with async_session_factory() as synth_session:
-                    story = await self.synthesize_unified_chapter(synth_session, outline, epoch, prior_narrative)
+                story = await self.synthesize_unified_chapter(None, outline, epoch, prior_narrative)
                 prior_narrative = story.narrative_text
                 total_chapters += 1
                 total_words += story.word_count or 0
