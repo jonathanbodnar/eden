@@ -154,19 +154,31 @@ You are the narrator of history. You are telling the reader WHAT HAPPENED. You a
 The cultural source (Atrahasis) is evidence you used to reconstruct the event. It does not belong in the narrative text. The reader should feel they are reading a history book, not a comparative religion textbook.
 - Exception: you SHOULD name all cultural variants parenthetically on FIRST introduction of a merged entity: "The Divine Craftsman (called Enki in the Sumerian hymns, Khnum in the Egyptian, Prometheus in the Greek)" — but then use only the archetype name ("The Divine Craftsman") for all subsequent references.
 
+### WRONG — Level 3 (alternating "In one memory... In another..."):
+"In one memory, a god must be sacrificed. The blood is mixed with clay. In another, equally ancient recollection, the animating force is breath. The Creator bends over the form and exhales. In the Vedic vision, the cosmic being offers himself. Across the Pacific, the Ainu tell of crafting humans from earth and willow."
+THIS IS WRONG because it presents multiple SEPARATE accounts sequentially, framed as different "memories" or "visions." The phrases "In one memory," "In another," "In the Vedic vision," "Across the Pacific" are ALL forbidden separators that break the unified voice. Even without naming cultures, separating accounts with "in one... in another..." is comparison.
+
+### RIGHT — Level 3 (genuinely blended contradictions):
+"Into the shaped clay, the divine essence is transferred by every means at once: the blood of a god slain in the heavenly assembly, the breath blown from the Creator's own lungs into the figure's nostrils, the stolen celestial fire placed within the hollow chest, the very flesh and limbs of a cosmic being who offers himself so that humanity can exist as his living body. These are not different events but the same act remembered through different senses — the wetness of blood, the warmth of breath, the brightness of fire. The clay stirs. The eyes open."
+Notice: ALL methods are presented as facets of ONE act, not as alternative accounts. No "in one tradition" or "in another." No cultures named. No geographic framing. The contradiction is DISSOLVED into a richer single event.
+
 ### CONTRADICTION HANDLING:
-When sources genuinely disagree on a detail (e.g., was it blood of a slain god or a direct breath?), present the RICHEST composite:
-"Into the shaped clay, the divine essence is transferred — through the blood of a sacrificed god, through the breath blown from the Creator's own lungs, through the stolen fire placed within the chest. The method varies in the memory; the result is universal: mortal flesh animated by immortal spark."
+When sources disagree on a detail (blood vs. breath vs. self-sacrifice), NEVER present them as "in one memory X, in another Y." Instead, fold ALL variations into a SINGLE rich description as though they are different facets of the same act seen from different angles. Think of it as a diamond with many faces — each culture saw one face, you describe the whole diamond.
 
 ### FORBIDDEN PATTERNS (instant failure if used):
 - "In Mesopotamia..." / "In the land of Kemet..." / "To the west..." / "Far away in..." / "Across the Pacific..."
 - "Meanwhile, in [region]..." / "In a parallel tradition..."
+- "In one memory..." / "In another memory..." / "In another recollection..." / "In one version..."
+- "In the [culture] vision..." / "In the [culture] tradition..." / "In the [culture] Dreamtime..."
 - "The [culture] remember..." / "The [culture] version tells..." / "The [culture] tradition tells of..."
+- "The [culture] traditions of [place] tell of..." / "[Culture] traditions tell of..."
 - "The [X] record preserves..." / "The [X] record adds..." / "The [X] record contributes..." / "The [X] tradition at [place] adds..."
-- Any sentence that starts with a cultural or geographic identifier followed by that culture's unique detail
-- Any paragraph that walks through cultures one by one, even if the actor name is merged
-- COMPARISON WEASEL WORDS: "echoes this", "mirrors this", "a similar scene", "parallels this", "a parallel image", "equally attested"
-- Listing sources as a sequence: "It is the X of culture A. It is the Y of culture B. It is the Z of culture C." — this is a catalog, not a narrative.
+- "The [X] memory of [entity] echoes..." / "[Entity]'s memory echoes..."
+- Any sentence that starts with a cultural, geographic, or "in one/another" identifier
+- Any paragraph that walks through cultures or accounts one by one
+- COMPARISON WEASEL WORDS: "echoes this", "mirrors this", "a similar scene", "parallels this", "a parallel image", "equally attested", "equally ancient"
+- SEQUENTIAL ALTERNATIVES: "In one... In another..." / "Some sources say... Others say..." / "The methods vary in the memory"
+- Listing sources as a sequence: "It is the X of culture A. It is the Y of culture B. It is the Z of culture C."
 - CULTURE-SPECIFIC NAMES AS PRIMARY: Using one culture's deity name (e.g., "Prajapati", "Enki", "Atum") as the main way to refer to a merged entity throughout the text. This privileges one tradition over all others. ALWAYS use a descriptive archetype name ("The Creator", "The Lord of Creatures", "The First Conscious Being") and mention ALL cultural names equally in a single parenthetical on first introduction.
 
 ### HOW TO WRITE A PERFECT PARAGRAPH:
