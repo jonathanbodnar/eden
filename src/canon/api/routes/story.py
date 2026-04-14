@@ -34,7 +34,7 @@ router = APIRouter()
 _CULTURE_HINTS = [
     (["yahweh", "yhwh", "elohim", "hebrew", "israel", "moses", "adam", "eve", "noah", "abraham"], "Hebrew / Israelite"),
     (["enki", "enlil", "anu", "marduk", "tiamat", "apsu", "gilgamesh", "sumerian", "akkadian", "babylonian", "mesopotami"], "Mesopotamian"),
-    (["ra", "atum", "osiris", "isis", "horus", "thoth", "ptah", "khnum", "egyptian", "kemet", "pharaoh"], "Ancient Egyptian"),
+    (["atum", "osiris", "isis", "horus", "thoth", "ptah", "khnum", "egyptian", "kemet", "pharaoh"], "Ancient Egyptian"),
     (["brahma", "vishnu", "shiva", "prajapati", "purusha", "vedic", "hindu", "sanskrit", "indra", "agni"], "Vedic / Hindu"),
     (["zeus", "prometheus", "athena", "apollo", "greek", "olymp", "titan", "hesiod", "homer"], "Greek"),
     (["odin", "thor", "freya", "norse", "ymir", "asgard", "edda"], "Norse / Germanic"),
@@ -48,6 +48,11 @@ _CULTURE_HINTS = [
 ]
 
 
+_WORD_BOUNDARY_RE = re.compile(r'\b(?:' + '|'.join([
+    'ra',
+]) + r')\b', re.IGNORECASE)
+
+
 def _infer_culture_from_entity(name: str, summary: str) -> list[str]:
     """Best-effort culture inference from entity name/summary when DB has no culture data."""
     combined = f"{name} {summary}".lower()
@@ -55,6 +60,9 @@ def _infer_culture_from_entity(name: str, summary: str) -> list[str]:
     for keywords, culture in _CULTURE_HINTS:
         if any(kw in combined for kw in keywords):
             cultures.append(culture)
+    if _WORD_BOUNDARY_RE.search(f"{name} {summary}"):
+        if "Ancient Egyptian" not in cultures:
+            cultures.append("Ancient Egyptian")
     return cultures
 
 
