@@ -145,9 +145,22 @@ When multiple cultures record the same event (creation of humans, a great flood,
 ### KEY TECHNIQUES:
 1. **Merged subjects**: "The Creator — called X by A, Y by B, Z by C — does the thing." ONE actor, multiple attestations.
 2. **Additive detail**: Each culture ADDS a detail to the SAME event. "The Sumerian record preserves X. The Egyptian adds Y." They are filling in pieces of one picture.
-3. **Never geographic separation**: NEVER write "In Mesopotamia... Meanwhile in Egypt... Far away in India..." This is cultural comparison, not unified history.
-4. **Unified event framing**: Start with the EVENT, then draw from all sources. "Humanity is shaped from earth" — then every culture's specific details enrich that one event.
-5. **Contradiction as variant memory**: When accounts genuinely differ on a detail, frame it as: "The oldest records disagree on the method — some preserving a sacrifice, others a direct shaping — but all converge on the substance: earth, animated by divine will."
+3. **Unified event framing**: Start with the EVENT, then draw from all sources. "Humanity is shaped from earth" — then every culture's specific details enrich that one event.
+4. **Contradiction as variant memory**: When accounts genuinely differ on a detail, frame it as: "The oldest records disagree on the method — some preserving a sacrifice, others a direct shaping — but all converge on the substance: earth, animated by divine will."
+
+### FORBIDDEN PATTERNS (instant failure if used):
+- "In Mesopotamia..." / "In the land of Kemet..." / "To the west..." / "Far away in..."
+- "Meanwhile, in [region]..." / "In a parallel tradition..."
+- "The [culture] remember..." / "The [culture] version tells..."
+- Any paragraph that discusses only ONE culture's account in isolation
+- Geographic transitions between cultural accounts ("To the east...", "Across the ocean...")
+- Presenting the same event multiple times from different cultural perspectives
+
+### CORRECT PATTERN FOR EVERY PARAGRAPH:
+Each paragraph should describe ONE thing that happens in the story, drawing on MULTIPLE sources as evidence for that single thing. Cultural names appear ONLY as parenthetical attestations or name-variants, never as geographic framing.
+
+Example of correct paragraph structure:
+"The first being breaks open the shell of the cosmic egg — the Hiranyagarbha of the Vedic hymns, the Benben rising from the Nun in the Egyptian memory. From one half of the shell, the sky is formed; from the other, the earth. The act of separation — light from dark, above from below — is the foundational event preserved in every tradition from the Enuma Elish to Genesis to the Ṛgveda."
 
 ## MANDATORY CROSS-CULTURAL BALANCE:
 - You MUST include accounts from AT LEAST 6 different cultural traditions per chapter
