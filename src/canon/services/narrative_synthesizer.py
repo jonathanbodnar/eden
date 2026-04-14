@@ -168,70 +168,90 @@ class NarrativeSynthesizer:
     async def plan_epoch_outline(
         self, session: AsyncSession, epoch: CanonicalEpoch
     ) -> list[StoryOutline]:
-        """Use DeepSeek to design unified thematic chapters for one epoch."""
+        """Use DeepSeek to design unified thematic chapters for one epoch.
+
+        Uses separate DB sessions for read and write to avoid connection
+        timeouts during the long DeepSeek API call (up to 3 minutes).
+        """
+        from src.canon.database import async_session_factory
+
         logger.info("Planning outline for epoch: %s", epoch.title)
 
+        # Phase A: Read data (fast DB queries, then release connection)
         summary = await self._build_epoch_summary(session, epoch)
-        prompt = f"""# EPOCH: {epoch.title}
-Time range: {epoch.time_start or 'Mythological/undated'} to {epoch.time_end or 'Mythological/undated'}
+        epoch_id = epoch.id
+        epoch_title = epoch.title
+        time_start = epoch.time_start
+        time_end = epoch.time_end
+
+        prompt = f"""# EPOCH: {epoch_title}
+Time range: {time_start or 'Mythological/undated'} to {time_end or 'Mythological/undated'}
 
 {summary}
 
 Design 5-15 thematic chapters that weave ALL these cultures and traditions together into a unified narrative for this epoch."""
 
+        # Phase B: Call DeepSeek (no DB connection held)
         result = await self._call_deepseek(prompt, system=PLANNER_SYSTEM_PROMPT)
         chapters_data = result.get("chapters", [])
 
         if not chapters_data:
-            logger.warning("No chapters planned for epoch %s", epoch.title)
+            logger.warning("No chapters planned for epoch %s", epoch_title)
             return []
 
-        # Clear existing outlines for this epoch
-        await session.execute(
-            text("DELETE FROM story_chapters WHERE story_outline_id IN (SELECT id FROM story_outlines WHERE epoch_id = :eid)"),
-            {"eid": str(epoch.id)},
-        )
-        await session.execute(
-            text("DELETE FROM story_outlines WHERE epoch_id = :eid"),
-            {"eid": str(epoch.id)},
-        )
-
-        outlines = []
-        for ch in chapters_data:
-            outline = StoryOutline(
-                id=uuid.uuid4(),
-                epoch_id=epoch.id,
-                chapter_number=ch.get("chapter_number", len(outlines) + 1),
-                title=ch.get("title", f"Chapter {len(outlines) + 1}"),
-                summary=ch.get("summary", ""),
-                themes=ch.get("themes", []),
-                time_hint=ch.get("time_hint"),
-                scope=ch.get("scope", "universal"),
-                regions=ch.get("regions"),
-                outline_version=1,
+        # Phase C: Write results using a fresh session
+        async with async_session_factory() as write_session:
+            await write_session.execute(
+                text("DELETE FROM story_chapters WHERE story_outline_id IN (SELECT id FROM story_outlines WHERE epoch_id = :eid)"),
+                {"eid": str(epoch_id)},
             )
-            session.add(outline)
-            outlines.append(outline)
+            await write_session.execute(
+                text("DELETE FROM story_outlines WHERE epoch_id = :eid"),
+                {"eid": str(epoch_id)},
+            )
 
-        await session.commit()
-        logger.info("Planned %d chapters for epoch: %s", len(outlines), epoch.title)
+            outlines = []
+            for ch in chapters_data:
+                outline = StoryOutline(
+                    id=uuid.uuid4(),
+                    epoch_id=epoch_id,
+                    chapter_number=ch.get("chapter_number", len(outlines) + 1),
+                    title=ch.get("title", f"Chapter {len(outlines) + 1}"),
+                    summary=ch.get("summary", ""),
+                    themes=ch.get("themes", []),
+                    time_hint=ch.get("time_hint"),
+                    scope=ch.get("scope", "universal"),
+                    regions=ch.get("regions"),
+                    outline_version=1,
+                )
+                write_session.add(outline)
+                outlines.append(outline)
+
+            await write_session.commit()
+
+        logger.info("Planned %d chapters for epoch: %s", len(outlines), epoch_title)
         return outlines
 
     async def plan_all_epochs(
         self, session: AsyncSession, *, epoch_orders: list[int] | None = None
     ) -> dict:
         """Plan outlines for all (or selected) epochs."""
-        q = select(CanonicalEpoch).where(
-            CanonicalEpoch.is_current.is_(True)
-        ).order_by(CanonicalEpoch.epoch_order)
-        if epoch_orders is not None:
-            q = q.where(CanonicalEpoch.epoch_order.in_(epoch_orders))
-        epochs = (await session.execute(q)).scalars().all()
+        from src.canon.database import async_session_factory
+
+        # Load epochs in a quick read session
+        async with async_session_factory() as read_session:
+            q = select(CanonicalEpoch).where(
+                CanonicalEpoch.is_current.is_(True)
+            ).order_by(CanonicalEpoch.epoch_order)
+            if epoch_orders is not None:
+                q = q.where(CanonicalEpoch.epoch_order.in_(epoch_orders))
+            epochs = list((await read_session.execute(q)).scalars().all())
 
         total = 0
         for epoch in epochs:
-            outlines = await self.plan_epoch_outline(session, epoch)
-            total += len(outlines)
+            async with async_session_factory() as epoch_session:
+                outlines = await self.plan_epoch_outline(epoch_session, epoch)
+                total += len(outlines)
 
         return {"epochs_planned": len(epochs), "total_chapters_planned": total}
 
@@ -331,8 +351,19 @@ Design 5-15 thematic chapters that weave ALL these cultures and traditions toget
         epoch: CanonicalEpoch,
         prior_narrative: str | None = None,
     ) -> StoryChapter:
-        """Generate unified cross-cultural narrative for one planned chapter."""
+        """Generate unified cross-cultural narrative for one planned chapter.
+
+        Uses separate sessions to avoid DB connection timeouts during
+        the long DeepSeek API call.
+        """
+        from src.canon.database import async_session_factory
+
+        # Phase A: Build prompt (read DB, then release connection)
         prompt = await self._build_unified_prompt(session, outline, epoch, prior_narrative)
+        outline_id = outline.id
+        epoch_id = epoch.id
+
+        # Phase B: Call DeepSeek (no DB connection held)
         result = await self._call_deepseek(prompt, system=NARRATIVE_SYSTEM_PROMPT)
 
         narrative = result.get("narrative_text", "")
@@ -340,38 +371,40 @@ Design 5-15 thematic chapters that weave ALL these cultures and traditions toget
         image_prompts = result.get("image_prompts", [])
         entity_mentions = result.get("entity_mentions", [])
 
-        # Resolve entity mentions to canonical IDs where possible
-        resolved_mentions = await self._resolve_entity_mentions(session, entity_mentions)
+        # Phase C: Write results with fresh session
+        async with async_session_factory() as write_session:
+            resolved_mentions = await self._resolve_entity_mentions(write_session, entity_mentions)
 
-        # Update existing or create new
-        existing_q = select(StoryChapter).where(
-            StoryChapter.story_outline_id == outline.id
-        ).order_by(StoryChapter.synthesis_version.desc()).limit(1)
-        existing = (await session.execute(existing_q)).scalar_one_or_none()
+            existing_q = select(StoryChapter).where(
+                StoryChapter.story_outline_id == outline_id
+            ).order_by(StoryChapter.synthesis_version.desc()).limit(1)
+            existing = (await write_session.execute(existing_q)).scalar_one_or_none()
 
-        if existing:
-            existing.narrative_text = narrative
-            existing.claims_json = claims
-            existing.image_prompts_json = image_prompts
-            existing.entity_mentions_json = resolved_mentions
-            existing.word_count = len(narrative.split())
-            existing.synthesis_version += 1
-            return existing
+            if existing:
+                existing.narrative_text = narrative
+                existing.claims_json = claims
+                existing.image_prompts_json = image_prompts
+                existing.entity_mentions_json = resolved_mentions
+                existing.word_count = len(narrative.split())
+                existing.synthesis_version += 1
+                await write_session.commit()
+                return existing
 
-        story = StoryChapter(
-            id=uuid.uuid4(),
-            story_outline_id=outline.id,
-            chapter_id=None,
-            epoch_id=epoch.id,
-            narrative_text=narrative,
-            claims_json=claims,
-            image_prompts_json=image_prompts,
-            entity_mentions_json=resolved_mentions,
-            synthesis_version=1,
-            word_count=len(narrative.split()),
-        )
-        session.add(story)
-        return story
+            story = StoryChapter(
+                id=uuid.uuid4(),
+                story_outline_id=outline_id,
+                chapter_id=None,
+                epoch_id=epoch_id,
+                narrative_text=narrative,
+                claims_json=claims,
+                image_prompts_json=image_prompts,
+                entity_mentions_json=resolved_mentions,
+                synthesis_version=1,
+                word_count=len(narrative.split()),
+            )
+            write_session.add(story)
+            await write_session.commit()
+            return story
 
     async def _resolve_entity_mentions(
         self, session: AsyncSession, mentions: list[dict]
@@ -426,52 +459,64 @@ Design 5-15 thematic chapters that weave ALL these cultures and traditions toget
         epoch_orders: list[int] | None = None,
         skip_existing: bool = False,
     ) -> dict:
-        """Generate narrative for all planned outline chapters. Commits after each."""
-        q = select(CanonicalEpoch).where(
-            CanonicalEpoch.is_current.is_(True)
-        ).order_by(CanonicalEpoch.epoch_order)
-        if epoch_orders is not None:
-            q = q.where(CanonicalEpoch.epoch_order.in_(epoch_orders))
-        epochs = (await session.execute(q)).scalars().all()
+        """Generate narrative for all planned outline chapters.
+
+        Each chapter gets its own fresh sessions to avoid connection
+        timeouts during long DeepSeek calls.
+        """
+        from src.canon.database import async_session_factory
+
+        # Load all epochs + outlines quickly, then release connection
+        async with async_session_factory() as read_session:
+            q = select(CanonicalEpoch).where(
+                CanonicalEpoch.is_current.is_(True)
+            ).order_by(CanonicalEpoch.epoch_order)
+            if epoch_orders is not None:
+                q = q.where(CanonicalEpoch.epoch_order.in_(epoch_orders))
+            epochs = list((await read_session.execute(q)).scalars().all())
+
+            epoch_outlines: list[tuple[CanonicalEpoch, list[StoryOutline]]] = []
+            for epoch in epochs:
+                outlines_q = select(StoryOutline).where(
+                    StoryOutline.epoch_id == epoch.id
+                ).order_by(StoryOutline.chapter_number)
+                outlines = list((await read_session.execute(outlines_q)).scalars().all())
+                epoch_outlines.append((epoch, outlines))
 
         total_chapters = 0
         total_words = 0
         prior_narrative: str | None = None
 
-        for epoch in epochs:
-            outlines_q = select(StoryOutline).where(
-                StoryOutline.epoch_id == epoch.id
-            ).order_by(StoryOutline.chapter_number)
-            outlines = (await session.execute(outlines_q)).scalars().all()
-
+        for epoch, outlines in epoch_outlines:
             if not outlines:
                 logger.warning("No outlines for epoch %s — run plan_all_epochs first", epoch.title)
                 continue
 
             for outline in outlines:
                 if skip_existing:
-                    ex = (await session.execute(
-                        select(StoryChapter.id).where(
-                            StoryChapter.story_outline_id == outline.id
-                        ).limit(1)
-                    )).scalar_one_or_none()
-                    if ex:
-                        sv = (await session.execute(
-                            select(StoryChapter.narrative_text).where(
+                    async with async_session_factory() as check_session:
+                        ex = (await check_session.execute(
+                            select(StoryChapter.id).where(
                                 StoryChapter.story_outline_id == outline.id
-                            ).order_by(StoryChapter.synthesis_version.desc()).limit(1)
+                            ).limit(1)
                         )).scalar_one_or_none()
-                        if sv:
-                            prior_narrative = sv
-                        continue
+                        if ex:
+                            sv = (await check_session.execute(
+                                select(StoryChapter.narrative_text).where(
+                                    StoryChapter.story_outline_id == outline.id
+                                ).order_by(StoryChapter.synthesis_version.desc()).limit(1)
+                            )).scalar_one_or_none()
+                            if sv:
+                                prior_narrative = sv
+                            continue
 
                 logger.info("Synthesizing [%d] %s / %s", total_chapters + 1, epoch.title, outline.title)
-                story = await self.synthesize_unified_chapter(session, outline, epoch, prior_narrative)
+                async with async_session_factory() as synth_session:
+                    story = await self.synthesize_unified_chapter(synth_session, outline, epoch, prior_narrative)
                 prior_narrative = story.narrative_text
                 total_chapters += 1
                 total_words += story.word_count or 0
 
-                await session.commit()
                 logger.info("  → committed chapter %d: '%s' (%d words)", total_chapters, outline.title, story.word_count or 0)
 
         logger.info("Synthesized %d unified chapters, ~%d words total", total_chapters, total_words)
