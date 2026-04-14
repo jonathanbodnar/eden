@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { api } from '../api'
 import type { StoryChapter, StoryEpoch, StoryEvidence } from '../api'
 import BookNav from '../components/story/BookNav'
@@ -10,6 +10,9 @@ export default function StoryModeLayout() {
   const [chapters, setChapters] = useState<StoryChapter[]>([])
   const [activeChapterId, setActiveChapterId] = useState<string | null>(null)
   const [evidence, setEvidence] = useState<StoryEvidence[]>([])
+  const [selectedEntity, setSelectedEntity] = useState<{
+    entityType: string; entityId: string; entityName: string
+  } | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -25,10 +28,19 @@ export default function StoryModeLayout() {
 
   useEffect(() => {
     if (!activeChapterId) return
+    setSelectedEntity(null)
     api.getStoryChapterEvidence(activeChapterId)
       .then(setEvidence)
       .catch(() => setEvidence([]))
   }, [activeChapterId])
+
+  const handleEntityClick = useCallback((entityType: string, entityId: string, entityName: string) => {
+    setSelectedEntity({ entityType, entityId, entityName })
+  }, [])
+
+  const handleClearEntity = useCallback(() => {
+    setSelectedEntity(null)
+  }, [])
 
   const activeChapter = chapters.find(c => c.id === activeChapterId) || null
 
@@ -76,10 +88,13 @@ export default function StoryModeLayout() {
         chapters={chapters}
         activeChapterId={activeChapterId}
         onChapterInView={setActiveChapterId}
+        onEntityClick={handleEntityClick}
       />
       <EvidencePanel
         chapter={activeChapter}
         evidence={evidence}
+        selectedEntity={selectedEntity}
+        onClearEntity={handleClearEntity}
       />
     </div>
   )

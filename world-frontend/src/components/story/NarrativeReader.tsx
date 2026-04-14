@@ -1,16 +1,75 @@
-import { useRef, useEffect, useCallback } from 'react'
-import type { StoryChapter } from '../../api'
+import { useRef, useEffect, useCallback, useMemo } from 'react'
+import type { StoryChapter, EntityMention } from '../../api'
 
 interface Props {
   chapters: StoryChapter[]
   activeChapterId: string | null
   onChapterInView: (id: string) => void
+  onEntityClick?: (entityType: string, entityId: string, entityName: string) => void
 }
 
-function formatDate(y: number | null): string {
-  if (y === null) return ''
-  if (y < 0) return `${Math.abs(y)} BCE`
-  return `${y} CE`
+const ENTITY_COLORS: Record<string, string> = {
+  actor: 'var(--gold)',
+  event: '#7eb8da',
+  place: '#a8d5a2',
+}
+
+function parseNarrativeWithEntities(
+  text: string,
+  mentions: EntityMention[],
+  onEntityClick?: (entityType: string, entityId: string, entityName: string) => void,
+) {
+  const mentionMap = new Map<string, EntityMention>()
+  for (const m of mentions) {
+    mentionMap.set(`${m.type}:${m.name}`.toLowerCase(), m)
+  }
+
+  const pattern = /\[\[(actor|event|place):([^\]]+)\]\]/g
+  const parts: Array<{ type: 'text'; content: string } | { type: 'entity'; entityType: string; name: string; mention: EntityMention | null }> = []
+  let lastIndex = 0
+
+  let match: RegExpExecArray | null
+  while ((match = pattern.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push({ type: 'text', content: text.slice(lastIndex, match.index) })
+    }
+    const entityType = match[1]
+    const entityName = match[2]
+    const mention = mentionMap.get(`${entityType}:${entityName}`.toLowerCase()) || null
+    parts.push({ type: 'entity', entityType, name: entityName, mention })
+    lastIndex = match.index + match[0].length
+  }
+  if (lastIndex < text.length) {
+    parts.push({ type: 'text', content: text.slice(lastIndex) })
+  }
+
+  return parts.map((part, i) => {
+    if (part.type === 'text') return <span key={i}>{part.content}</span>
+    const color = ENTITY_COLORS[part.entityType] || 'var(--gold)'
+    const hasId = part.mention?.canonical_id
+    const aka = part.mention?.also_known_as
+    const tooltip = aka && aka.length > 0
+      ? `${part.name} (also: ${aka.join(', ')})`
+      : part.name
+    return (
+      <span
+        key={i}
+        title={tooltip}
+        onClick={hasId && onEntityClick ? () => onEntityClick(part.entityType, part.mention!.canonical_id!, part.name) : undefined}
+        style={{
+          color,
+          fontWeight: 600,
+          cursor: hasId ? 'pointer' : 'default',
+          borderBottom: hasId ? `1px dotted ${color}` : 'none',
+          transition: 'opacity 0.15s',
+        }}
+        onMouseOver={e => { if (hasId) (e.target as HTMLElement).style.opacity = '0.8' }}
+        onMouseOut={e => { (e.target as HTMLElement).style.opacity = '1' }}
+      >
+        {part.name}
+      </span>
+    )
+  })
 }
 
 function ClaimIndicator({ cultures, score }: { cultures: string[]; score: number }) {
@@ -32,7 +91,7 @@ function ClaimIndicator({ cultures, score }: { cultures: string[]; score: number
   )
 }
 
-export default function NarrativeReader({ chapters, activeChapterId, onChapterInView }: Props) {
+export default function NarrativeReader({ chapters, activeChapterId, onChapterInView, onEntityClick }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const chapterRefs = useRef<Map<string, HTMLDivElement>>(new Map())
   const userScrolling = useRef(false)
@@ -73,6 +132,20 @@ export default function NarrativeReader({ chapters, activeChapterId, onChapterIn
     setTimeout(() => { userScrolling.current = false }, 500)
   }, [activeChapterId, onChapterInView])
 
+  const epochPartNumbers = useMemo(() => {
+    let partNum = 0
+    let lastEpochId: string | null = null
+    const map = new Map<string, number>()
+    for (const ch of chapters) {
+      if (ch.epoch_id !== lastEpochId) {
+        partNum++
+        lastEpochId = ch.epoch_id
+      }
+      map.set(ch.id, partNum)
+    }
+    return map
+  }, [chapters])
+
   return (
     <div
       ref={scrollRef}
@@ -108,7 +181,7 @@ export default function NarrativeReader({ chapters, activeChapterId, onChapterIn
                     color: 'var(--gold)',
                     marginBottom: 8,
                   }}>
-                    Part {chapters.filter((c, i) => i <= idx && c.epoch_id !== (i > 0 ? chapters[i - 1].epoch_id : null)).length}
+                    Part {epochPartNumbers.get(ch.id) || ''}
                   </div>
                   <h1 style={{
                     fontSize: 28,
@@ -132,9 +205,14 @@ export default function NarrativeReader({ chapters, activeChapterId, onChapterIn
                 }}>
                   {ch.chapter_title}
                 </h2>
-                {(ch.time_start !== null || ch.time_end !== null) && (
+                {ch.time_hint && (
                   <div style={{ fontSize: 13, color: 'var(--gold)', fontWeight: 500 }}>
-                    {formatDate(ch.time_start)}{ch.time_end !== null && ch.time_start !== ch.time_end ? ` — ${formatDate(ch.time_end)}` : ''}
+                    {ch.time_hint}
+                  </div>
+                )}
+                {ch.chapter_summary && (
+                  <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4, fontStyle: 'italic', lineHeight: 1.5 }}>
+                    {ch.chapter_summary}
                   </div>
                 )}
               </div>
@@ -167,7 +245,7 @@ export default function NarrativeReader({ chapters, activeChapterId, onChapterIn
               }}>
                 {ch.narrative_text.split('\n\n').map((para, pIdx) => (
                   <p key={pIdx} style={{ marginBottom: 20, textIndent: pIdx > 0 ? 24 : 0 }}>
-                    {para}
+                    {parseNarrativeWithEntities(para, ch.entity_mentions || [], onEntityClick)}
                   </p>
                 ))}
               </div>

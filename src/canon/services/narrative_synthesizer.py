@@ -1,8 +1,11 @@
 """Narrative Synthesizer: generates the unified ancient history narrative using DeepSeek.
 
-Implements all 16 Laws of Synthesis to produce a single, continuous, source-backed
-narrative across all epochs and chapters. Each chapter is generated sequentially so
-the prior chapter's text provides narrative continuity (Law 10, 12).
+Two-phase approach:
+  Phase 1 — Plan: DeepSeek designs thematic chapters per epoch from ALL cross-cultural data.
+  Phase 2 — Write: For each planned chapter, DeepSeek generates a unified narrative that
+            weaves all cultures together, governed by the 16 Laws of Synthesis.
+
+Each chapter is committed to the DB immediately so the frontend can show live progress.
 """
 
 from __future__ import annotations
@@ -26,12 +29,62 @@ from src.canon.models.canon_dependency import CanonDependency
 from src.canon.models.canon_score import CanonScore
 from src.canon.models.canon_support_link import CanonSupportLink
 from src.canon.models.enums import CanonicalType
-from src.canon.models.narration_packet import NarrationPacket
 from src.canon.models.story_chapter import StoryChapter
-from src.canon.models.world_packet import WorldPacket
+from src.canon.models.story_outline import StoryOutline
 from src.canon.models.system_a import SASourceRecord, SASourceVersion
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# System prompts
+# ---------------------------------------------------------------------------
+
+PLANNER_SYSTEM_PROMPT = """You are the architect of a unified ancient world history — an alternative bible woven from every surviving tradition on Earth.
+
+You are designing the TABLE OF CONTENTS for one epoch of this history. You will receive a summary of ALL entities, themes, and source traditions from this epoch across every culture on the planet.
+
+Your job is to organize this into 5-15 thematic chapters that tell a unified narrative.
+
+## STRUCTURE RULES:
+
+### For EARLY EPOCHS (Creation, Age of Gods, Flood, Dawn of Civilization):
+These epochs describe universal events that virtually all cultures share memories of. The chapters must be FULLY UNIFIED — weaving all cultures together around shared themes:
+- Creation from void/chaos → multiple cultures merged into one telling
+- Gods/sky beings descend → Sumerian, Hebrew, Hindu, etc. merged
+- Creation of mankind → clay/earth/breath traditions woven together
+- The flood → one chapter weaving ALL flood accounts
+
+### For LATER EPOCHS (Rise of Cities, Age of Empires, Heroes, Iron Age, Classical):
+As history progresses, cultures genuinely diverge — the Aztecs migrate to Mesoamerica, the Chinese develop independently, the Greeks follow their own path. For these epochs:
+1. START with chapters that cover SHARED patterns across the epoch (e.g., "The Rise of City-States" weaving Sumer, Indus, and Early Maya together)
+2. THEN follow with REGIONAL NARRATIVE ARCS that track the diverging stories (e.g., "The Nile Kingdoms", "The Indus Valley", "Across the Western Ocean")
+3. Regional chapters should still reference cross-cultural parallels and connections where they exist
+4. End the epoch with a chapter that reconnects the threads — common patterns that emerged independently
+
+### For ALL EPOCHS:
+1. NEVER make a chapter about just one culture with no connection to others
+2. Even regional chapters must note parallels ("While the Egyptians built pyramids, across the ocean the Maya independently raised similar structures")
+3. Group by THEME first, REGION second
+4. Order chapters in narrative/chronological sequence within the epoch
+5. Each chapter should have a compelling, epic title (like a book of the bible)
+6. Include a brief summary (2-3 sentences) of what the chapter covers
+7. List the key themes/motifs that belong in each chapter
+8. Aim for 5-15 chapters depending on the richness of the epoch
+
+OUTPUT FORMAT — return ONLY valid JSON:
+{
+  "chapters": [
+    {
+      "chapter_number": 1,
+      "title": "Epic chapter title",
+      "summary": "2-3 sentence summary of what this chapter covers, naming specific cultures that will be woven together",
+      "themes": ["theme1", "theme2", "theme3"],
+      "time_hint": "Before time / primordial / ~3000 BCE",
+      "scope": "universal" or "regional",
+      "regions": ["Mesopotamia", "Egypt"] (only for regional chapters)
+    }
+  ]
+}"""
 
 NARRATIVE_SYSTEM_PROMPT = """You are the narrator of a unified ancient world history — an alternative bible woven from every surviving tradition on Earth.
 
@@ -69,150 +122,547 @@ NARRATIVE_SYSTEM_PROMPT = """You are the narrator of a unified ancient world his
 
 16. ANCIENT TIME ANCHORING: Ancient sources' own timelines and sequences are prioritized over modern chronological reconstructions.
 
-## WRITING STYLE:
+## CRITICAL WRITING RULES:
 - Write in an epic, cinematic, authoritative tone — as if narrating a grand history
 - Use present tense for vividness where appropriate
 - Do NOT hedge with "perhaps" or "it is believed" — state what the sources state
-- Weave cultures together, don't segregate them
-- When multiple cultures describe the same event, merge their accounts into one narrative thread
+- WEAVE cultures together into ONE narrative thread. Do NOT separate by culture.
+- When multiple cultures describe the same event, MERGE their accounts into a single telling
+- Use entity equivalences to unify names (e.g., "The great craftsman — called Enki by the Sumerians, Ptah by the Egyptians, Prometheus by the Greeks")
 - Include specific names, places, and details from the sources
 - This should read like an alternative bible — profound, sweeping, specific
+
+## ENTITY ANNOTATION (CRITICAL):
+When you mention a key entity (god, being, hero, place, event) for the FIRST time in the chapter, wrap it with double brackets like this:
+  [[actor:Enki]] or [[actor:The Craftsman God]] or [[event:The Great Flood]] or [[place:Eridu]]
+Use the format [[type:Name]] where type is one of: actor, event, place.
+Only annotate the FIRST mention of each entity. After that, just use the name normally.
+When mentioning a merged entity, use the PRIMARY unified name inside the brackets.
 
 ## OUTPUT FORMAT:
 Return ONLY valid JSON with this structure:
 {
-  "narrative_text": "The full narrative text for this chapter (1000-3000 words)",
+  "narrative_text": "The full narrative text for this chapter (1500-3000 words) with [[actor:Name]] annotations on first mention",
   "key_claims": [
     {"claim": "brief claim statement", "source_ids": ["id1", "id2"], "score": 0.0-1.0, "cultures": ["culture1", "culture2"]}
   ],
   "image_prompts": [
-    {"description": "detailed visual scene description for image generation", "period": "time period", "mood": "atmosphere/tone", "reference_artifacts": ["artifact name"]}
+    {"description": "detailed visual scene description for image generation based on oldest depictions", "period": "time period", "mood": "atmosphere/tone", "reference_artifacts": ["artifact name"]}
+  ],
+  "entity_mentions": [
+    {"name": "Enki", "type": "actor", "also_known_as": ["Ea", "Ptah", "Prometheus"], "cultures": ["Sumerian", "Egyptian", "Greek"], "role_in_chapter": "brief role description"}
   ]
 }"""
 
 
+# ---------------------------------------------------------------------------
+# Service
+# ---------------------------------------------------------------------------
+
 class NarrativeSynthesizer:
 
-    async def _gather_chapter_context(
-        self, session: AsyncSession, chapter: CanonicalChapter, prior_narrative: str | None
-    ) -> dict:
-        """Gather all scored entities, source evidence, and world context for a chapter."""
-        epoch = await session.get(CanonicalEpoch, chapter.epoch_id)
+    # -----------------------------------------------------------------------
+    # Phase 1: Plan the book — design thematic chapters per epoch
+    # -----------------------------------------------------------------------
 
-        deps_q = select(CanonDependency).where(
-            CanonDependency.parent_type == CanonicalType.CHAPTER,
-            CanonDependency.parent_id == chapter.id,
-        )
-        deps = (await session.execute(deps_q)).scalars().all()
+    async def plan_epoch_outline(
+        self, session: AsyncSession, epoch: CanonicalEpoch
+    ) -> list[StoryOutline]:
+        """Use DeepSeek to design unified thematic chapters for one epoch."""
+        logger.info("Planning outline for epoch: %s", epoch.title)
 
-        actors, events, places = [], [], []
-        entity_scores: dict[str, dict] = {}
+        summary = await self._build_epoch_summary(session, epoch)
+        prompt = f"""# EPOCH: {epoch.title}
+Time range: {epoch.time_start or 'Mythological/undated'} to {epoch.time_end or 'Mythological/undated'}
 
-        for dep in deps:
-            score_q = select(CanonScore).where(
-                CanonScore.canonical_type == dep.child_type,
-                CanonScore.canonical_id == dep.child_id,
-            )
-            score = (await session.execute(score_q)).scalar_one_or_none()
+{summary}
 
-            if dep.child_type == CanonicalType.ACTOR:
-                a = await session.get(CanonicalActor, dep.child_id)
-                if a and a.is_current:
-                    actors.append(a)
-                    if score:
-                        entity_scores[str(a.id)] = {
-                            "name": a.canonical_name,
-                            "final_score": score.final_score,
-                            "tier": "core_canon" if score.final_score > 0.7 else "canon_with_caution" if score.final_score > 0.4 else "branch",
-                            "cultures": await self._get_entity_cultures(session, dep.child_type, dep.child_id),
-                        }
-            elif dep.child_type == CanonicalType.EVENT:
-                e = await session.get(CanonicalEvent, dep.child_id)
-                if e and e.is_current:
-                    events.append(e)
-                    if score:
-                        entity_scores[str(e.id)] = {
-                            "name": e.canonical_name,
-                            "final_score": score.final_score,
-                            "tier": "core_canon" if score.final_score > 0.7 else "canon_with_caution" if score.final_score > 0.4 else "branch",
-                            "cultures": await self._get_entity_cultures(session, dep.child_type, dep.child_id),
-                        }
-            elif dep.child_type == CanonicalType.PLACE:
-                p = await session.get(CanonicalPlace, dep.child_id)
-                if p and p.is_current:
-                    places.append(p)
+Design 5-15 thematic chapters that weave ALL these cultures and traditions together into a unified narrative for this epoch."""
 
-        source_excerpts = await self._gather_source_excerpts(session, chapter)
+        result = await self._call_deepseek(prompt, system=PLANNER_SYSTEM_PROMPT)
+        chapters_data = result.get("chapters", [])
 
-        narration_q = select(NarrationPacket).where(
-            NarrationPacket.chapter_id == chapter.id
-        ).order_by(NarrationPacket.version.desc()).limit(1)
-        narration = (await session.execute(narration_q)).scalar_one_or_none()
-
-        world_q = select(WorldPacket).where(
-            WorldPacket.chapter_id == chapter.id
-        ).order_by(WorldPacket.packet_version.desc()).limit(1)
-        world = (await session.execute(world_q)).scalar_one_or_none()
-
-        equivalences = await self._gather_equivalences(session)
-
-        return {
-            "epoch": epoch,
-            "chapter": chapter,
-            "actors": actors,
-            "events": events,
-            "places": places,
-            "entity_scores": entity_scores,
-            "source_excerpts": source_excerpts,
-            "narration": narration,
-            "world_packet": world,
-            "prior_narrative": prior_narrative,
-            "equivalences": equivalences,
-        }
-
-    async def _get_entity_cultures(
-        self, session: AsyncSession, canonical_type: CanonicalType, canonical_id: uuid.UUID
-    ) -> list[str]:
-        q = (
-            select(distinct(SASourceRecord.culture))
-            .select_from(CanonSupportLink)
-            .join(SASourceRecord, SASourceRecord.id == CanonSupportLink.archive_object_id)
-            .where(
-                CanonSupportLink.canonical_type == canonical_type,
-                CanonSupportLink.canonical_id == canonical_id,
-                SASourceRecord.culture.isnot(None),
-                SASourceRecord.culture != "",
-            )
-        )
-        try:
-            result = await session.execute(q)
-            return [row[0] for row in result.all()]
-        except Exception:
+        if not chapters_data:
+            logger.warning("No chapters planned for epoch %s", epoch.title)
             return []
 
-    async def _gather_source_excerpts(
-        self, session: AsyncSession, chapter: CanonicalChapter
-    ) -> list[dict]:
-        """Gather source text excerpts linked to entities in this chapter."""
-        deps_q = select(CanonDependency.child_type, CanonDependency.child_id).where(
-            CanonDependency.parent_type == CanonicalType.CHAPTER,
-            CanonDependency.parent_id == chapter.id,
+        # Clear existing outlines for this epoch
+        await session.execute(
+            text("DELETE FROM story_chapters WHERE story_outline_id IN (SELECT id FROM story_outlines WHERE epoch_id = :eid)"),
+            {"eid": str(epoch.id)},
         )
-        deps = (await session.execute(deps_q)).all()
+        await session.execute(
+            text("DELETE FROM story_outlines WHERE epoch_id = :eid"),
+            {"eid": str(epoch.id)},
+        )
 
+        outlines = []
+        for ch in chapters_data:
+            outline = StoryOutline(
+                id=uuid.uuid4(),
+                epoch_id=epoch.id,
+                chapter_number=ch.get("chapter_number", len(outlines) + 1),
+                title=ch.get("title", f"Chapter {len(outlines) + 1}"),
+                summary=ch.get("summary", ""),
+                themes=ch.get("themes", []),
+                time_hint=ch.get("time_hint"),
+                scope=ch.get("scope", "universal"),
+                regions=ch.get("regions"),
+                outline_version=1,
+            )
+            session.add(outline)
+            outlines.append(outline)
+
+        await session.commit()
+        logger.info("Planned %d chapters for epoch: %s", len(outlines), epoch.title)
+        return outlines
+
+    async def plan_all_epochs(
+        self, session: AsyncSession, *, epoch_orders: list[int] | None = None
+    ) -> dict:
+        """Plan outlines for all (or selected) epochs."""
+        q = select(CanonicalEpoch).where(
+            CanonicalEpoch.is_current.is_(True)
+        ).order_by(CanonicalEpoch.epoch_order)
+        if epoch_orders is not None:
+            q = q.where(CanonicalEpoch.epoch_order.in_(epoch_orders))
+        epochs = (await session.execute(q)).scalars().all()
+
+        total = 0
+        for epoch in epochs:
+            outlines = await self.plan_epoch_outline(session, epoch)
+            total += len(outlines)
+
+        return {"epochs_planned": len(epochs), "total_chapters_planned": total}
+
+    async def _build_epoch_summary(
+        self, session: AsyncSession, epoch: CanonicalEpoch
+    ) -> str:
+        """Build a rich summary of ALL entities and sources in this epoch for the planner."""
+        # Get all canonical chapters in this epoch
+        ch_q = select(CanonicalChapter.id).where(
+            CanonicalChapter.epoch_id == epoch.id,
+            CanonicalChapter.is_current.is_(True),
+        )
+        chapter_ids = [r[0] for r in (await session.execute(ch_q)).all()]
+
+        if not chapter_ids:
+            return "No data available for this epoch."
+
+        # Gather all entity IDs linked to chapters in this epoch (batched)
+        all_actors: dict[uuid.UUID, CanonicalActor] = {}
+        all_events: dict[uuid.UUID, CanonicalEvent] = {}
+        all_places: dict[uuid.UUID, CanonicalPlace] = {}
+
+        batch_size = 500
+        for i in range(0, len(chapter_ids), batch_size):
+            batch = chapter_ids[i:i + batch_size]
+            deps_q = select(CanonDependency.child_type, CanonDependency.child_id).where(
+                CanonDependency.parent_type == CanonicalType.CHAPTER,
+                CanonDependency.parent_id.in_(batch),
+            )
+            deps = (await session.execute(deps_q)).all()
+
+            actor_ids = [d[1] for d in deps if d[0] == CanonicalType.ACTOR]
+            event_ids = [d[1] for d in deps if d[0] == CanonicalType.EVENT]
+            place_ids = [d[1] for d in deps if d[0] == CanonicalType.PLACE]
+
+            if actor_ids:
+                for aid_batch in [actor_ids[j:j+200] for j in range(0, len(actor_ids), 200)]:
+                    rows = (await session.execute(
+                        select(CanonicalActor).where(
+                            CanonicalActor.id.in_(aid_batch),
+                            CanonicalActor.is_current.is_(True),
+                        )
+                    )).scalars().all()
+                    for a in rows:
+                        all_actors[a.id] = a
+
+            if event_ids:
+                for eid_batch in [event_ids[j:j+200] for j in range(0, len(event_ids), 200)]:
+                    rows = (await session.execute(
+                        select(CanonicalEvent).where(
+                            CanonicalEvent.id.in_(eid_batch),
+                            CanonicalEvent.is_current.is_(True),
+                        )
+                    )).scalars().all()
+                    for e in rows:
+                        all_events[e.id] = e
+
+            if place_ids:
+                for pid_batch in [place_ids[j:j+200] for j in range(0, len(place_ids), 200)]:
+                    rows = (await session.execute(
+                        select(CanonicalPlace).where(
+                            CanonicalPlace.id.in_(pid_batch),
+                            CanonicalPlace.is_current.is_(True),
+                        )
+                    )).scalars().all()
+                    for p in rows:
+                        all_places[p.id] = p
+
+        # Get distinct cultures
+        cultures = set()
+        try:
+            culture_q = (
+                select(distinct(SASourceRecord.culture))
+                .select_from(CanonSupportLink)
+                .join(SASourceRecord, SASourceRecord.id == CanonSupportLink.archive_object_id)
+                .where(
+                    CanonSupportLink.canonical_id.in_(
+                        list(all_actors.keys())[:500] + list(all_events.keys())[:500]
+                    ),
+                    SASourceRecord.culture.isnot(None),
+                    SASourceRecord.culture != "",
+                )
+                .limit(200)
+            )
+            culture_rows = (await session.execute(culture_q)).all()
+            cultures = {r[0] for r in culture_rows}
+        except Exception:
+            pass
+
+        parts = [f"## {len(cultures)} distinct cultures contribute to this epoch"]
+        if cultures:
+            parts.append(f"Cultures: {', '.join(sorted(cultures)[:50])}")
+
+        parts.append(f"\n## KEY ACTORS ({len(all_actors)} total, showing top 80):")
+        for a in sorted(all_actors.values(), key=lambda x: x.canonical_name)[:80]:
+            parts.append(f"  - {a.canonical_name} ({a.actor_type.value}): {(a.summary or 'No summary')[:120]}")
+
+        parts.append(f"\n## KEY EVENTS ({len(all_events)} total, showing top 80):")
+        for e in sorted(all_events.values(), key=lambda x: x.canonical_name)[:80]:
+            parts.append(f"  - {e.canonical_name} ({e.event_type.value}): {(e.summary or 'No summary')[:120]}")
+
+        parts.append(f"\n## KEY PLACES ({len(all_places)} total, showing top 40):")
+        for p in sorted(all_places.values(), key=lambda x: x.canonical_name)[:40]:
+            parts.append(f"  - {p.canonical_name} ({p.place_type.value}): {(p.summary or 'No summary')[:120]}")
+
+        equivalences = await self._gather_equivalences(session)
+        if equivalences:
+            parts.append("\n## VERIFIED ENTITY EQUIVALENCES:")
+            for eq in equivalences[:15]:
+                parts.append(f"  - {eq.get('primary_entity_type', '')} ↔ {eq.get('equivalent_entity_type', '')} ({eq.get('merge_basis', '')})")
+
+        return "\n".join(parts)
+
+    # -----------------------------------------------------------------------
+    # Phase 2: Write unified narrative per planned chapter
+    # -----------------------------------------------------------------------
+
+    async def synthesize_unified_chapter(
+        self,
+        session: AsyncSession,
+        outline: StoryOutline,
+        epoch: CanonicalEpoch,
+        prior_narrative: str | None = None,
+    ) -> StoryChapter:
+        """Generate unified cross-cultural narrative for one planned chapter."""
+        prompt = await self._build_unified_prompt(session, outline, epoch, prior_narrative)
+        result = await self._call_deepseek(prompt, system=NARRATIVE_SYSTEM_PROMPT)
+
+        narrative = result.get("narrative_text", "")
+        claims = result.get("key_claims", [])
+        image_prompts = result.get("image_prompts", [])
+        entity_mentions = result.get("entity_mentions", [])
+
+        # Resolve entity mentions to canonical IDs where possible
+        resolved_mentions = await self._resolve_entity_mentions(session, entity_mentions)
+
+        # Update existing or create new
+        existing_q = select(StoryChapter).where(
+            StoryChapter.story_outline_id == outline.id
+        ).order_by(StoryChapter.synthesis_version.desc()).limit(1)
+        existing = (await session.execute(existing_q)).scalar_one_or_none()
+
+        if existing:
+            existing.narrative_text = narrative
+            existing.claims_json = claims
+            existing.image_prompts_json = image_prompts
+            existing.entity_mentions_json = resolved_mentions
+            existing.word_count = len(narrative.split())
+            existing.synthesis_version += 1
+            return existing
+
+        story = StoryChapter(
+            id=uuid.uuid4(),
+            story_outline_id=outline.id,
+            chapter_id=None,
+            epoch_id=epoch.id,
+            narrative_text=narrative,
+            claims_json=claims,
+            image_prompts_json=image_prompts,
+            entity_mentions_json=resolved_mentions,
+            synthesis_version=1,
+            word_count=len(narrative.split()),
+        )
+        session.add(story)
+        return story
+
+    async def _resolve_entity_mentions(
+        self, session: AsyncSession, mentions: list[dict]
+    ) -> list[dict]:
+        """Try to resolve entity names from DeepSeek output to canonical entity IDs."""
+        resolved = []
+        for m in mentions:
+            name = m.get("name", "")
+            entity_type = m.get("type", "actor")
+            if not name:
+                continue
+
+            canonical_id = None
+            name_lower = name.strip().lower()
+
+            if entity_type == "actor":
+                q = select(CanonicalActor.id).where(
+                    func.lower(CanonicalActor.canonical_name) == name_lower,
+                    CanonicalActor.is_current.is_(True),
+                ).limit(1)
+            elif entity_type == "event":
+                q = select(CanonicalEvent.id).where(
+                    func.lower(CanonicalEvent.canonical_name) == name_lower,
+                    CanonicalEvent.is_current.is_(True),
+                ).limit(1)
+            elif entity_type == "place":
+                q = select(CanonicalPlace.id).where(
+                    func.lower(CanonicalPlace.canonical_name) == name_lower,
+                    CanonicalPlace.is_current.is_(True),
+                ).limit(1)
+            else:
+                resolved.append(m)
+                continue
+
+            try:
+                row = (await session.execute(q)).scalar_one_or_none()
+                if row:
+                    canonical_id = str(row)
+            except Exception:
+                pass
+
+            resolved.append({
+                **m,
+                "canonical_id": canonical_id,
+            })
+        return resolved
+
+    async def run_full_synthesis(
+        self,
+        session: AsyncSession,
+        *,
+        epoch_orders: list[int] | None = None,
+        skip_existing: bool = False,
+    ) -> dict:
+        """Generate narrative for all planned outline chapters. Commits after each."""
+        q = select(CanonicalEpoch).where(
+            CanonicalEpoch.is_current.is_(True)
+        ).order_by(CanonicalEpoch.epoch_order)
+        if epoch_orders is not None:
+            q = q.where(CanonicalEpoch.epoch_order.in_(epoch_orders))
+        epochs = (await session.execute(q)).scalars().all()
+
+        total_chapters = 0
+        total_words = 0
+        prior_narrative: str | None = None
+
+        for epoch in epochs:
+            outlines_q = select(StoryOutline).where(
+                StoryOutline.epoch_id == epoch.id
+            ).order_by(StoryOutline.chapter_number)
+            outlines = (await session.execute(outlines_q)).scalars().all()
+
+            if not outlines:
+                logger.warning("No outlines for epoch %s — run plan_all_epochs first", epoch.title)
+                continue
+
+            for outline in outlines:
+                if skip_existing:
+                    ex = (await session.execute(
+                        select(StoryChapter.id).where(
+                            StoryChapter.story_outline_id == outline.id
+                        ).limit(1)
+                    )).scalar_one_or_none()
+                    if ex:
+                        sv = (await session.execute(
+                            select(StoryChapter.narrative_text).where(
+                                StoryChapter.story_outline_id == outline.id
+                            ).order_by(StoryChapter.synthesis_version.desc()).limit(1)
+                        )).scalar_one_or_none()
+                        if sv:
+                            prior_narrative = sv
+                        continue
+
+                logger.info("Synthesizing [%d] %s / %s", total_chapters + 1, epoch.title, outline.title)
+                story = await self.synthesize_unified_chapter(session, outline, epoch, prior_narrative)
+                prior_narrative = story.narrative_text
+                total_chapters += 1
+                total_words += story.word_count or 0
+
+                await session.commit()
+                logger.info("  → committed chapter %d: '%s' (%d words)", total_chapters, outline.title, story.word_count or 0)
+
+        logger.info("Synthesized %d unified chapters, ~%d words total", total_chapters, total_words)
+        return {"chapters_synthesized": total_chapters, "total_words": total_words}
+
+    # -----------------------------------------------------------------------
+    # Prompt building for Phase 2
+    # -----------------------------------------------------------------------
+
+    async def _build_unified_prompt(
+        self,
+        session: AsyncSession,
+        outline: StoryOutline,
+        epoch: CanonicalEpoch,
+        prior_narrative: str | None,
+    ) -> str:
+        """Build a cross-cultural evidence prompt for a single planned chapter."""
+        themes = outline.themes or []
+        theme_keywords = [t.lower() for t in themes]
+
+        # Get ALL entities in this epoch
+        ch_q = select(CanonicalChapter.id).where(
+            CanonicalChapter.epoch_id == epoch.id,
+            CanonicalChapter.is_current.is_(True),
+        )
+        chapter_ids = [r[0] for r in (await session.execute(ch_q)).all()]
+
+        # Find entities matching our themes
+        matching_actors = []
+        matching_events = []
+        matching_places = []
+        entity_ids_for_sources: list[tuple] = []
+
+        if chapter_ids:
+            batch_size = 500
+            for i in range(0, len(chapter_ids), batch_size):
+                batch = chapter_ids[i:i + batch_size]
+                deps_q = select(CanonDependency.child_type, CanonDependency.child_id).where(
+                    CanonDependency.parent_type == CanonicalType.CHAPTER,
+                    CanonDependency.parent_id.in_(batch),
+                )
+                deps = (await session.execute(deps_q)).all()
+
+                actor_ids = list({d[1] for d in deps if d[0] == CanonicalType.ACTOR})
+                event_ids = list({d[1] for d in deps if d[0] == CanonicalType.EVENT})
+                place_ids = list({d[1] for d in deps if d[0] == CanonicalType.PLACE})
+
+                for aid_batch in [actor_ids[j:j+200] for j in range(0, len(actor_ids), 200)]:
+                    rows = (await session.execute(
+                        select(CanonicalActor).where(
+                            CanonicalActor.id.in_(aid_batch), CanonicalActor.is_current.is_(True)
+                        )
+                    )).scalars().all()
+                    for a in rows:
+                        if self._matches_themes(a.canonical_name, a.summary, theme_keywords):
+                            matching_actors.append(a)
+                            entity_ids_for_sources.append((CanonicalType.ACTOR, a.id))
+
+                for eid_batch in [event_ids[j:j+200] for j in range(0, len(event_ids), 200)]:
+                    rows = (await session.execute(
+                        select(CanonicalEvent).where(
+                            CanonicalEvent.id.in_(eid_batch), CanonicalEvent.is_current.is_(True)
+                        )
+                    )).scalars().all()
+                    for e in rows:
+                        if self._matches_themes(e.canonical_name, e.summary, theme_keywords):
+                            matching_events.append(e)
+                            entity_ids_for_sources.append((CanonicalType.EVENT, e.id))
+
+                for pid_batch in [place_ids[j:j+200] for j in range(0, len(place_ids), 200)]:
+                    rows = (await session.execute(
+                        select(CanonicalPlace).where(
+                            CanonicalPlace.id.in_(pid_batch), CanonicalPlace.is_current.is_(True)
+                        )
+                    )).scalars().all()
+                    for p in rows:
+                        if self._matches_themes(p.canonical_name, p.summary, theme_keywords):
+                            matching_places.append(p)
+
+        # Gather cross-cultural source excerpts
+        source_excerpts = await self._gather_cross_cultural_sources(
+            session, entity_ids_for_sources
+        )
+
+        # Count cultures
+        culture_set = {ex["culture"] for ex in source_excerpts if ex.get("culture")}
+
+        # Build the prompt
+        scope = outline.scope or "universal"
+        regions = outline.regions or []
+        parts = [
+            f"# CHAPTER: {outline.title}",
+            f"## EPOCH: {epoch.title}",
+            f"## CHAPTER THEMES: {', '.join(themes)}",
+            f"## CHAPTER SUMMARY: {outline.summary}",
+            f"## SCOPE: {scope}" + (f" (regions: {', '.join(regions)})" if regions else ""),
+            f"## CROSS-CULTURAL SCOPE: {len(culture_set)} cultures contribute to this chapter",
+        ]
+        if scope == "regional" and regions:
+            parts.append(
+                "NOTE: This is a regional chapter. Focus on the specified regions but always note "
+                "parallels with other civilizations happening simultaneously."
+            )
+
+        if culture_set:
+            parts.append(f"Cultures: {', '.join(sorted(culture_set)[:30])}")
+
+        if matching_actors:
+            parts.append(f"\n## ACTORS ({len(matching_actors)}):")
+            for a in matching_actors[:40]:
+                parts.append(f"  - {a.canonical_name} ({a.actor_type.value}): {(a.summary or '')[:150]}")
+
+        if matching_events:
+            parts.append(f"\n## EVENTS ({len(matching_events)}):")
+            for e in matching_events[:40]:
+                parts.append(f"  - {e.canonical_name} ({e.event_type.value}): {(e.summary or '')[:150]}")
+
+        if matching_places:
+            parts.append(f"\n## PLACES ({len(matching_places)}):")
+            for p in matching_places[:20]:
+                parts.append(f"  - {p.canonical_name} ({p.place_type.value}): {(p.summary or '')[:150]}")
+
+        if source_excerpts:
+            parts.append(f"\n## SOURCE EVIDENCE ({len(source_excerpts)} sources, ranked by weight):")
+            parts.append("IMPORTANT: Weave these into ONE narrative. Do NOT separate by culture.")
+            for ex in source_excerpts[:25]:
+                parts.append(f"  [{ex['culture']}] {ex['title']} (weight={ex['weight']:.1f}):")
+                parts.append(f"    {ex['excerpt'][:400]}")
+
+        equivalences = await self._gather_equivalences(session)
+        if equivalences:
+            parts.append("\n## VERIFIED ENTITY EQUIVALENCES (merge these names in your narrative):")
+            for eq in equivalences[:15]:
+                parts.append(f"  - {eq.get('primary_entity_type', '')} ↔ {eq.get('equivalent_entity_type', '')} ({eq.get('merge_basis', '')})")
+
+        if prior_narrative:
+            parts.append(f"\n## PRIOR CHAPTER (continue seamlessly from here):\n...{prior_narrative[-1500:]}")
+
+        return "\n".join(parts)
+
+    def _matches_themes(self, name: str, summary: str | None, theme_keywords: list[str]) -> bool:
+        """Check if an entity's name or summary matches any of the chapter themes."""
+        if not theme_keywords:
+            return True
+        searchable = (name + " " + (summary or "")).lower()
+        return any(kw in searchable for kw in theme_keywords)
+
+    async def _gather_cross_cultural_sources(
+        self,
+        session: AsyncSession,
+        entity_ids: list[tuple],
+    ) -> list[dict]:
+        """Gather source excerpts from across all cultures for a set of entities."""
         excerpts = []
         seen_sources = set()
 
-        for child_type, child_id in deps:
+        for entity_type, entity_id in entity_ids[:100]:
             links_q = (
                 select(CanonSupportLink, SASourceRecord)
                 .join(SASourceRecord, SASourceRecord.id == CanonSupportLink.archive_object_id)
                 .where(
-                    CanonSupportLink.canonical_type == child_type,
-                    CanonSupportLink.canonical_id == child_id,
+                    CanonSupportLink.canonical_type == entity_type,
+                    CanonSupportLink.canonical_id == entity_id,
                 )
                 .order_by(CanonSupportLink.weight.desc())
-                .limit(5)
+                .limit(3)
             )
             try:
                 for link, sr in (await session.execute(links_q)).all():
@@ -225,9 +675,7 @@ class NarrativeSynthesizer:
                     ).limit(1)
                     sv_result = await session.execute(sv_q)
                     text_row = sv_result.first()
-                    excerpt_text = ""
-                    if text_row and text_row[0]:
-                        excerpt_text = text_row[0][:800]
+                    excerpt_text = text_row[0][:600] if text_row and text_row[0] else ""
 
                     excerpts.append({
                         "source_id": str(sr.id),
@@ -239,7 +687,11 @@ class NarrativeSynthesizer:
             except Exception:
                 continue
 
-        return sorted(excerpts, key=lambda x: x["weight"], reverse=True)[:20]
+        return sorted(excerpts, key=lambda x: x["weight"], reverse=True)[:30]
+
+    # -----------------------------------------------------------------------
+    # Shared helpers
+    # -----------------------------------------------------------------------
 
     async def _gather_equivalences(self, session: AsyncSession) -> list[dict]:
         try:
@@ -254,62 +706,7 @@ class NarrativeSynthesizer:
         except Exception:
             return []
 
-    def _build_narrative_prompt(self, ctx: dict) -> str:
-        ch = ctx["chapter"]
-        parts = [f"# Chapter: {ch.title}"]
-
-        if ctx["epoch"]:
-            parts.append(f"Epoch: {ctx['epoch'].title}")
-        if ch.time_start is not None or ch.time_end is not None:
-            parts.append(f"Time period: {ch.time_start or '?'} to {ch.time_end or '?'}")
-
-        parts.append("\n## ENTITY SCORES AND CLASSIFICATIONS:")
-        for eid, info in ctx["entity_scores"].items():
-            cultures_str = ", ".join(info["cultures"]) if info["cultures"] else "unattributed"
-            parts.append(f"  - {info['name']}: score={info['final_score']:.2f}, tier={info['tier']}, cultures=[{cultures_str}]")
-
-        if ctx["actors"]:
-            parts.append("\n## ACTORS:")
-            for a in ctx["actors"]:
-                parts.append(f"  - {a.canonical_name} ({a.actor_type.value}): {a.summary or 'No summary'}")
-
-        if ctx["events"]:
-            parts.append("\n## EVENTS:")
-            for e in ctx["events"]:
-                parts.append(f"  - {e.canonical_name} ({e.event_type.value}): {e.summary or 'No summary'}")
-
-        if ctx["places"]:
-            parts.append("\n## PLACES:")
-            for p in ctx["places"]:
-                parts.append(f"  - {p.canonical_name} ({p.place_type.value}): {p.summary or 'No summary'}")
-
-        if ctx["source_excerpts"]:
-            parts.append("\n## SOURCE EVIDENCE (ranked by weight):")
-            for ex in ctx["source_excerpts"][:15]:
-                parts.append(f"  [{ex['culture']}] {ex['title']} (weight={ex['weight']:.1f}):")
-                parts.append(f"    {ex['excerpt'][:500]}")
-
-        if ctx["world_packet"]:
-            wp = ctx["world_packet"]
-            if wp.world_summary:
-                parts.append(f"\n## WORLD CONTEXT:\n{wp.world_summary}")
-            if wp.environment_profile_json:
-                parts.append(f"Environment: {json.dumps(wp.environment_profile_json)[:300]}")
-            if wp.material_culture_json:
-                parts.append(f"Material culture: {json.dumps(wp.material_culture_json)[:300]}")
-
-        if ctx["equivalences"]:
-            parts.append("\n## VERIFIED ENTITY EQUIVALENCES:")
-            for eq in ctx["equivalences"][:10]:
-                parts.append(f"  - {eq.get('primary_entity_type', '')} ↔ {eq.get('equivalent_entity_type', '')} ({eq.get('merge_basis', '')}, confidence={eq.get('confidence', 0):.2f})")
-
-        if ctx["prior_narrative"]:
-            last_500 = ctx["prior_narrative"][-1500:]
-            parts.append(f"\n## PRIOR CHAPTER (continue from here):\n...{last_500}")
-
-        return "\n".join(parts)
-
-    async def _call_deepseek(self, prompt: str) -> dict:
+    async def _call_deepseek(self, prompt: str, *, system: str = NARRATIVE_SYSTEM_PROMPT) -> dict:
         if not settings.deepseek_api_key:
             raise RuntimeError(
                 "WORLD_DEEPSEEK_API_KEY is not set. Narrative synthesis requires DeepSeek."
@@ -319,7 +716,7 @@ class NarrativeSynthesizer:
         payload = {
             "model": settings.deepseek_model,
             "messages": [
-                {"role": "system", "content": NARRATIVE_SYSTEM_PROMPT},
+                {"role": "system", "content": system},
                 {"role": "user", "content": prompt},
             ],
             "temperature": 0.4,
@@ -345,113 +742,10 @@ class NarrativeSynthesizer:
                 try:
                     return json.loads(json_match.group())
                 except json.JSONDecodeError:
-                    logger.warning("Invalid JSON in DeepSeek narrative response")
-            return {"narrative_text": raw[:5000], "key_claims": [], "image_prompts": []}
+                    logger.warning("Invalid JSON in DeepSeek response, trying to salvage")
+            return {"narrative_text": raw[:5000], "key_claims": [], "image_prompts": [], "chapters": []}
         except RuntimeError:
             raise
         except Exception:
-            logger.exception("DeepSeek narrative synthesis call failed")
-            return {"narrative_text": "", "key_claims": [], "image_prompts": []}
-
-    async def synthesize_chapter(
-        self, session: AsyncSession, chapter: CanonicalChapter, prior_narrative: str | None = None
-    ) -> StoryChapter:
-        """Generate the narrative for a single chapter."""
-        ctx = await self._gather_chapter_context(session, chapter, prior_narrative)
-        prompt = self._build_narrative_prompt(ctx)
-        result = await self._call_deepseek(prompt)
-
-        narrative = result.get("narrative_text", "")
-        claims = result.get("key_claims", [])
-        image_prompts = result.get("image_prompts", [])
-
-        existing_q = select(StoryChapter).where(
-            StoryChapter.chapter_id == chapter.id
-        ).order_by(StoryChapter.synthesis_version.desc()).limit(1)
-        existing = (await session.execute(existing_q)).scalar_one_or_none()
-
-        if existing:
-            existing.narrative_text = narrative
-            existing.claims_json = claims
-            existing.image_prompts_json = image_prompts
-            existing.word_count = len(narrative.split())
-            existing.synthesis_version += 1
-            return existing
-
-        story = StoryChapter(
-            id=uuid.uuid4(),
-            chapter_id=chapter.id,
-            epoch_id=chapter.epoch_id,
-            narrative_text=narrative,
-            claims_json=claims,
-            image_prompts_json=image_prompts,
-            synthesis_version=1,
-            word_count=len(narrative.split()),
-        )
-        session.add(story)
-        return story
-
-    async def run_full_synthesis(
-        self,
-        session: AsyncSession,
-        *,
-        epoch_orders: list[int] | None = None,
-        max_chapters: int | None = None,
-        skip_existing: bool = False,
-    ) -> dict:
-        """Generate narrative for chapters in epoch/chapter order.
-
-        Args:
-            epoch_orders: limit to specific epoch_order values (e.g. [0,1,2,3])
-            max_chapters: stop after this many chapters
-            skip_existing: if True, skip chapters that already have a StoryChapter
-        """
-        epochs_q = select(CanonicalEpoch).where(
-            CanonicalEpoch.is_current.is_(True)
-        ).order_by(CanonicalEpoch.epoch_order)
-        if epoch_orders is not None:
-            epochs_q = epochs_q.where(CanonicalEpoch.epoch_order.in_(epoch_orders))
-        epochs = (await session.execute(epochs_q)).scalars().all()
-
-        total_chapters = 0
-        total_words = 0
-        prior_narrative: str | None = None
-
-        for epoch in epochs:
-            chapters_q = select(CanonicalChapter).where(
-                CanonicalChapter.epoch_id == epoch.id,
-                CanonicalChapter.is_current.is_(True),
-            ).order_by(CanonicalChapter.chapter_order)
-            chapters = (await session.execute(chapters_q)).scalars().all()
-
-            for ch in chapters:
-                if max_chapters is not None and total_chapters >= max_chapters:
-                    break
-
-                if skip_existing:
-                    existing = (await session.execute(
-                        select(StoryChapter.id).where(StoryChapter.chapter_id == ch.id).limit(1)
-                    )).scalar_one_or_none()
-                    if existing:
-                        sv = (await session.execute(
-                            select(StoryChapter.narrative_text).where(StoryChapter.chapter_id == ch.id)
-                            .order_by(StoryChapter.synthesis_version.desc()).limit(1)
-                        )).scalar_one_or_none()
-                        if sv:
-                            prior_narrative = sv
-                        continue
-
-                logger.info("Synthesizing [%d/%s] %s", total_chapters + 1, max_chapters or "all", ch.title)
-                story = await self.synthesize_chapter(session, ch, prior_narrative)
-                prior_narrative = story.narrative_text
-                total_chapters += 1
-                total_words += story.word_count or 0
-
-                await session.commit()
-                logger.info("  → committed chapter %d (%d words)", total_chapters, story.word_count or 0)
-
-            if max_chapters is not None and total_chapters >= max_chapters:
-                break
-
-        logger.info("Synthesized %d chapters, ~%d words total", total_chapters, total_words)
-        return {"chapters_synthesized": total_chapters, "total_words": total_words}
+            logger.exception("DeepSeek call failed")
+            return {"narrative_text": "", "key_claims": [], "image_prompts": [], "chapters": []}

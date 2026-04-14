@@ -34,6 +34,8 @@ from src.canon.models.chapter_image_set import ChapterImageSet
 from src.canon.models.chapter_focus_object import ChapterFocusObject
 from src.canon.models.chat_session import ChatSession, ChatMessage
 from src.canon.models.answer_packet import AnswerPacket, AnswerPacketSource, AnswerPacketContext
+from src.canon.models.story_outline import StoryOutline
+from src.canon.models.story_chapter import StoryChapter
 
 try:
     from src.canon.models.video_script import VideoScript
@@ -87,4 +89,6 @@ __all__ = [
     "VideoScript",
     "VideoAsset",
     "VideoOutput",
+    "StoryOutline",
+    "StoryChapter",
 ]

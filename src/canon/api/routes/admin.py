@@ -122,8 +122,8 @@ async def run_synthesis(
 
     if request.run_narrative:
         svc = NarrativeSynthesizer()
+        await svc.plan_all_epochs(session)
         result.narrative = await svc.run_full_synthesis(session)
-        await session.commit()
 
     return result
 
@@ -178,27 +178,45 @@ async def run_alias_merges(session: AsyncSession = Depends(get_session)):
     return result
 
 
-@router.post("/run-narrative")
-async def run_narrative(
+@router.post("/plan-narrative")
+async def plan_narrative(
     epoch_orders: str | None = None,
-    max_chapters: int | None = None,
-    skip_existing: bool = True,
-    background_tasks: BackgroundTasks = BackgroundTasks(),
     session: AsyncSession = Depends(get_session),
 ):
-    """Generate unified narrative. Each chapter is committed individually for live progress.
+    """Phase 1: Use DeepSeek to plan unified thematic chapters for each epoch.
+
+    This creates story_outlines — the 'table of contents' for the narrative.
+    Run this BEFORE /admin/run-narrative.
 
     Args:
         epoch_orders: comma-separated epoch_order values (e.g. "0,1,2,3"), omit for all
-        max_chapters: stop after N chapters, omit for unlimited
-        skip_existing: skip chapters that already have a StoryChapter (default True)
+    """
+    orders = [int(x.strip()) for x in epoch_orders.split(",")] if epoch_orders else None
+    svc = NarrativeSynthesizer()
+    result = await svc.plan_all_epochs(session, epoch_orders=orders)
+    return result
+
+
+@router.post("/run-narrative")
+async def run_narrative(
+    epoch_orders: str | None = None,
+    skip_existing: bool = True,
+    session: AsyncSession = Depends(get_session),
+):
+    """Phase 2: Generate unified cross-cultural narrative for each planned chapter.
+
+    Requires story_outlines to exist (run /admin/plan-narrative first).
+    Each chapter is committed individually for live frontend progress.
+
+    Args:
+        epoch_orders: comma-separated epoch_order values (e.g. "0,1,2,3"), omit for all
+        skip_existing: skip chapters that already have a narrative (default True)
     """
     orders = [int(x.strip()) for x in epoch_orders.split(",")] if epoch_orders else None
     svc = NarrativeSynthesizer()
     result = await svc.run_full_synthesis(
         session,
         epoch_orders=orders,
-        max_chapters=max_chapters,
         skip_existing=skip_existing,
     )
     return result
@@ -238,17 +256,19 @@ async def run_full_narrative_pipeline(session: AsyncSession = Depends(get_sessio
     results["entity_resolution"] = await merge_svc.run_llm_entity_resolution(session)
     await session.commit()
 
-    logger.info("Pipeline step 4/6: Narrative synthesis")
+    logger.info("Pipeline step 4/7: Narrative planning")
     narr_svc = NarrativeSynthesizer()
-    results["narrative"] = await narr_svc.run_full_synthesis(session)
-    await session.commit()
+    results["narrative_plan"] = await narr_svc.plan_all_epochs(session)
 
-    logger.info("Pipeline step 5/6: Image prompt building")
+    logger.info("Pipeline step 5/7: Narrative synthesis")
+    results["narrative"] = await narr_svc.run_full_synthesis(session)
+
+    logger.info("Pipeline step 6/7: Image prompt building")
     img_builder = ImagePromptBuilder()
     results["image_prompts"] = await img_builder.build_all_pending(session)
     await session.commit()
 
-    logger.info("Pipeline step 6/6: Image generation")
+    logger.info("Pipeline step 7/7: Image generation")
     img_worker = ImageGenWorker()
     results["image_generation"] = await img_worker.process_all_pending(session)
     await session.commit()

@@ -1,17 +1,306 @@
-import type { StoryChapter, StoryEvidence } from '../../api'
+import { useState, useEffect } from 'react'
+import { api } from '../../api'
+import type { StoryChapter, StoryEvidence, EntityMergeBreakdown } from '../../api'
 
 interface Props {
   chapter: StoryChapter | null
   evidence: StoryEvidence[]
+  selectedEntity: { entityType: string; entityId: string; entityName: string } | null
+  onClearEntity?: () => void
 }
 
-function formatDate(y: number | null): string {
-  if (y === null) return ''
-  if (y < 0) return `${Math.abs(y)} BCE`
-  return `${y} CE`
+function ScoreBar({ value, label, color }: { value: number; label: string; color?: string }) {
+  return (
+    <div style={{ marginBottom: 6 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--text-muted)', marginBottom: 2 }}>
+        <span>{label}</span>
+        <span>{(value * 100).toFixed(0)}%</span>
+      </div>
+      <div style={{ height: 4, background: 'var(--bg-secondary)', borderRadius: 2, overflow: 'hidden' }}>
+        <div style={{
+          height: '100%',
+          width: `${value * 100}%`,
+          background: color || 'var(--gold)',
+          borderRadius: 2,
+        }} />
+      </div>
+    </div>
+  )
 }
 
-export default function EvidencePanel({ chapter, evidence }: Props) {
+function CriterionBadge({ label, met }: { label: string; met: boolean | undefined }) {
+  if (met === undefined) return null
+  return (
+    <span style={{
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: 4,
+      padding: '2px 8px',
+      fontSize: 11,
+      borderRadius: 8,
+      background: met ? 'rgba(168, 213, 162, 0.15)' : 'rgba(255,100,100,0.1)',
+      border: `1px solid ${met ? 'rgba(168, 213, 162, 0.4)' : 'rgba(255,100,100,0.25)'}`,
+      color: met ? '#a8d5a2' : '#ff8888',
+    }}>
+      {met ? '\u2713' : '\u2717'} {label}
+    </span>
+  )
+}
+
+function EntityBreakdownView({ data, onBack }: { data: EntityMergeBreakdown; onBack: () => void }) {
+  return (
+    <>
+      <div style={{
+        padding: '16px',
+        borderBottom: '1px solid var(--border)',
+      }}>
+        <button
+          onClick={onBack}
+          style={{
+            background: 'none',
+            border: 'none',
+            color: 'var(--text-muted)',
+            cursor: 'pointer',
+            fontSize: 11,
+            padding: 0,
+            marginBottom: 8,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 4,
+          }}
+        >
+          &larr; Back to evidence
+        </button>
+        <div style={{
+          fontSize: 11,
+          textTransform: 'uppercase',
+          letterSpacing: 1.5,
+          color: 'var(--gold)',
+          marginBottom: 4,
+        }}>
+          Entity Breakdown
+        </div>
+        <div style={{
+          fontSize: 16,
+          fontWeight: 700,
+          color: 'var(--text-primary)',
+          lineHeight: 1.3,
+        }}>
+          {data.entity.name}
+        </div>
+        <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
+          {data.entity.subtype}
+        </div>
+      </div>
+
+      <div style={{ flex: 1, overflow: 'auto', padding: '12px 16px' }}>
+        {/* Summary */}
+        {data.entity.summary && (
+          <div style={{
+            fontSize: 13,
+            color: 'var(--text-secondary)',
+            lineHeight: 1.6,
+            marginBottom: 16,
+            fontStyle: 'italic',
+          }}>
+            {data.entity.summary}
+          </div>
+        )}
+
+        {/* Score */}
+        {data.entity.score && (
+          <div style={{ marginBottom: 20 }}>
+            <div style={{
+              fontSize: 11,
+              textTransform: 'uppercase',
+              letterSpacing: 1,
+              color: 'var(--text-muted)',
+              marginBottom: 8,
+            }}>
+              Confidence Score: {(data.entity.score.final * 100).toFixed(0)}%
+            </div>
+            <ScoreBar value={data.entity.score.age} label="Age Weight" />
+            <ScoreBar value={data.entity.score.corroboration} label="Corroboration" />
+            <ScoreBar value={data.entity.score.independence} label="Independence" />
+            <ScoreBar value={data.entity.score.ambiguity} label="Ambiguity" color="#ff8888" />
+          </div>
+        )}
+
+        {/* Cultures */}
+        {data.cultures.length > 0 && (
+          <div style={{ marginBottom: 20 }}>
+            <div style={{
+              fontSize: 11,
+              textTransform: 'uppercase',
+              letterSpacing: 1,
+              color: 'var(--text-muted)',
+              marginBottom: 8,
+            }}>
+              Found in {data.cultures.length} culture{data.cultures.length !== 1 ? 's' : ''}
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+              {data.cultures.map(c => (
+                <span key={c} style={{
+                  padding: '3px 8px',
+                  background: 'rgba(212, 168, 83, 0.12)',
+                  border: '1px solid rgba(212, 168, 83, 0.3)',
+                  borderRadius: 10,
+                  fontSize: 11,
+                  color: 'var(--gold)',
+                }}>
+                  {c}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Merged Equivalences */}
+        {data.equivalences.length > 0 && (
+          <div style={{ marginBottom: 20 }}>
+            <div style={{
+              fontSize: 11,
+              textTransform: 'uppercase',
+              letterSpacing: 1,
+              color: 'var(--text-muted)',
+              marginBottom: 8,
+            }}>
+              Merged Identities ({data.equivalences.length})
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8, lineHeight: 1.5 }}>
+              This entity was identified as equivalent to the following entities across cultures, based on Law 8 (Entity Convergence):
+            </div>
+            {data.equivalences.map((eq, i) => (
+              <div key={i} style={{
+                padding: '10px 12px',
+                background: 'var(--bg-tertiary)',
+                borderRadius: 8,
+                marginBottom: 8,
+                borderLeft: `3px solid ${eq.confidence >= 0.8 ? 'var(--gold)' : 'var(--border)'}`,
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
+                  <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>
+                    {eq.equivalent_name || eq.equivalent_id}
+                  </span>
+                  <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                    {(eq.confidence * 100).toFixed(0)}% confidence
+                  </span>
+                </div>
+                {eq.equivalent_summary && (
+                  <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 6, lineHeight: 1.5 }}>
+                    {eq.equivalent_summary.slice(0, 200)}
+                  </div>
+                )}
+                {eq.cultures.length > 0 && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3, marginBottom: 6 }}>
+                    {eq.cultures.map(c => (
+                      <span key={c} style={{
+                        fontSize: 10,
+                        padding: '1px 6px',
+                        background: 'var(--bg-secondary)',
+                        borderRadius: 6,
+                        color: 'var(--text-muted)',
+                      }}>
+                        {c}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {eq.reasoning && (
+                  <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 6, lineHeight: 1.5 }}>
+                    <strong>Why merged:</strong> {eq.reasoning}
+                  </div>
+                )}
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                  <CriterionBadge label="Role" met={eq.role_match} />
+                  <CriterionBadge label="Action" met={eq.action_match} />
+                  <CriterionBadge label="Context" met={eq.context_match} />
+                  <CriterionBadge label="Pattern" met={eq.pattern_match} />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Source Evidence */}
+        {data.sources.length > 0 && (
+          <div>
+            <div style={{
+              fontSize: 11,
+              textTransform: 'uppercase',
+              letterSpacing: 1,
+              color: 'var(--text-muted)',
+              marginBottom: 8,
+            }}>
+              Source Evidence ({data.sources.length})
+            </div>
+            {data.sources.map((src, i) => (
+              <details key={i} style={{
+                marginBottom: 6,
+                background: 'var(--bg-tertiary)',
+                borderRadius: 6,
+                overflow: 'hidden',
+              }}>
+                <summary style={{
+                  padding: '8px 10px',
+                  cursor: 'pointer',
+                  fontSize: 12,
+                  color: 'var(--text-primary)',
+                  fontWeight: 500,
+                  listStyle: 'none',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                }}>
+                  <span style={{ flex: 1, marginRight: 8 }}>{src.title}</span>
+                  {src.culture && (
+                    <span style={{
+                      fontSize: 10,
+                      padding: '2px 6px',
+                      background: 'var(--bg-secondary)',
+                      borderRadius: 8,
+                      color: 'var(--text-muted)',
+                      flexShrink: 0,
+                    }}>
+                      {src.culture}
+                    </span>
+                  )}
+                </summary>
+                <div style={{
+                  padding: '0 10px 10px',
+                  fontSize: 12,
+                  color: 'var(--text-secondary)',
+                  lineHeight: 1.6,
+                  fontFamily: "'Georgia', 'Times New Roman', serif",
+                  fontStyle: 'italic',
+                }}>
+                  {src.excerpt || 'No excerpt available'}
+                </div>
+              </details>
+            ))}
+          </div>
+        )}
+      </div>
+    </>
+  )
+}
+
+export default function EvidencePanel({ chapter, evidence, selectedEntity, onClearEntity }: Props) {
+  const [mergeData, setMergeData] = useState<EntityMergeBreakdown | null>(null)
+  const [loadingMerge, setLoadingMerge] = useState(false)
+
+  useEffect(() => {
+    if (!selectedEntity) {
+      setMergeData(null)
+      return
+    }
+    setLoadingMerge(true)
+    api.getEntityMergeBreakdown(selectedEntity.entityType, selectedEntity.entityId)
+      .then(setMergeData)
+      .catch(() => setMergeData(null))
+      .finally(() => setLoadingMerge(false))
+  }, [selectedEntity])
+
   if (!chapter) {
     return (
       <div style={{
@@ -25,6 +314,38 @@ export default function EvidencePanel({ chapter, evidence }: Props) {
         padding: 20,
       }}>
         Select a chapter to see evidence
+      </div>
+    )
+  }
+
+  if (loadingMerge) {
+    return (
+      <div style={{
+        background: 'var(--bg-secondary)',
+        borderLeft: '1px solid var(--border)',
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100%',
+        alignItems: 'center',
+        justifyContent: 'center',
+        color: 'var(--text-muted)',
+      }}>
+        Loading entity breakdown...
+      </div>
+    )
+  }
+
+  if (mergeData && selectedEntity) {
+    return (
+      <div style={{
+        background: 'var(--bg-secondary)',
+        borderLeft: '1px solid var(--border)',
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100%',
+        overflow: 'hidden',
+      }}>
+        <EntityBreakdownView data={mergeData} onBack={() => onClearEntity?.()} />
       </div>
     )
   }
@@ -69,14 +390,92 @@ export default function EvidencePanel({ chapter, evidence }: Props) {
         }}>
           {chapter.chapter_title}
         </div>
-        {(chapter.time_start !== null || chapter.time_end !== null) && (
+        {chapter.time_hint && (
           <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
-            {formatDate(chapter.time_start)}{chapter.time_end ? ` — ${formatDate(chapter.time_end)}` : ''}
+            {chapter.time_hint}
+          </div>
+        )}
+        {chapter.themes && chapter.themes.length > 0 && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 6 }}>
+            {chapter.themes.map((t, i) => (
+              <span key={i} style={{
+                fontSize: 10,
+                padding: '2px 6px',
+                background: 'rgba(212, 168, 83, 0.1)',
+                border: '1px solid rgba(212, 168, 83, 0.25)',
+                borderRadius: 8,
+                color: 'var(--gold)',
+              }}>
+                {t}
+              </span>
+            ))}
           </div>
         )}
       </div>
 
       <div style={{ flex: 1, overflow: 'auto', padding: '12px 16px' }}>
+        {/* Entity Mentions Quick List */}
+        {chapter.entity_mentions && chapter.entity_mentions.length > 0 && (
+          <div style={{ marginBottom: 20 }}>
+            <div style={{
+              fontSize: 11,
+              textTransform: 'uppercase',
+              letterSpacing: 1,
+              color: 'var(--text-muted)',
+              marginBottom: 8,
+            }}>
+              Entities in this Chapter
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {chapter.entity_mentions.map((m, i) => (
+                <button
+                  key={i}
+                  disabled={!m.canonical_id}
+                  onClick={() => m.canonical_id && onClearEntity
+                    ? (() => {
+                        const evt = new CustomEvent('entity-click', { detail: { entityType: m.type, entityId: m.canonical_id, entityName: m.name } })
+                        window.dispatchEvent(evt)
+                      })()
+                    : undefined
+                  }
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    padding: '6px 10px',
+                    background: 'var(--bg-tertiary)',
+                    border: 'none',
+                    borderRadius: 6,
+                    cursor: m.canonical_id ? 'pointer' : 'default',
+                    textAlign: 'left',
+                    width: '100%',
+                  }}
+                >
+                  <span style={{
+                    fontSize: 10,
+                    padding: '1px 5px',
+                    borderRadius: 4,
+                    fontWeight: 600,
+                    textTransform: 'uppercase',
+                    color: m.type === 'actor' ? 'var(--gold)' : m.type === 'event' ? '#7eb8da' : '#a8d5a2',
+                    background: m.type === 'actor' ? 'rgba(212,168,83,0.1)' : m.type === 'event' ? 'rgba(126,184,218,0.1)' : 'rgba(168,213,162,0.1)',
+                  }}>
+                    {m.type}
+                  </span>
+                  <span style={{ fontSize: 12, color: 'var(--text-primary)', fontWeight: 500 }}>
+                    {m.name}
+                  </span>
+                  {m.also_known_as && m.also_known_as.length > 0 && (
+                    <span style={{ fontSize: 10, color: 'var(--text-muted)', flex: 1, textAlign: 'right' }}>
+                      +{m.also_known_as.length} names
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Culture Distribution */}
         {cultureList.length > 0 && (
           <div style={{ marginBottom: 20 }}>

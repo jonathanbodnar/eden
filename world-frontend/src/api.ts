@@ -330,19 +330,75 @@ export interface ImageRecordDetail {
 
 // ── Story Mode Types ──────────────────────────────────────────────────────
 
+export interface EntityMention {
+  name: string
+  type: 'actor' | 'event' | 'place'
+  canonical_id: string | null
+  also_known_as?: string[]
+  cultures?: string[]
+  role_in_chapter?: string
+}
+
 export interface StoryChapter {
   id: string
-  chapter_id: string
+  outline_id: string | null
   epoch_id: string
   epoch_title: string
   chapter_title: string
+  chapter_number: number
+  chapter_summary: string
+  themes: string[]
+  time_hint: string | null
   narrative_text: string
   claims: Array<{ claim: string; source_ids: string[]; score: number; cultures: string[] }>
+  entity_mentions: EntityMention[]
   images: Array<{ url: string; caption: string; prompt: string }>
   word_count: number | null
   time_start: number | null
   time_end: number | null
   synthesis_version: number
+}
+
+export interface EntityMergeBreakdown {
+  entity: {
+    id: string
+    name: string
+    type: string
+    subtype: string
+    summary: string | null
+    time_start?: number | null
+    time_end?: number | null
+    merge_confidence?: number | null
+    score?: {
+      final: number
+      age: number
+      corroboration: number
+      independence: number
+      ambiguity: number
+    }
+  }
+  cultures: string[]
+  equivalences: Array<{
+    equivalent_id: string
+    equivalent_type: string
+    equivalent_name: string | null
+    equivalent_summary: string | null
+    cultures: string[]
+    merge_basis: string
+    confidence: number
+    reasoning: string
+    role_match?: boolean
+    action_match?: boolean
+    context_match?: boolean
+    pattern_match?: boolean
+  }>
+  sources: Array<{
+    source_id: string
+    title: string
+    culture: string | null
+    excerpt: string
+    weight: number
+  }>
 }
 
 export interface StoryEpoch {
@@ -353,6 +409,7 @@ export interface StoryEpoch {
   time_end: number | null
   summary: string | null
   chapter_count: number
+  written_count: number
 }
 
 export interface StoryEvidence {
@@ -371,6 +428,7 @@ export interface StoryStats {
   total_languages: number
   total_segments: number
   total_story_chapters: number
+  total_planned_chapters: number
   total_words: number
   total_epochs: number
   total_canonical_actors: number
@@ -430,4 +488,6 @@ export const api = {
   getStoryChapter: (id: string) => cachedGet<StoryChapter>(`/story/chapters/${id}`),
   getStoryChapterEvidence: (id: string) => cachedGet<StoryEvidence[]>(`/story/chapters/${id}/evidence`),
   getStoryStats: () => cachedGet<StoryStats>('/story/stats'),
+  getEntityMergeBreakdown: (entityType: string, entityId: string) =>
+    cachedGet<EntityMergeBreakdown>(`/story/entities/${entityType}/${entityId}/merge-breakdown`),
 }
