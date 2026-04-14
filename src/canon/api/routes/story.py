@@ -31,6 +31,32 @@ from src.canon.models.system_a import SASourceRecord, SASourceVersion, SAObjectI
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+_CULTURE_HINTS = [
+    (["yahweh", "yhwh", "elohim", "hebrew", "israel", "moses", "adam", "eve", "noah", "abraham"], "Hebrew / Israelite"),
+    (["enki", "enlil", "anu", "marduk", "tiamat", "apsu", "gilgamesh", "sumerian", "akkadian", "babylonian", "mesopotami"], "Mesopotamian"),
+    (["ra", "atum", "osiris", "isis", "horus", "thoth", "ptah", "khnum", "egyptian", "kemet", "pharaoh"], "Ancient Egyptian"),
+    (["brahma", "vishnu", "shiva", "prajapati", "purusha", "vedic", "hindu", "sanskrit", "indra", "agni"], "Vedic / Hindu"),
+    (["zeus", "prometheus", "athena", "apollo", "greek", "olymp", "titan", "hesiod", "homer"], "Greek"),
+    (["odin", "thor", "freya", "norse", "ymir", "asgard", "edda"], "Norse / Germanic"),
+    (["ahura mazda", "zoroast", "avesta", "persian", "zarathustra", "angra mainyu"], "Zoroastrian / Persian"),
+    (["quetzalcoatl", "tezcatlipoca", "aztec", "maya", "popol vuh", "mesoameric"], "Mesoamerican"),
+    (["dreamtime", "aboriginal", "rainbow serpent", "wandjina"], "Australian Aboriginal"),
+    (["ainu", "kamuy"], "Ainu / Japanese"),
+    (["maori", "tane", "polynesi"], "Polynesian / Maori"),
+    (["sky father", "great spirit", "plains", "native american"], "Indigenous / Cross-cultural"),
+    (["chinese", "pangu", "nuwa", "fuxi", "jade emperor"], "Chinese"),
+]
+
+
+def _infer_culture_from_entity(name: str, summary: str) -> list[str]:
+    """Best-effort culture inference from entity name/summary when DB has no culture data."""
+    combined = f"{name} {summary}".lower()
+    cultures = []
+    for keywords, culture in _CULTURE_HINTS:
+        if any(kw in combined for kw in keywords):
+            cultures.append(culture)
+    return cultures
+
 
 @router.get("/epochs")
 async def get_story_epochs(session: AsyncSession = Depends(get_session)):
@@ -296,7 +322,6 @@ async def get_entity_merge_breakdown(
                     other_name = other_entity.canonical_name
                     other_summary = other_entity.summary
 
-            # Get cultures for the other entity
             try:
                 culture_q = (
                     select(distinct(SASourceRecord.culture))
@@ -312,6 +337,9 @@ async def get_entity_merge_breakdown(
                 other_cultures = [c[0] for c in (await session.execute(culture_q)).all()]
             except Exception:
                 pass
+
+            if not other_cultures and other_name:
+                other_cultures = _infer_culture_from_entity(other_name, other_summary or "")
 
             evidence = r.get("evidence_json") or {}
             equivalences.append({
@@ -361,7 +389,6 @@ async def get_entity_merge_breakdown(
                 continue
             existing_ids.add(str(found_entity.id))
 
-            # Get cultures for this entity
             aka_cultures = []
             try:
                 aka_type_map = {"actor": CanonicalType.ACTOR, "event": CanonicalType.EVENT, "place": CanonicalType.PLACE}
@@ -379,6 +406,9 @@ async def get_entity_merge_breakdown(
                 aka_cultures = [c[0] for c in (await session.execute(c_q)).all()]
             except Exception:
                 pass
+
+            if not aka_cultures:
+                aka_cultures = _infer_culture_from_entity(found_entity.canonical_name, getattr(found_entity, "summary", "") or "")
 
             equivalences.append({
                 "equivalent_id": str(found_entity.id),
@@ -441,6 +471,9 @@ async def get_entity_merge_breakdown(
         primary_cultures = [c[0] for c in (await session.execute(culture_q)).all()]
     except Exception:
         pass
+
+    if not primary_cultures:
+        primary_cultures = _infer_culture_from_entity(entity_info["name"], entity_info.get("summary") or "")
 
     # Include the resolved/primary entity as a peer in equivalences so
     # the frontend treats ALL cultural identities equally under the archetype.
