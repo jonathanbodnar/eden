@@ -310,7 +310,7 @@ export default function NarrativeReader({ chapters, activeChapterId, onChapterIn
 
   if (!ch) {
     return (
-      <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)' }}>
+      <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)' }}>
         Select a chapter
       </div>
     )
@@ -322,7 +322,8 @@ export default function NarrativeReader({ chapters, activeChapterId, onChapterIn
     <div
       ref={scrollRef}
       style={{
-        height: '100%',
+        flex: 1,
+        minHeight: 0,
         overflow: 'auto',
         background: 'var(--bg-primary)',
       }}

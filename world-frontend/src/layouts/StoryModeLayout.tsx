@@ -202,16 +202,26 @@ export default function StoryModeLayout() {
           />
         )}
 
-        {/* Center: NarrativeReader */}
-        <NarrativeReader
-          chapters={chapters}
-          activeChapterId={activeChapterId}
-          onChapterInView={setActiveChapterId}
-          onEntityClick={handleEntityClick}
-          onCultureSelect={handleCultureSelect}
-          onPlayChapter={handlePlayChapter}
-          isMobile={isMobile}
-        />
+        {/* Center: NarrativeReader + Audio Player */}
+        <div style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
+          <NarrativeReader
+            chapters={chapters}
+            activeChapterId={activeChapterId}
+            onChapterInView={setActiveChapterId}
+            onEntityClick={handleEntityClick}
+            onCultureSelect={handleCultureSelect}
+            onPlayChapter={handlePlayChapter}
+            isMobile={isMobile}
+          />
+          {showPlayer && (
+            <AudioPlayerBar
+              chapterId={audioChapterId}
+              chapters={chapters}
+              onChapterChange={handleAudioChapterChange}
+              onClose={() => setAudioChapterId(null)}
+            />
+          )}
+        </div>
 
         {/* Right panel: EvidencePanel */}
         {isMobile ? (
@@ -261,15 +271,6 @@ export default function StoryModeLayout() {
         )}
       </div>
 
-      {/* Audio Player Bar */}
-      {showPlayer && (
-        <AudioPlayerBar
-          chapterId={audioChapterId}
-          chapters={chapters}
-          onChapterChange={handleAudioChapterChange}
-          onClose={() => setAudioChapterId(null)}
-        />
-      )}
     </div>
   )
 }
