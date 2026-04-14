@@ -425,6 +425,7 @@ export interface CultureVariant {
   culture: string
   chapter_count: number
   summary: string
+  narrative_text: string
   actors: Array<{ id: string; name: string; type: string; summary: string }>
   events: Array<{ id: string; name: string; type: string; summary: string }>
   places: Array<{ id: string; name: string; type: string; summary: string }>

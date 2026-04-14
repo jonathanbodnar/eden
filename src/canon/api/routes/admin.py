@@ -178,6 +178,19 @@ async def run_alias_merges(session: AsyncSession = Depends(get_session)):
     return result
 
 
+@router.post("/run-alias-equivalences")
+async def run_alias_equivalences(session: AsyncSession = Depends(get_session)):
+    """Populate entity_equivalences from the alias dictionary.
+
+    Creates soft equivalence links between entities that are known aliases
+    (e.g., Prajapati = Brahma, Enki = Ea). Does NOT require canon scores.
+    """
+    svc = MergeService()
+    result = await svc.run_alias_equivalences(session)
+    await session.commit()
+    return result
+
+
 @router.post("/plan-narrative")
 async def plan_narrative(
     epoch_orders: str | None = None,

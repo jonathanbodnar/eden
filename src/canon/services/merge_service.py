@@ -425,6 +425,71 @@ Return JSON: {{"should_merge": true/false, "confidence": 0.0-1.0, "reasoning": "
         await session.flush()
         return {"alias_merges": merged_count}
 
+    async def run_alias_equivalences(self, session: AsyncSession) -> dict:
+        """Populate entity_equivalences from the alias dictionary without requiring
+        canon scores. This creates soft links (equivalences) rather than hard merges,
+        preserving both entities but marking them as equivalent for the narrative.
+        """
+        from sqlalchemy import text as sa_text
+        equivalences_created = 0
+
+        for model_cls, entity_type in [
+            (CanonicalActor, CanonicalType.ACTOR),
+            (CanonicalEvent, CanonicalType.EVENT),
+            (CanonicalPlace, CanonicalType.PLACE),
+        ]:
+            q = select(model_cls.id, model_cls.canonical_name).where(
+                model_cls.is_current.is_(True)
+            )
+            entities = (await session.execute(q)).all()
+
+            name_to_entities: dict[str, list[tuple]] = defaultdict(list)
+            for eid, name in entities:
+                norm = _normalize(name)
+                canonical_form = self._alias_map.get(norm, norm)
+                name_to_entities[canonical_form].append((eid, name))
+
+            for canonical_form, group in name_to_entities.items():
+                if len(group) <= 1:
+                    continue
+
+                primary = group[0]
+                for other in group[1:]:
+                    if other[0] == primary[0]:
+                        continue
+                    try:
+                        await session.execute(sa_text("""
+                            INSERT INTO entity_equivalences
+                                (id, primary_entity_type, primary_entity_id,
+                                 equivalent_entity_type, equivalent_entity_id,
+                                 merge_basis, confidence, evidence_json)
+                            VALUES (gen_random_uuid(), :pt, :pid, :et, :eid,
+                                    'alias_dictionary', 0.9, :evidence)
+                            ON CONFLICT DO NOTHING
+                        """), {
+                            "pt": entity_type.value, "pid": primary[0],
+                            "et": entity_type.value, "eid": other[0],
+                            "conf": 0.9,
+                            "evidence": json.dumps({
+                                "should_merge": True,
+                                "confidence": 0.9,
+                                "reasoning": f"Alias match: '{primary[1]}' and '{other[1]}' map to canonical form '{canonical_form}'",
+                                "role_match": True,
+                                "action_match": True,
+                                "context_match": True,
+                                "pattern_match": True,
+                            }),
+                        })
+                        equivalences_created += 1
+                    except Exception:
+                        logger.warning(
+                            "Failed to create equivalence: %s ↔ %s", primary[1], other[1],
+                            exc_info=True
+                        )
+
+        await session.flush()
+        return {"alias_equivalences_created": equivalences_created}
+
     async def run_llm_entity_resolution(self, session: AsyncSession, max_pairs: int = 50) -> dict:
         """Run LLM-assisted entity resolution for motif-clustered candidates.
         Implements Law 8 with the 4-criteria check."""

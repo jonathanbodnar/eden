@@ -18,7 +18,6 @@ from src.canon.models.canon_support_link import CanonSupportLink
 from src.canon.models.canon_score import CanonScore
 from src.canon.models.enums import CanonicalType
 from src.canon.models.canonical_chapter import CanonicalChapter
-from src.canon.models.canon_dependency import CanonDependency
 from src.canon.models.image_generation_job import ImageGenerationJob
 from src.canon.models.story_chapter import StoryChapter
 from src.canon.models.story_outline import StoryOutline
@@ -414,109 +413,97 @@ async def get_culture_variants(
             cultures[culture_name] = []
         cultures[culture_name].append(ch)
 
-    # Build response with entity data per culture
+    # Build response with narrative text and entity data per culture
     result = []
     for culture_name, chapters in sorted(cultures.items()):
-        # Collect actors, events, places from all chapters for this culture
-        actors = []
-        events = []
-        places = []
+        culture_key = culture_name.split("/")[0].strip()
 
-        for ch in chapters[:5]:
-            deps_q = select(CanonDependency.child_type, CanonDependency.child_id).where(
-                CanonDependency.parent_type == CanonicalType.CHAPTER,
-                CanonDependency.parent_id == ch.id,
-            )
-            try:
-                deps = (await session.execute(deps_q)).all()
-                for child_type, child_id in deps:
-                    if child_type == CanonicalType.ACTOR:
-                        a = await session.get(CanonicalActor, child_id)
-                        if a and a.is_current:
-                            actors.append({
-                                "id": str(a.id),
-                                "name": a.canonical_name,
-                                "type": a.actor_type.value,
-                                "summary": (a.summary or "")[:200],
-                            })
-                    elif child_type == CanonicalType.EVENT:
-                        e = await session.get(CanonicalEvent, child_id)
-                        if e and e.is_current:
-                            events.append({
-                                "id": str(e.id),
-                                "name": e.canonical_name,
-                                "type": e.event_type.value,
-                                "summary": (e.summary or "")[:200],
-                            })
-                    elif child_type == CanonicalType.PLACE:
-                        p = await session.get(CanonicalPlace, child_id)
-                        if p and p.is_current:
-                            places.append({
-                                "id": str(p.id),
-                                "name": p.canonical_name,
-                                "type": p.place_type.value,
-                                "summary": (p.summary or "")[:200],
-                            })
-            except Exception:
-                continue
+        # Efficient SQL: get actors for this culture's chapters
+        ch_ids = [str(ch.id) for ch in chapters[:8]]
+        if not ch_ids:
+            continue
+        ch_ids_sql = ",".join(f"'{cid}'" for cid in ch_ids)
 
-        # Deduplicate by id
-        seen = set()
-        unique_actors = []
-        for a in actors:
-            if a["id"] not in seen:
-                seen.add(a["id"])
-                unique_actors.append(a)
-        unique_events = []
-        for e in events:
-            if e["id"] not in seen:
-                seen.add(e["id"])
-                unique_events.append(e)
-        unique_places = []
-        for p in places:
-            if p["id"] not in seen:
-                seen.add(p["id"])
-                unique_places.append(p)
+        actors_q = text(f"""
+            SELECT DISTINCT a.id::text, a.canonical_name, a.actor_type, LEFT(a.summary, 200)
+            FROM canonical_actors a
+            JOIN canon_dependencies d ON d.child_type = 'actor' AND d.child_id = a.id
+            WHERE d.parent_type = 'chapter' AND d.parent_id IN ({ch_ids_sql})
+              AND a.is_current = true
+            ORDER BY a.canonical_name LIMIT 12
+        """)
+        events_q = text(f"""
+            SELECT DISTINCT e.id::text, e.canonical_name, e.event_type, LEFT(e.summary, 200)
+            FROM canonical_events e
+            JOIN canon_dependencies d ON d.child_type = 'event' AND d.child_id = e.id
+            WHERE d.parent_type = 'chapter' AND d.parent_id IN ({ch_ids_sql})
+              AND e.is_current = true
+            ORDER BY e.canonical_name LIMIT 12
+        """)
+        places_q = text(f"""
+            SELECT DISTINCT p.id::text, p.canonical_name, p.place_type, LEFT(p.summary, 200)
+            FROM canonical_places p
+            JOIN canon_dependencies d ON d.child_type = 'place' AND d.child_id = p.id
+            WHERE d.parent_type = 'chapter' AND d.parent_id IN ({ch_ids_sql})
+              AND p.is_current = true
+            ORDER BY p.canonical_name LIMIT 6
+        """)
 
-        # Get source excerpts for this culture
+        try:
+            actor_rows = (await session.execute(actors_q)).all()
+            event_rows = (await session.execute(events_q)).all()
+            place_rows = (await session.execute(places_q)).all()
+        except Exception:
+            actor_rows, event_rows, place_rows = [], [], []
+
+        unique_actors = [{"id": r[0], "name": r[1], "type": r[2], "summary": r[3] or ""} for r in actor_rows]
+        unique_events = [{"id": r[0], "name": r[1], "type": r[2], "summary": r[3] or ""} for r in event_rows]
+        unique_places = [{"id": r[0], "name": r[1], "type": r[2], "summary": r[3] or ""} for r in place_rows]
+
+        # Get actual source texts for this culture — these ARE the cultural narratives
         source_excerpts = []
         try:
-            entity_ids = [_uuid.UUID(a["id"]) for a in unique_actors[:5]] + \
-                         [_uuid.UUID(e["id"]) for e in unique_events[:5]]
-            if entity_ids:
-                for eid in entity_ids[:10]:
-                    links_q = (
-                        select(CanonSupportLink, SASourceRecord)
-                        .join(SASourceRecord, SASourceRecord.id == CanonSupportLink.archive_object_id)
-                        .where(
-                            CanonSupportLink.canonical_id == eid,
-                            SASourceRecord.culture.ilike(f"%{culture_name.split('/')[0].strip()}%"),
-                        )
-                        .order_by(CanonSupportLink.weight.desc())
-                        .limit(2)
-                    )
-                    for link, sr in (await session.execute(links_q)).all():
-                        sv_q = select(SASourceVersion.text_extracted).where(
-                            SASourceVersion.source_record_id == sr.id
-                        ).limit(1)
-                        sv_row = (await session.execute(sv_q)).first()
-                        excerpt = sv_row[0][:400] if sv_row and sv_row[0] else ""
-                        source_excerpts.append({
-                            "title": sr.canonical_title,
-                            "excerpt": excerpt,
-                            "culture": sr.culture,
-                        })
+            entity_ids_sql = ",".join(
+                f"'{r[0]}'" for r in (list(actor_rows[:6]) + list(event_rows[:6]))
+            )
+            if entity_ids_sql:
+                src_q = text(f"""
+                    SELECT DISTINCT ON (sr.id)
+                        sr.canonical_title, sr.culture, LEFT(sv.text_extracted, 800), cl.weight
+                    FROM canon_support_links cl
+                    JOIN source_records sr ON sr.id = cl.archive_object_id
+                    LEFT JOIN source_versions sv ON sv.source_record_id = sr.id
+                    WHERE cl.canonical_id IN ({entity_ids_sql})
+                      AND sr.culture ILIKE '%{culture_key}%'
+                      AND sv.text_extracted IS NOT NULL AND sv.text_extracted != ''
+                    ORDER BY sr.id, cl.weight DESC
+                    LIMIT 8
+                """)
+                src_rows = (await session.execute(src_q)).all()
+                source_excerpts = [
+                    {"title": r[0] or "Unknown", "excerpt": r[2] or "", "culture": r[1]}
+                    for r in src_rows
+                ]
         except Exception:
             pass
 
-        # Combine chapter summaries into a narrative overview
+        # Build a narrative from the actual source texts + chapter summaries
         summaries = [ch.chapter_summary for ch in chapters if ch.chapter_summary]
-        combined_summary = " ".join(summaries[:3]) if summaries else ""
+        combined_summary = " ".join(summaries[:5]) if summaries else ""
+
+        # Compose a readable narrative from the source excerpts
+        narrative_parts = []
+        for ex in source_excerpts:
+            if ex["excerpt"].strip():
+                narrative_parts.append(ex["excerpt"].strip())
+
+        narrative_text = "\n\n".join(narrative_parts) if narrative_parts else combined_summary
 
         result.append({
             "culture": culture_name,
             "chapter_count": len(chapters),
             "summary": combined_summary[:600],
+            "narrative_text": narrative_text[:5000],
             "actors": unique_actors[:10],
             "events": unique_events[:10],
             "places": unique_places[:5],

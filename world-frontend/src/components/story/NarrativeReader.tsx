@@ -93,113 +93,153 @@ function ClaimIndicator({ cultures, score }: { cultures: string[]; score: number
 }
 
 function CultureView({ variant }: { variant: CultureVariant }) {
+  const hasNarrative = variant.narrative_text && variant.narrative_text.trim().length > 50
+  const [showDetails, setShowDetails] = useState(false)
+
   return (
     <div style={{ marginTop: 16 }}>
-      {variant.summary && (
+      <div style={{
+        fontSize: 11,
+        textTransform: 'uppercase',
+        letterSpacing: 2,
+        color: 'var(--gold)',
+        marginBottom: 12,
+        paddingBottom: 8,
+        borderBottom: '1px solid var(--border)',
+      }}>
+        {variant.culture} Tradition
+        <span style={{ color: 'var(--text-muted)', marginLeft: 8, letterSpacing: 0 }}>
+          {variant.chapter_count} chapter{variant.chapter_count !== 1 ? 's' : ''}
+        </span>
+      </div>
+
+      {hasNarrative ? (
         <div style={{
-          fontSize: 15,
-          lineHeight: 1.7,
+          fontSize: 16,
+          lineHeight: 1.8,
           color: 'var(--text-primary)',
           fontFamily: "'Georgia', 'Times New Roman', serif",
           marginBottom: 24,
         }}>
-          {variant.summary.split('\n\n').map((para, i) => (
-            <p key={i} style={{ marginBottom: 16 }}>{para}</p>
+          {variant.narrative_text.split('\n\n').map((para, i) => (
+            <p key={i} style={{ marginBottom: 20, textIndent: i > 0 ? 24 : 0 }}>
+              {para}
+            </p>
           ))}
         </div>
+      ) : variant.summary ? (
+        <div style={{
+          fontSize: 15,
+          lineHeight: 1.7,
+          color: 'var(--text-secondary)',
+          fontFamily: "'Georgia', 'Times New Roman', serif",
+          marginBottom: 24,
+          fontStyle: 'italic',
+        }}>
+          {variant.summary}
+        </div>
+      ) : null}
+
+      {(variant.actors.length > 0 || variant.events.length > 0) && (
+        <button
+          onClick={() => setShowDetails(!showDetails)}
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 6,
+            padding: '6px 14px',
+            background: 'var(--bg-secondary)',
+            border: '1px solid var(--border)',
+            borderRadius: 16,
+            cursor: 'pointer',
+            fontSize: 12,
+            color: 'var(--text-secondary)',
+            marginBottom: 16,
+          }}
+        >
+          {showDetails ? 'Hide' : 'Show'} Figures & Events
+          <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+            ({variant.actors.length} figures, {variant.events.length} events)
+          </span>
+        </button>
       )}
 
-      {variant.actors.length > 0 && (
-        <div style={{ marginBottom: 20 }}>
-          <div style={{
-            fontSize: 11,
-            textTransform: 'uppercase',
-            letterSpacing: 1.5,
-            color: 'var(--gold)',
-            marginBottom: 8,
-          }}>
-            Key Figures
-          </div>
-          {variant.actors.map(a => (
-            <div key={a.id} style={{
-              padding: '8px 12px',
-              background: 'var(--bg-secondary)',
-              borderRadius: 6,
-              marginBottom: 6,
-            }}>
-              <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>
-                {a.name}
+      {showDetails && (
+        <>
+          {variant.actors.length > 0 && (
+            <div style={{ marginBottom: 20 }}>
+              <div style={{
+                fontSize: 11, textTransform: 'uppercase', letterSpacing: 1.5,
+                color: 'var(--gold)', marginBottom: 8,
+              }}>
+                Key Figures
               </div>
-              <div style={{ fontSize: 11, color: 'var(--gold)', marginBottom: 2 }}>{a.type}</div>
-              {a.summary && (
-                <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-                  {a.summary}
+              {variant.actors.map(a => (
+                <div key={a.id} style={{
+                  padding: '8px 12px', background: 'var(--bg-secondary)',
+                  borderRadius: 6, marginBottom: 6,
+                }}>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>
+                    {a.name}
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--gold)', marginBottom: 2 }}>{a.type}</div>
+                  {a.summary && (
+                    <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                      {a.summary}
+                    </div>
+                  )}
                 </div>
-              )}
+              ))}
             </div>
-          ))}
-        </div>
-      )}
+          )}
 
-      {variant.events.length > 0 && (
-        <div style={{ marginBottom: 20 }}>
-          <div style={{
-            fontSize: 11,
-            textTransform: 'uppercase',
-            letterSpacing: 1.5,
-            color: '#7eb8da',
-            marginBottom: 8,
-          }}>
-            Key Events
-          </div>
-          {variant.events.map(e => (
-            <div key={e.id} style={{
-              padding: '8px 12px',
-              background: 'var(--bg-secondary)',
-              borderRadius: 6,
-              marginBottom: 6,
-            }}>
-              <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>
-                {e.name}
+          {variant.events.length > 0 && (
+            <div style={{ marginBottom: 20 }}>
+              <div style={{
+                fontSize: 11, textTransform: 'uppercase', letterSpacing: 1.5,
+                color: '#7eb8da', marginBottom: 8,
+              }}>
+                Key Events
               </div>
-              {e.summary && (
-                <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-                  {e.summary}
+              {variant.events.map(e => (
+                <div key={e.id} style={{
+                  padding: '8px 12px', background: 'var(--bg-secondary)',
+                  borderRadius: 6, marginBottom: 6,
+                }}>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>
+                    {e.name}
+                  </div>
+                  {e.summary && (
+                    <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                      {e.summary}
+                    </div>
+                  )}
                 </div>
-              )}
+              ))}
             </div>
-          ))}
-        </div>
+          )}
+        </>
       )}
 
       {variant.source_excerpts.length > 0 && (
         <div style={{ marginBottom: 20 }}>
           <div style={{
-            fontSize: 11,
-            textTransform: 'uppercase',
-            letterSpacing: 1.5,
-            color: 'var(--text-muted)',
-            marginBottom: 8,
+            fontSize: 11, textTransform: 'uppercase', letterSpacing: 1.5,
+            color: 'var(--text-muted)', marginBottom: 8,
           }}>
-            Source Texts
+            Original Sources
           </div>
           {variant.source_excerpts.map((src, i) => (
             <div key={i} style={{
-              padding: '10px 12px',
-              background: 'var(--bg-secondary)',
-              borderRadius: 6,
-              marginBottom: 6,
-              borderLeft: '3px solid var(--gold)',
+              padding: '10px 12px', background: 'var(--bg-secondary)',
+              borderRadius: 6, marginBottom: 6, borderLeft: '3px solid var(--gold)',
             }}>
               <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-primary)', marginBottom: 4 }}>
                 {src.title}
               </div>
               <div style={{
-                fontSize: 13,
-                color: 'var(--text-secondary)',
-                lineHeight: 1.7,
-                fontFamily: "'Georgia', 'Times New Roman', serif",
-                fontStyle: 'italic',
+                fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.7,
+                fontFamily: "'Georgia', 'Times New Roman', serif", fontStyle: 'italic',
               }}>
                 {src.excerpt}
               </div>
