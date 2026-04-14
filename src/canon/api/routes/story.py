@@ -395,71 +395,12 @@ async def get_culture_variants(
     outline = await session.get(StoryOutline, sc.story_outline_id) if sc.story_outline_id else None
     themes = outline.themes if outline else []
 
-    # Strategy: find cultures via source records that are linked to entities
-    # in this epoch AND have substantive text about the chapter's themes.
-    # This naturally filters out "English/British" for creation epochs.
     epoch_id = str(sc.epoch_id)
-    theme_words = [t.lower().strip() for t in themes if t.strip()] if themes else []
 
-    # Build a theme filter for source text relevance
-    theme_ilike_clauses = ""
-    if theme_words:
-        conditions = " OR ".join(
-            f"LOWER(sv.text_extracted) LIKE '%' || ${i+3} || '%'"
-            for i, _ in enumerate(theme_words)
-        )
-        theme_ilike_clauses = f"AND ({conditions})"
-
-    # Find cultures with real source evidence for this epoch's entities
-    culture_q = text(f"""
-        WITH epoch_entities AS (
-            SELECT DISTINCT d.child_id as entity_id
-            FROM canon_dependencies d
-            JOIN canonical_chapters c ON c.id = d.parent_id AND d.parent_type = 'chapter'
-            WHERE c.epoch_id = :epoch_id AND c.is_current = true
-              AND d.child_type IN ('actor', 'event')
-        ),
-        culture_sources AS (
-            SELECT DISTINCT
-                sr.culture,
-                sr.id as source_id,
-                sr.canonical_title,
-                LEFT(sv.text_extracted, 1200) as source_text,
-                cl.weight,
-                LENGTH(sv.text_extracted) as text_len
-            FROM epoch_entities ee
-            JOIN canon_support_links cl ON cl.canonical_id = ee.entity_id
-            JOIN source_records sr ON sr.id = cl.archive_object_id
-            JOIN source_versions sv ON sv.source_record_id = sr.id
-            WHERE sr.culture IS NOT NULL AND sr.culture != ''
-              AND sv.text_extracted IS NOT NULL
-              AND LENGTH(sv.text_extracted) > 200
-            {theme_ilike_clauses}
-        )
-        SELECT culture, count(DISTINCT source_id) as source_count,
-               sum(text_len) as total_text
-        FROM culture_sources
-        GROUP BY culture
-        HAVING count(DISTINCT source_id) >= 2 AND sum(text_len) > 500
-        ORDER BY sum(text_len) DESC
-    """)
-    params: dict = {"epoch_id": epoch_id}
-    for i, tw in enumerate(theme_words):
-        params[f"${i+3}"] = tw
-
-    # Simpler approach — skip the dollar-sign params for themes and use a
-    # straightforward query with ILIKE patterns built into the SQL string.
-    # This avoids parameter naming issues.
-    if theme_words:
-        theme_conditions = " OR ".join(
-            f"LOWER(sv.text_extracted) LIKE '%%{tw.replace(chr(39), '')}%%'"
-            for tw in theme_words[:6]
-        )
-        theme_filter = f"AND ({theme_conditions})"
-    else:
-        theme_filter = ""
-
-    culture_q = text(f"""
+    # Find cultures that have source material linked to entities in this epoch.
+    # No theme filtering (too slow on text fields) — just require the culture
+    # has at least one source with meaningful text.
+    culture_q = text("""
         WITH epoch_entities AS (
             SELECT DISTINCT d.child_id as entity_id
             FROM canon_dependencies d
@@ -478,14 +419,13 @@ async def get_culture_variants(
             JOIN source_versions sv ON sv.source_record_id = sr.id
             WHERE sr.culture IS NOT NULL AND sr.culture != ''
               AND sv.text_extracted IS NOT NULL
-              AND LENGTH(sv.text_extracted) > 200
-              {theme_filter}
+              AND LENGTH(sv.text_extracted) > 100
         )
         SELECT culture, count(DISTINCT source_id) as source_count,
                sum(text_len) as total_text
         FROM culture_sources
         GROUP BY culture
-        HAVING count(DISTINCT source_id) >= 2 AND sum(text_len) > 500
+        HAVING sum(text_len) > 200
         ORDER BY sum(text_len) DESC
         LIMIT 40
     """)
