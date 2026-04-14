@@ -937,6 +937,8 @@ async def _generate_audio_background(story_chapter_id: str) -> None:
 
     cid_str = str(story_chapter_id)
     try:
+        # Read chapter text in a short-lived session, then close it
+        # before the long TTS call so the connection doesn't go stale.
         async with async_session_factory() as session:
             chapter = await session.get(StoryChapter, _uuid.UUID(cid_str))
             if not chapter:
@@ -948,43 +950,46 @@ async def _generate_audio_background(story_chapter_id: str) -> None:
             clean_text = _strip_annotations(chapter.narrative_text or "")
             transcript = f"{title}\n\n{clean_text}"
 
-            async with httpx.AsyncClient(timeout=600) as client:
-                resp = await client.post(
-                    "https://api.cartesia.ai/tts/bytes",
-                    headers={
-                        "X-API-Key": settings.cartesia_api_key,
-                        "Cartesia-Version": "2026-03-01",
-                        "Content-Type": "application/json",
+        # TTS call can take minutes — no DB connection held open
+        async with httpx.AsyncClient(timeout=600) as client:
+            resp = await client.post(
+                "https://api.cartesia.ai/tts/bytes",
+                headers={
+                    "X-API-Key": settings.cartesia_api_key,
+                    "Cartesia-Version": "2026-03-01",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model_id": "sonic-3",
+                    "transcript": transcript,
+                    "voice": {
+                        "mode": "id",
+                        "id": settings.cartesia_voice_id,
                     },
-                    json={
-                        "model_id": "sonic-3",
-                        "transcript": transcript,
-                        "voice": {
-                            "mode": "id",
-                            "id": settings.cartesia_voice_id,
-                        },
-                        "language": "en",
-                        "output_format": {
-                            "container": "mp3",
-                            "sample_rate": 44100,
-                            "bit_rate": 128000,
-                        },
-                        "generation_config": {
-                            "speed": 0.9,
-                            "emotion": "contemplative",
-                        },
+                    "language": "en",
+                    "output_format": {
+                        "container": "mp3",
+                        "sample_rate": 44100,
+                        "bit_rate": 128000,
                     },
-                )
-                if resp.status_code != 200:
-                    logger.error("Cartesia TTS error %s: %s", resp.status_code, resp.text[:500])
-                    _audio_tasks[cid_str] = f"failed:Cartesia error {resp.status_code}"
-                    return
+                    "generation_config": {
+                        "speed": 0.9,
+                        "emotion": "contemplative",
+                    },
+                },
+            )
+            if resp.status_code != 200:
+                logger.error("Cartesia TTS error %s: %s", resp.status_code, resp.text[:500])
+                _audio_tasks[cid_str] = f"failed:Cartesia error {resp.status_code}"
+                return
 
-                audio_bytes = resp.content
+            audio_bytes = resp.content
 
-            word_count = len(transcript.split())
-            estimated_duration = word_count / 2.5
+        word_count = len(transcript.split())
+        estimated_duration = word_count / 2.5
 
+        # Fresh session for the DB write — guaranteed live connection
+        async with async_session_factory() as session:
             await session.execute(
                 text("""
                     INSERT INTO story_chapter_audio (story_chapter_id, audio_data, duration_seconds, file_size_bytes, voice_id, model_id)
