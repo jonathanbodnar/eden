@@ -1,12 +1,13 @@
 import { useState, useEffect } from 'react'
 import { api } from '../../api'
-import type { StoryChapter, StoryEvidence, EntityMergeBreakdown } from '../../api'
+import type { StoryChapter, StoryEvidence, EntityMergeBreakdown, CultureVariant } from '../../api'
 
 interface Props {
   chapter: StoryChapter | null
   evidence: StoryEvidence[]
   selectedEntity: { entityType: string; entityId: string; entityName: string } | null
   onClearEntity?: () => void
+  activeCulture?: CultureVariant | null
 }
 
 function ScoreBar({ value, label, color }: { value: number; label: string; color?: string }) {
@@ -285,7 +286,107 @@ function EntityBreakdownView({ data, onBack }: { data: EntityMergeBreakdown; onB
   )
 }
 
-export default function EvidencePanel({ chapter, evidence, selectedEntity, onClearEntity }: Props) {
+function CultureEntitiesView({ culture }: { culture: CultureVariant }) {
+  return (
+    <>
+      <div style={{ padding: '16px', borderBottom: '1px solid var(--border)' }}>
+        <div style={{
+          fontSize: 11, textTransform: 'uppercase', letterSpacing: 1.5,
+          color: 'var(--gold)', marginBottom: 4,
+        }}>
+          {culture.culture} Tradition
+        </div>
+        <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+          {culture.source_count} sources
+          {culture.actors.length > 0 && ` \u00B7 ${culture.actors.length} figures`}
+          {culture.events.length > 0 && ` \u00B7 ${culture.events.length} events`}
+        </div>
+      </div>
+
+      <div style={{ flex: 1, overflow: 'auto', padding: '12px 16px' }}>
+        {culture.actors.length > 0 && (
+          <div style={{ marginBottom: 20 }}>
+            <div style={{
+              fontSize: 11, textTransform: 'uppercase', letterSpacing: 1,
+              color: 'var(--gold)', marginBottom: 8,
+            }}>
+              Key Figures ({culture.actors.length})
+            </div>
+            {culture.actors.map(a => (
+              <div key={a.id} style={{
+                padding: '8px 10px', background: 'var(--bg-tertiary)',
+                borderRadius: 6, marginBottom: 6,
+              }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>
+                  {a.name}
+                </div>
+                {a.summary && (
+                  <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5, marginTop: 2 }}>
+                    {a.summary.slice(0, 200)}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {culture.events.length > 0 && (
+          <div style={{ marginBottom: 20 }}>
+            <div style={{
+              fontSize: 11, textTransform: 'uppercase', letterSpacing: 1,
+              color: '#7eb8da', marginBottom: 8,
+            }}>
+              Key Events ({culture.events.length})
+            </div>
+            {culture.events.map(e => (
+              <div key={e.id} style={{
+                padding: '8px 10px', background: 'var(--bg-tertiary)',
+                borderRadius: 6, marginBottom: 6,
+              }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>
+                  {e.name}
+                </div>
+                {e.summary && (
+                  <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5, marginTop: 2 }}>
+                    {e.summary.slice(0, 200)}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {culture.places.length > 0 && (
+          <div style={{ marginBottom: 20 }}>
+            <div style={{
+              fontSize: 11, textTransform: 'uppercase', letterSpacing: 1,
+              color: '#a8d5a2', marginBottom: 8,
+            }}>
+              Key Places ({culture.places.length})
+            </div>
+            {culture.places.map(p => (
+              <div key={p.id} style={{
+                padding: '8px 10px', background: 'var(--bg-tertiary)',
+                borderRadius: 6, marginBottom: 6,
+              }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>
+                  {p.name}
+                </div>
+                {p.summary && (
+                  <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5, marginTop: 2 }}>
+                    {p.summary.slice(0, 200)}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </>
+  )
+}
+
+export default function EvidencePanel({ chapter, evidence, selectedEntity, onClearEntity, activeCulture }: Props) {
   const [mergeData, setMergeData] = useState<EntityMergeBreakdown | null>(null)
   const [loadingMerge, setLoadingMerge] = useState(false)
 
@@ -331,6 +432,21 @@ export default function EvidencePanel({ chapter, evidence, selectedEntity, onCle
         color: 'var(--text-muted)',
       }}>
         Loading entity breakdown...
+      </div>
+    )
+  }
+
+  if (activeCulture && !selectedEntity) {
+    return (
+      <div style={{
+        background: 'var(--bg-secondary)',
+        borderLeft: '1px solid var(--border)',
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100%',
+        overflow: 'hidden',
+      }}>
+        <CultureEntitiesView culture={activeCulture} />
       </div>
     )
   }

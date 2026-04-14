@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { api } from '../api'
-import type { StoryChapter, StoryEpoch, StoryEvidence } from '../api'
+import type { StoryChapter, StoryEpoch, StoryEvidence, CultureVariant } from '../api'
 import BookNav from '../components/story/BookNav'
 import NarrativeReader from '../components/story/NarrativeReader'
 import EvidencePanel from '../components/story/EvidencePanel'
@@ -13,6 +13,7 @@ export default function StoryModeLayout() {
   const [selectedEntity, setSelectedEntity] = useState<{
     entityType: string; entityId: string; entityName: string
   } | null>(null)
+  const [activeCulture, setActiveCulture] = useState<CultureVariant | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -35,11 +36,17 @@ export default function StoryModeLayout() {
   }, [activeChapterId])
 
   const handleEntityClick = useCallback((entityType: string, entityId: string, entityName: string) => {
+    setActiveCulture(null)
     setSelectedEntity({ entityType, entityId, entityName })
   }, [])
 
   const handleClearEntity = useCallback(() => {
     setSelectedEntity(null)
+  }, [])
+
+  const handleCultureSelect = useCallback((variant: CultureVariant | null) => {
+    setActiveCulture(variant)
+    if (variant) setSelectedEntity(null)
   }, [])
 
   const activeChapter = chapters.find(c => c.id === activeChapterId) || null
@@ -89,12 +96,14 @@ export default function StoryModeLayout() {
         activeChapterId={activeChapterId}
         onChapterInView={setActiveChapterId}
         onEntityClick={handleEntityClick}
+        onCultureSelect={handleCultureSelect}
       />
       <EvidencePanel
         chapter={activeChapter}
         evidence={evidence}
         selectedEntity={selectedEntity}
         onClearEntity={handleClearEntity}
+        activeCulture={activeCulture}
       />
     </div>
   )
