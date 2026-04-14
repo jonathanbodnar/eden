@@ -205,7 +205,7 @@ export default function StoryModeLayout() {
             onCultureSelect={handleCultureSelect}
             isMobile={isMobile}
           />
-          {activeChapterId && (
+          {!isMobile && activeChapterId && (
             <AudioPlayerBar
               chapterId={activeChapterId}
               chapters={chapters}
@@ -262,6 +262,14 @@ export default function StoryModeLayout() {
         )}
       </div>
 
+      {/* Mobile: audio bar fixed at bottom, outside grid */}
+      {isMobile && activeChapterId && (
+        <AudioPlayerBar
+          chapterId={activeChapterId}
+          chapters={chapters}
+          onChapterChange={handleAudioChapterChange}
+        />
+      )}
     </div>
   )
 }

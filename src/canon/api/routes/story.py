@@ -32,10 +32,14 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _CULTURE_HINTS = [
-    (["yahweh", "yhwh", "elohim", "hebrew", "israel", "moses", "adam", "eve", "noah", "abraham"], "Hebrew / Israelite"),
-    (["enki", "enlil", "anu", "marduk", "tiamat", "apsu", "gilgamesh", "sumerian", "akkadian", "babylonian", "mesopotami"], "Mesopotamian"),
-    (["atum", "osiris", "isis", "horus", "thoth", "ptah", "khnum", "egyptian", "kemet", "pharaoh"], "Ancient Egyptian"),
-    (["brahma", "vishnu", "shiva", "prajapati", "purusha", "vedic", "hindu", "sanskrit", "indra", "agni"], "Vedic / Hindu"),
+    (["yahweh", "yhwh", "elohim", "hebrew", "israel", "moses", "adam", "eve", "noah", "abraham",
+      "genesis", "tehom", "tohu", "bohu", "eden"], "Hebrew / Israelite"),
+    (["enki", "enlil", "anu", "marduk", "tiamat", "apsu", "gilgamesh", "sumerian", "akkadian",
+      "babylonian", "mesopotami", "enuma elish", "eridu"], "Mesopotamian"),
+    (["atum", "osiris", "isis", "horus", "thoth", "ptah", "khnum", "egyptian", "kemet",
+      "pharaoh", "pyramid text", "nun"], "Ancient Egyptian"),
+    (["brahma", "vishnu", "shiva", "prajapati", "purusha", "vedic", "hindu", "sanskrit",
+      "indra", "agni", "rig veda", "manu", "hiranyagarbha"], "Vedic / Hindu"),
     (["zeus", "prometheus", "athena", "apollo", "greek", "olymp", "titan", "hesiod", "homer"], "Greek"),
     (["odin", "thor", "freya", "norse", "ymir", "asgard", "edda"], "Norse / Germanic"),
     (["ahura mazda", "zoroast", "avesta", "persian", "zarathustra", "angra mainyu"], "Zoroastrian / Persian"),
@@ -46,6 +50,8 @@ _CULTURE_HINTS = [
     (["sky father", "great spirit", "plains", "native american"], "Indigenous / Cross-cultural"),
     (["chinese", "pangu", "nuwa", "fuxi", "jade emperor"], "Chinese"),
 ]
+
+_VAGUE_CULTURES = {"ancient", "unknown", "other", "unspecified", "general"}
 
 
 _WORD_BOUNDARY_RE = re.compile(r'\b(?:' + '|'.join([
@@ -64,6 +70,19 @@ def _infer_culture_from_entity(name: str, summary: str) -> list[str]:
         if "Ancient Egyptian" not in cultures:
             cultures.append("Ancient Egyptian")
     return cultures
+
+
+def _refine_cultures(db_cultures: list[str], name: str, summary: str) -> list[str]:
+    """Replace vague DB cultures (e.g. 'Ancient') with specific inferred ones when possible."""
+    specific = [c for c in db_cultures if c.lower() not in _VAGUE_CULTURES]
+    vague = [c for c in db_cultures if c.lower() in _VAGUE_CULTURES]
+    if not vague:
+        return db_cultures
+    inferred = _infer_culture_from_entity(name, summary)
+    new_cultures = [c for c in inferred if c not in specific]
+    if new_cultures:
+        return specific + new_cultures
+    return db_cultures
 
 
 def _build_merge_reasoning(entity_name: str, entity_summary: str | None, archetype_name: str, cultures: list[str]) -> str:
@@ -362,7 +381,9 @@ async def get_entity_merge_breakdown(
             except Exception:
                 pass
 
-            if not other_cultures and other_name:
+            if other_cultures and other_name:
+                other_cultures = _refine_cultures(other_cultures, other_name, other_summary or "")
+            elif not other_cultures and other_name:
                 other_cultures = _infer_culture_from_entity(other_name, other_summary or "")
 
             evidence = r.get("evidence_json") or {}
@@ -434,8 +455,12 @@ async def get_entity_merge_breakdown(
             except Exception:
                 pass
 
-            if not aka_cultures:
-                aka_cultures = _infer_culture_from_entity(found_entity.canonical_name, getattr(found_entity, "summary", "") or "")
+            entity_name_for_inf = found_entity.canonical_name
+            entity_summary_for_inf = getattr(found_entity, "summary", "") or ""
+            if aka_cultures:
+                aka_cultures = _refine_cultures(aka_cultures, entity_name_for_inf, entity_summary_for_inf)
+            elif not aka_cultures:
+                aka_cultures = _infer_culture_from_entity(entity_name_for_inf, entity_summary_for_inf)
 
             equivalences.append({
                 "equivalent_id": str(found_entity.id),
@@ -504,7 +529,9 @@ async def get_entity_merge_breakdown(
     except Exception:
         pass
 
-    if not primary_cultures:
+    if primary_cultures:
+        primary_cultures = _refine_cultures(primary_cultures, entity_info["name"], entity_info.get("summary") or "")
+    else:
         primary_cultures = _infer_culture_from_entity(entity_info["name"], entity_info.get("summary") or "")
 
     # Include the resolved/primary entity as a peer in equivalences so
