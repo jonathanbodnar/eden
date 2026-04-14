@@ -203,6 +203,8 @@ For MERGED entities: use a DESCRIPTIVE ARCHETYPE NAME inside the brackets, NOT a
 After the annotation, list ALL cultural names parenthetically:
   "[[actor:The First Conscious Being]] (known as Prajapati in the Vedic hymns, Atum in the Egyptian, Pangu in the Chinese)"
 For entities that are NOT merged (unique to one culture), use their actual name: [[actor:Varaha]]
+IMPORTANT: Do NOT separately annotate the individual cultural names of a merged entity. If "Primordial Waters" is the archetype for Nun/Apsu/Apas, annotate ONLY [[place:Primordial Waters]] — do NOT also annotate [[place:Nun]] or [[place:Apsu]]. The cultural names are just parenthetical variants, not separate entities.
+ANNOTATE GENEROUSLY: Every significant being, place, concept, or event that appears should get an annotation on first mention. Aim for 15-30 annotations per chapter. The reader should be able to click on most key terms.
 
 ## OUTPUT FORMAT:
 Return ONLY valid JSON with this structure:
@@ -479,42 +481,67 @@ Design 5-15 thematic chapters that weave ALL these cultures and traditions toget
     async def _resolve_entity_mentions(
         self, session: AsyncSession, mentions: list[dict]
     ) -> list[dict]:
-        """Try to resolve entity names from DeepSeek output to canonical entity IDs."""
+        """Resolve entity names from DeepSeek output to canonical entity IDs.
+
+        Strategy:
+        1. Exact match on canonical_name
+        2. If no match, try each name in also_known_as
+        3. If still no match, try ILIKE fuzzy match on the primary name
+        """
+        table_map = {
+            "actor": CanonicalActor,
+            "event": CanonicalEvent,
+            "place": CanonicalPlace,
+        }
+
         resolved = []
         for m in mentions:
             name = m.get("name", "")
             entity_type = m.get("type", "actor")
-            if not name:
-                continue
-
-            canonical_id = None
-            name_lower = name.strip().lower()
-
-            if entity_type == "actor":
-                q = select(CanonicalActor.id).where(
-                    func.lower(CanonicalActor.canonical_name) == name_lower,
-                    CanonicalActor.is_current.is_(True),
-                ).limit(1)
-            elif entity_type == "event":
-                q = select(CanonicalEvent.id).where(
-                    func.lower(CanonicalEvent.canonical_name) == name_lower,
-                    CanonicalEvent.is_current.is_(True),
-                ).limit(1)
-            elif entity_type == "place":
-                q = select(CanonicalPlace.id).where(
-                    func.lower(CanonicalPlace.canonical_name) == name_lower,
-                    CanonicalPlace.is_current.is_(True),
-                ).limit(1)
-            else:
+            if not name or entity_type not in table_map:
                 resolved.append(m)
                 continue
 
-            try:
-                row = (await session.execute(q)).scalar_one_or_none()
-                if row:
-                    canonical_id = str(row)
-            except Exception:
-                pass
+            tbl = table_map[entity_type]
+            canonical_id = None
+
+            # Build list of names to try: primary name + all also_known_as
+            names_to_try = [name.strip()]
+            for aka in m.get("also_known_as", []):
+                if aka and aka.strip():
+                    names_to_try.append(aka.strip())
+
+            # 1. Exact match on any name
+            for try_name in names_to_try:
+                if canonical_id:
+                    break
+                try:
+                    q = select(tbl.id).where(
+                        func.lower(tbl.canonical_name) == try_name.lower(),
+                        tbl.is_current.is_(True),
+                    ).limit(1)
+                    row = (await session.execute(q)).scalar_one_or_none()
+                    if row:
+                        canonical_id = str(row)
+                except Exception:
+                    pass
+
+            # 2. ILIKE fuzzy match on the primary name (for archetype names)
+            if not canonical_id:
+                try:
+                    # Strip "The " prefix for better matching
+                    search_name = name.strip()
+                    if search_name.lower().startswith("the "):
+                        search_name = search_name[4:]
+                    q = select(tbl.id).where(
+                        tbl.canonical_name.ilike(f"%{search_name}%"),
+                        tbl.is_current.is_(True),
+                    ).limit(1)
+                    row = (await session.execute(q)).scalar_one_or_none()
+                    if row:
+                        canonical_id = str(row)
+                except Exception:
+                    pass
 
             resolved.append({
                 **m,
