@@ -19,7 +19,7 @@ services:
   world-api:
     build:
       context: ..
-      target: api
+      target: world-api
     restart: always
     depends_on:
       world-migrate:

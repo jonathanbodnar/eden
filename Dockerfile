@@ -15,10 +15,15 @@ COPY alembic/ alembic/
 COPY alembic.ini .
 COPY pyproject.toml .
 
-# --- API service ---
+# --- API service (ingestion) ---
 FROM base AS api
 EXPOSE 8000
 CMD ["uvicorn", "src.ingestion.api.app:app", "--host", "0.0.0.0", "--port", "8000"]
+
+# --- World/Canon API service ---
+FROM base AS world-api
+EXPOSE 8001
+CMD ["uvicorn", "src.canon.api.app:app", "--host", "0.0.0.0", "--port", "8001"]
 
 # --- Worker service ---
 FROM base AS worker
