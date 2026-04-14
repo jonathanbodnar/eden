@@ -333,6 +333,8 @@ class NarrativeSynthesizer:
         try:
             async with httpx.AsyncClient(timeout=180.0) as client:
                 resp = await client.post(url, json=payload, headers=headers)
+                if resp.status_code != 200:
+                    logger.error("DeepSeek HTTP %d: %s", resp.status_code, resp.text[:500])
                 resp.raise_for_status()
                 data = resp.json()
 
