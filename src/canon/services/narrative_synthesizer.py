@@ -309,27 +309,15 @@ class NarrativeSynthesizer:
 
         return "\n".join(parts)
 
-    async def _call_llm(self, prompt: str) -> dict:
-        if settings.deepseek_api_key:
-            return await self._call_openai_compatible(
-                url=f"{settings.deepseek_base_url.rstrip('/')}/chat/completions",
-                api_key=settings.deepseek_api_key,
-                model=settings.deepseek_model,
-                prompt=prompt,
+    async def _call_deepseek(self, prompt: str) -> dict:
+        if not settings.deepseek_api_key:
+            raise RuntimeError(
+                "WORLD_DEEPSEEK_API_KEY is not set. Narrative synthesis requires DeepSeek."
             )
-        if settings.anthropic_api_key:
-            return await self._call_anthropic(prompt)
-        return {
-            "narrative_text": "No LLM API key configured (set WORLD_DEEPSEEK_API_KEY or WORLD_ANTHROPIC_API_KEY).",
-            "key_claims": [],
-            "image_prompts": [],
-        }
 
-    async def _call_openai_compatible(
-        self, url: str, api_key: str, model: str, prompt: str
-    ) -> dict:
+        url = f"{settings.deepseek_base_url.rstrip('/')}/chat/completions"
         payload = {
-            "model": model,
+            "model": settings.deepseek_model,
             "messages": [
                 {"role": "system", "content": NARRATIVE_SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
@@ -337,51 +325,31 @@ class NarrativeSynthesizer:
             "temperature": 0.4,
             "max_tokens": 8192,
         }
-        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-        try:
-            async with httpx.AsyncClient(timeout=180.0) as client:
-                resp = await client.post(url, json=payload, headers=headers)
-                resp.raise_for_status()
-                data = resp.json()
-            raw = data["choices"][0]["message"]["content"]
-            return self._parse_llm_response(raw)
-        except Exception:
-            logger.exception("OpenAI-compatible narrative call failed")
-            return {"narrative_text": "", "key_claims": [], "image_prompts": []}
-
-    async def _call_anthropic(self, prompt: str) -> dict:
-        url = "https://api.anthropic.com/v1/messages"
-        payload = {
-            "model": settings.anthropic_model,
-            "max_tokens": 8192,
-            "system": NARRATIVE_SYSTEM_PROMPT,
-            "messages": [{"role": "user", "content": prompt}],
-        }
         headers = {
-            "x-api-key": settings.anthropic_api_key,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json",
+            "Authorization": f"Bearer {settings.deepseek_api_key}",
+            "Content-Type": "application/json",
         }
+
         try:
             async with httpx.AsyncClient(timeout=180.0) as client:
                 resp = await client.post(url, json=payload, headers=headers)
                 resp.raise_for_status()
                 data = resp.json()
-            raw = data["content"][0]["text"]
-            return self._parse_llm_response(raw)
-        except Exception:
-            logger.exception("Anthropic narrative call failed")
-            return {"narrative_text": "", "key_claims": [], "image_prompts": []}
 
-    def _parse_llm_response(self, raw: str) -> dict:
-        raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
-        json_match = re.search(r"\{.*\}", raw, re.DOTALL)
-        if json_match:
-            try:
-                return json.loads(json_match.group())
-            except json.JSONDecodeError:
-                logger.warning("Invalid JSON in LLM narrative response")
-        return {"narrative_text": raw[:5000], "key_claims": [], "image_prompts": []}
+            raw = data["choices"][0]["message"]["content"]
+            raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
+            json_match = re.search(r"\{.*\}", raw, re.DOTALL)
+            if json_match:
+                try:
+                    return json.loads(json_match.group())
+                except json.JSONDecodeError:
+                    logger.warning("Invalid JSON in DeepSeek narrative response")
+            return {"narrative_text": raw[:5000], "key_claims": [], "image_prompts": []}
+        except RuntimeError:
+            raise
+        except Exception:
+            logger.exception("DeepSeek narrative synthesis call failed")
+            return {"narrative_text": "", "key_claims": [], "image_prompts": []}
 
     async def synthesize_chapter(
         self, session: AsyncSession, chapter: CanonicalChapter, prior_narrative: str | None = None
@@ -389,7 +357,7 @@ class NarrativeSynthesizer:
         """Generate the narrative for a single chapter."""
         ctx = await self._gather_chapter_context(session, chapter, prior_narrative)
         prompt = self._build_narrative_prompt(ctx)
-        result = await self._call_llm(prompt)
+        result = await self._call_deepseek(prompt)
 
         narrative = result.get("narrative_text", "")
         claims = result.get("key_claims", [])
