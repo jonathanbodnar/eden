@@ -37,8 +37,21 @@ export default function BookNav({ epochs, chapters, activeChapterId, onSelectCha
         padding: '16px 16px 12px',
         borderBottom: '1px solid var(--border)',
       }}>
-        <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1.5, marginBottom: 6 }}>
-          Table of Contents
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1.5 }}>
+            Table of Contents
+          </div>
+          {onClose && (
+            <button
+              onClick={onClose}
+              style={{
+                background: 'none', border: 'none', cursor: 'pointer',
+                color: 'var(--text-muted)', fontSize: 18, padding: 0, lineHeight: 1,
+              }}
+            >
+              &times;
+            </button>
+          )}
         </div>
         <div style={{
           height: 3,
