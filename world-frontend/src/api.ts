@@ -421,6 +421,16 @@ export interface StoryEvidence {
   origin_place: string | null
 }
 
+export interface CultureVariant {
+  culture: string
+  chapter_count: number
+  summary: string
+  actors: Array<{ id: string; name: string; type: string; summary: string }>
+  events: Array<{ id: string; name: string; type: string; summary: string }>
+  places: Array<{ id: string; name: string; type: string; summary: string }>
+  source_excerpts: Array<{ title: string; excerpt: string; culture: string | null }>
+}
+
 export interface StoryStats {
   total_source_records: number
   total_images: number
@@ -490,4 +500,6 @@ export const api = {
   getStoryStats: () => cachedGet<StoryStats>('/story/stats'),
   getEntityMergeBreakdown: (entityType: string, entityId: string) =>
     cachedGet<EntityMergeBreakdown>(`/story/entities/${entityType}/${entityId}/merge-breakdown`),
+  getCultureVariants: (storyChapterId: string) =>
+    cachedGet<CultureVariant[]>(`/story/chapters/${storyChapterId}/culture-variants`),
 }

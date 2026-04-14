@@ -1,5 +1,6 @@
-import { useRef, useEffect, useCallback, useMemo } from 'react'
-import type { StoryChapter, EntityMention } from '../../api'
+import { useRef, useEffect, useCallback, useMemo, useState } from 'react'
+import { api } from '../../api'
+import type { StoryChapter, EntityMention, CultureVariant } from '../../api'
 
 interface Props {
   chapters: StoryChapter[]
@@ -91,10 +92,257 @@ function ClaimIndicator({ cultures, score }: { cultures: string[]; score: number
   )
 }
 
+function CultureView({ variant }: { variant: CultureVariant }) {
+  return (
+    <div style={{ marginTop: 16 }}>
+      {variant.summary && (
+        <div style={{
+          fontSize: 15,
+          lineHeight: 1.7,
+          color: 'var(--text-primary)',
+          fontFamily: "'Georgia', 'Times New Roman', serif",
+          marginBottom: 24,
+        }}>
+          {variant.summary.split('\n\n').map((para, i) => (
+            <p key={i} style={{ marginBottom: 16 }}>{para}</p>
+          ))}
+        </div>
+      )}
+
+      {variant.actors.length > 0 && (
+        <div style={{ marginBottom: 20 }}>
+          <div style={{
+            fontSize: 11,
+            textTransform: 'uppercase',
+            letterSpacing: 1.5,
+            color: 'var(--gold)',
+            marginBottom: 8,
+          }}>
+            Key Figures
+          </div>
+          {variant.actors.map(a => (
+            <div key={a.id} style={{
+              padding: '8px 12px',
+              background: 'var(--bg-secondary)',
+              borderRadius: 6,
+              marginBottom: 6,
+            }}>
+              <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>
+                {a.name}
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--gold)', marginBottom: 2 }}>{a.type}</div>
+              {a.summary && (
+                <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                  {a.summary}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {variant.events.length > 0 && (
+        <div style={{ marginBottom: 20 }}>
+          <div style={{
+            fontSize: 11,
+            textTransform: 'uppercase',
+            letterSpacing: 1.5,
+            color: '#7eb8da',
+            marginBottom: 8,
+          }}>
+            Key Events
+          </div>
+          {variant.events.map(e => (
+            <div key={e.id} style={{
+              padding: '8px 12px',
+              background: 'var(--bg-secondary)',
+              borderRadius: 6,
+              marginBottom: 6,
+            }}>
+              <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>
+                {e.name}
+              </div>
+              {e.summary && (
+                <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                  {e.summary}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {variant.source_excerpts.length > 0 && (
+        <div style={{ marginBottom: 20 }}>
+          <div style={{
+            fontSize: 11,
+            textTransform: 'uppercase',
+            letterSpacing: 1.5,
+            color: 'var(--text-muted)',
+            marginBottom: 8,
+          }}>
+            Source Texts
+          </div>
+          {variant.source_excerpts.map((src, i) => (
+            <div key={i} style={{
+              padding: '10px 12px',
+              background: 'var(--bg-secondary)',
+              borderRadius: 6,
+              marginBottom: 6,
+              borderLeft: '3px solid var(--gold)',
+            }}>
+              <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-primary)', marginBottom: 4 }}>
+                {src.title}
+              </div>
+              <div style={{
+                fontSize: 13,
+                color: 'var(--text-secondary)',
+                lineHeight: 1.7,
+                fontFamily: "'Georgia', 'Times New Roman', serif",
+                fontStyle: 'italic',
+              }}>
+                {src.excerpt}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ChapterViewSelector({
+  chapterId,
+  selectedView,
+  onViewChange,
+}: {
+  chapterId: string
+  selectedView: string
+  onViewChange: (view: string) => void
+}) {
+  const [variants, setVariants] = useState<CultureVariant[] | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [open, setOpen] = useState(false)
+
+  useEffect(() => {
+    setLoading(true)
+    api.getCultureVariants(chapterId)
+      .then(setVariants)
+      .catch(() => setVariants(null))
+      .finally(() => setLoading(false))
+  }, [chapterId])
+
+  if (loading || !variants || variants.length === 0) return null
+
+  return (
+    <div style={{ position: 'relative', marginTop: 8 }}>
+      <button
+        onClick={() => setOpen(!open)}
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 6,
+          padding: '5px 12px',
+          background: selectedView === 'unified' ? 'var(--bg-secondary)' : 'rgba(212, 168, 83, 0.12)',
+          border: `1px solid ${selectedView === 'unified' ? 'var(--border)' : 'var(--gold)'}`,
+          borderRadius: 16,
+          cursor: 'pointer',
+          fontSize: 12,
+          color: selectedView === 'unified' ? 'var(--text-secondary)' : 'var(--gold)',
+          fontWeight: 500,
+        }}
+      >
+        <span>{selectedView === 'unified' ? 'Unified History' : selectedView}</span>
+        <span style={{ fontSize: 10 }}>{open ? '\u25B2' : '\u25BC'}</span>
+        <span style={{
+          fontSize: 10,
+          padding: '1px 5px',
+          background: 'var(--bg-tertiary)',
+          borderRadius: 8,
+          color: 'var(--text-muted)',
+        }}>
+          {variants.length} cultures
+        </span>
+      </button>
+
+      {open && (
+        <div style={{
+          position: 'absolute',
+          top: '100%',
+          left: 0,
+          marginTop: 4,
+          background: 'var(--bg-secondary)',
+          border: '1px solid var(--border)',
+          borderRadius: 8,
+          boxShadow: '0 8px 24px rgba(0,0,0,0.3)',
+          zIndex: 100,
+          minWidth: 240,
+          maxHeight: 360,
+          overflow: 'auto',
+        }}>
+          <button
+            onClick={() => { onViewChange('unified'); setOpen(false) }}
+            style={{
+              width: '100%',
+              padding: '10px 14px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              background: selectedView === 'unified' ? 'var(--bg-tertiary)' : 'transparent',
+              border: 'none',
+              borderBottom: '1px solid var(--border)',
+              cursor: 'pointer',
+              textAlign: 'left',
+            }}
+          >
+            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--gold)' }}>
+              Unified History
+            </span>
+            <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 'auto' }}>
+              All cultures woven
+            </span>
+          </button>
+          {variants.map(v => (
+            <button
+              key={v.culture}
+              onClick={() => { onViewChange(v.culture); setOpen(false) }}
+              style={{
+                width: '100%',
+                padding: '8px 14px',
+                display: 'flex',
+                alignItems: 'baseline',
+                gap: 8,
+                background: selectedView === v.culture ? 'var(--bg-tertiary)' : 'transparent',
+                border: 'none',
+                borderBottom: '1px solid var(--border)',
+                cursor: 'pointer',
+                textAlign: 'left',
+              }}
+            >
+              <span style={{
+                fontSize: 13,
+                color: selectedView === v.culture ? 'var(--text-primary)' : 'var(--text-secondary)',
+                fontWeight: selectedView === v.culture ? 500 : 400,
+              }}>
+                {v.culture}
+              </span>
+              <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 'auto' }}>
+                {v.actors.length} figures, {v.events.length} events
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function NarrativeReader({ chapters, activeChapterId, onChapterInView, onEntityClick }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const chapterRefs = useRef<Map<string, HTMLDivElement>>(new Map())
   const userScrolling = useRef(false)
+  const [cultureViews, setCultureViews] = useState<Record<string, string>>({})
+  const [loadedVariants, setLoadedVariants] = useState<Record<string, CultureVariant[]>>({})
 
   useEffect(() => {
     if (!activeChapterId || userScrolling.current) return
@@ -103,6 +351,15 @@ export default function NarrativeReader({ chapters, activeChapterId, onChapterIn
       el.scrollIntoView({ behavior: 'smooth', block: 'start' })
     }
   }, [activeChapterId])
+
+  const handleViewChange = useCallback((chapterId: string, view: string) => {
+    setCultureViews(prev => ({ ...prev, [chapterId]: view }))
+    if (view !== 'unified' && !loadedVariants[chapterId]) {
+      api.getCultureVariants(chapterId)
+        .then(variants => setLoadedVariants(prev => ({ ...prev, [chapterId]: variants })))
+        .catch(() => {})
+    }
+  }, [loadedVariants])
 
   const handleScroll = useCallback(() => {
     if (!scrollRef.current) return
@@ -160,6 +417,11 @@ export default function NarrativeReader({ chapters, activeChapterId, onChapterIn
         {chapters.map((ch, idx) => {
           const prevEpoch = idx > 0 ? chapters[idx - 1].epoch_id : null
           const showEpochHeader = ch.epoch_id !== prevEpoch
+          const currentView = cultureViews[ch.id] || 'unified'
+          const variants = loadedVariants[ch.id]
+          const selectedVariant = currentView !== 'unified' && variants
+            ? variants.find(v => v.culture === currentView)
+            : null
 
           return (
             <div
@@ -210,83 +472,94 @@ export default function NarrativeReader({ chapters, activeChapterId, onChapterIn
                     {ch.time_hint}
                   </div>
                 )}
-                {ch.chapter_summary && (
+                {ch.chapter_summary && currentView === 'unified' && (
                   <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4, fontStyle: 'italic', lineHeight: 1.5 }}>
                     {ch.chapter_summary}
                   </div>
                 )}
+                <ChapterViewSelector
+                  chapterId={ch.id}
+                  selectedView={currentView}
+                  onViewChange={(view) => handleViewChange(ch.id, view)}
+                />
               </div>
 
-              {ch.images && ch.images.length > 0 && ch.images[0].url && (
-                <div style={{
-                  marginBottom: 28,
-                  borderRadius: 8,
-                  overflow: 'hidden',
-                  aspectRatio: '16 / 9',
-                  background: 'var(--bg-tertiary)',
-                }}>
-                  <img
-                    src={ch.images[0].url}
-                    alt={ch.images[0].caption || ch.chapter_title}
-                    style={{
-                      width: '100%',
-                      height: '100%',
-                      objectFit: 'cover',
-                    }}
-                  />
-                </div>
-              )}
-
-              <div style={{
-                fontSize: 16,
-                lineHeight: 1.8,
-                color: 'var(--text-primary)',
-                fontFamily: "'Georgia', 'Times New Roman', serif",
-              }}>
-                {ch.narrative_text.split('\n\n').map((para, pIdx) => (
-                  <p key={pIdx} style={{ marginBottom: 20, textIndent: pIdx > 0 ? 24 : 0 }}>
-                    {parseNarrativeWithEntities(para, ch.entity_mentions || [], onEntityClick)}
-                  </p>
-                ))}
-              </div>
-
-              {ch.claims && ch.claims.length > 0 && (
-                <div style={{
-                  marginTop: 20,
-                  padding: '12px 16px',
-                  background: 'var(--bg-secondary)',
-                  borderRadius: 8,
-                  borderLeft: '3px solid var(--gold)',
-                }}>
-                  <div style={{
-                    fontSize: 11,
-                    textTransform: 'uppercase',
-                    letterSpacing: 1,
-                    color: 'var(--text-muted)',
-                    marginBottom: 8,
-                  }}>
-                    Key Claims
-                  </div>
-                  {ch.claims.slice(0, 5).map((claim, cIdx) => (
-                    <div key={cIdx} style={{
-                      display: 'flex',
-                      alignItems: 'flex-start',
-                      gap: 0,
-                      marginBottom: 6,
+              {currentView === 'unified' ? (
+                <>
+                  {ch.images && ch.images.length > 0 && ch.images[0].url && (
+                    <div style={{
+                      marginBottom: 28,
+                      borderRadius: 8,
+                      overflow: 'hidden',
+                      aspectRatio: '16 / 9',
+                      background: 'var(--bg-tertiary)',
                     }}>
-                      <ClaimIndicator cultures={claim.cultures || []} score={claim.score || 0} />
-                      <div>
-                        <span style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-                          {claim.claim}
-                        </span>
-                        {claim.cultures && claim.cultures.length > 0 && (
-                          <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 6 }}>
-                            ({claim.cultures.join(', ')})
-                          </span>
-                        )}
-                      </div>
+                      <img
+                        src={ch.images[0].url}
+                        alt={ch.images[0].caption || ch.chapter_title}
+                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                      />
                     </div>
-                  ))}
+                  )}
+
+                  <div style={{
+                    fontSize: 16,
+                    lineHeight: 1.8,
+                    color: 'var(--text-primary)',
+                    fontFamily: "'Georgia', 'Times New Roman', serif",
+                  }}>
+                    {ch.narrative_text.split('\n\n').map((para, pIdx) => (
+                      <p key={pIdx} style={{ marginBottom: 20, textIndent: pIdx > 0 ? 24 : 0 }}>
+                        {parseNarrativeWithEntities(para, ch.entity_mentions || [], onEntityClick)}
+                      </p>
+                    ))}
+                  </div>
+
+                  {ch.claims && ch.claims.length > 0 && (
+                    <div style={{
+                      marginTop: 20,
+                      padding: '12px 16px',
+                      background: 'var(--bg-secondary)',
+                      borderRadius: 8,
+                      borderLeft: '3px solid var(--gold)',
+                    }}>
+                      <div style={{
+                        fontSize: 11,
+                        textTransform: 'uppercase',
+                        letterSpacing: 1,
+                        color: 'var(--text-muted)',
+                        marginBottom: 8,
+                      }}>
+                        Key Claims
+                      </div>
+                      {ch.claims.slice(0, 5).map((claim, cIdx) => (
+                        <div key={cIdx} style={{
+                          display: 'flex',
+                          alignItems: 'flex-start',
+                          gap: 0,
+                          marginBottom: 6,
+                        }}>
+                          <ClaimIndicator cultures={claim.cultures || []} score={claim.score || 0} />
+                          <div>
+                            <span style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                              {claim.claim}
+                            </span>
+                            {claim.cultures && claim.cultures.length > 0 && (
+                              <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 6 }}>
+                                ({claim.cultures.join(', ')})
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              ) : selectedVariant ? (
+                <CultureView variant={selectedVariant} />
+              ) : (
+                <div style={{ padding: 24, color: 'var(--text-muted)', textAlign: 'center' }}>
+                  Loading {currentView} perspective...
                 </div>
               )}
             </div>

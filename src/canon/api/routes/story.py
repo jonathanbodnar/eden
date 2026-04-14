@@ -17,6 +17,8 @@ from src.canon.models.canonical_place import CanonicalPlace
 from src.canon.models.canon_support_link import CanonSupportLink
 from src.canon.models.canon_score import CanonScore
 from src.canon.models.enums import CanonicalType
+from src.canon.models.canonical_chapter import CanonicalChapter
+from src.canon.models.canon_dependency import CanonDependency
 from src.canon.models.image_generation_job import ImageGenerationJob
 from src.canon.models.story_chapter import StoryChapter
 from src.canon.models.story_outline import StoryOutline
@@ -370,6 +372,158 @@ async def get_entity_merge_breakdown(
         "equivalences": equivalences,
         "sources": sources,
     }
+
+
+@router.get("/chapters/{story_chapter_id}/culture-variants")
+async def get_culture_variants(
+    story_chapter_id: str, session: AsyncSession = Depends(get_session)
+):
+    """Get per-culture canonical chapter variants for a unified story chapter.
+
+    Returns the list of cultures that have their own version of this chapter's
+    epoch content, along with summaries and entity data for each culture."""
+    sc = await session.get(StoryChapter, _uuid.UUID(story_chapter_id))
+    if not sc:
+        raise HTTPException(404, "Story chapter not found")
+
+    outline = await session.get(StoryOutline, sc.story_outline_id) if sc.story_outline_id else None
+    if not outline:
+        return []
+
+    # Get all canonical chapters in this epoch
+    ch_q = select(CanonicalChapter).where(
+        CanonicalChapter.epoch_id == sc.epoch_id,
+        CanonicalChapter.is_current.is_(True),
+    ).order_by(CanonicalChapter.chapter_order)
+    all_chapters = (await session.execute(ch_q)).scalars().all()
+
+    # Extract culture from title pattern: "Epoch Title: Culture Tradition"
+    import re
+    culture_pattern = re.compile(r':\s*(.+?)(?:\s+Tradition)?$')
+
+    # Group by culture and collect relevant chapters
+    cultures: dict[str, list] = {}
+    for ch in all_chapters:
+        match = culture_pattern.search(ch.title)
+        if not match:
+            continue
+        culture_name = match.group(1).strip()
+        if culture_name.lower() == "overview":
+            continue
+        if culture_name not in cultures:
+            cultures[culture_name] = []
+        cultures[culture_name].append(ch)
+
+    # Build response with entity data per culture
+    result = []
+    for culture_name, chapters in sorted(cultures.items()):
+        # Collect actors, events, places from all chapters for this culture
+        actors = []
+        events = []
+        places = []
+
+        for ch in chapters[:5]:
+            deps_q = select(CanonDependency.child_type, CanonDependency.child_id).where(
+                CanonDependency.parent_type == CanonicalType.CHAPTER,
+                CanonDependency.parent_id == ch.id,
+            )
+            try:
+                deps = (await session.execute(deps_q)).all()
+                for child_type, child_id in deps:
+                    if child_type == CanonicalType.ACTOR:
+                        a = await session.get(CanonicalActor, child_id)
+                        if a and a.is_current:
+                            actors.append({
+                                "id": str(a.id),
+                                "name": a.canonical_name,
+                                "type": a.actor_type.value,
+                                "summary": (a.summary or "")[:200],
+                            })
+                    elif child_type == CanonicalType.EVENT:
+                        e = await session.get(CanonicalEvent, child_id)
+                        if e and e.is_current:
+                            events.append({
+                                "id": str(e.id),
+                                "name": e.canonical_name,
+                                "type": e.event_type.value,
+                                "summary": (e.summary or "")[:200],
+                            })
+                    elif child_type == CanonicalType.PLACE:
+                        p = await session.get(CanonicalPlace, child_id)
+                        if p and p.is_current:
+                            places.append({
+                                "id": str(p.id),
+                                "name": p.canonical_name,
+                                "type": p.place_type.value,
+                                "summary": (p.summary or "")[:200],
+                            })
+            except Exception:
+                continue
+
+        # Deduplicate by id
+        seen = set()
+        unique_actors = []
+        for a in actors:
+            if a["id"] not in seen:
+                seen.add(a["id"])
+                unique_actors.append(a)
+        unique_events = []
+        for e in events:
+            if e["id"] not in seen:
+                seen.add(e["id"])
+                unique_events.append(e)
+        unique_places = []
+        for p in places:
+            if p["id"] not in seen:
+                seen.add(p["id"])
+                unique_places.append(p)
+
+        # Get source excerpts for this culture
+        source_excerpts = []
+        try:
+            entity_ids = [_uuid.UUID(a["id"]) for a in unique_actors[:5]] + \
+                         [_uuid.UUID(e["id"]) for e in unique_events[:5]]
+            if entity_ids:
+                for eid in entity_ids[:10]:
+                    links_q = (
+                        select(CanonSupportLink, SASourceRecord)
+                        .join(SASourceRecord, SASourceRecord.id == CanonSupportLink.archive_object_id)
+                        .where(
+                            CanonSupportLink.canonical_id == eid,
+                            SASourceRecord.culture.ilike(f"%{culture_name.split('/')[0].strip()}%"),
+                        )
+                        .order_by(CanonSupportLink.weight.desc())
+                        .limit(2)
+                    )
+                    for link, sr in (await session.execute(links_q)).all():
+                        sv_q = select(SASourceVersion.text_extracted).where(
+                            SASourceVersion.source_record_id == sr.id
+                        ).limit(1)
+                        sv_row = (await session.execute(sv_q)).first()
+                        excerpt = sv_row[0][:400] if sv_row and sv_row[0] else ""
+                        source_excerpts.append({
+                            "title": sr.canonical_title,
+                            "excerpt": excerpt,
+                            "culture": sr.culture,
+                        })
+        except Exception:
+            pass
+
+        # Combine chapter summaries into a narrative overview
+        summaries = [ch.chapter_summary for ch in chapters if ch.chapter_summary]
+        combined_summary = " ".join(summaries[:3]) if summaries else ""
+
+        result.append({
+            "culture": culture_name,
+            "chapter_count": len(chapters),
+            "summary": combined_summary[:600],
+            "actors": unique_actors[:10],
+            "events": unique_events[:10],
+            "places": unique_places[:5],
+            "source_excerpts": source_excerpts[:5],
+        })
+
+    return result
 
 
 @router.get("/outlines")
