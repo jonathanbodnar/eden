@@ -153,8 +153,8 @@ export default function StoryModeLayout() {
         overflow: 'hidden',
         position: 'relative',
       }}>
-        {/* Left panel: BookNav */}
-        {isMobile || isTablet ? (
+        {/* Left panel: BookNav (desktop inside grid, tablet slide-over inside grid) */}
+        {isTablet && !isMobile ? (
           <>
             {leftOpen && (
               <div
@@ -169,7 +169,7 @@ export default function StoryModeLayout() {
             <div style={{
               position: 'fixed',
               top: 0, left: 0, bottom: 0,
-              width: isMobile ? '85vw' : 320,
+              width: 320,
               maxWidth: 360,
               transform: leftOpen ? 'translateX(0)' : 'translateX(-100%)',
               transition: 'transform 0.25s ease',
@@ -186,14 +186,14 @@ export default function StoryModeLayout() {
               />
             </div>
           </>
-        ) : (
+        ) : !isMobile ? (
           <BookNav
             epochs={epochs}
             chapters={chapters}
             activeChapterId={activeChapterId}
             onSelectChapter={handleSelectChapter}
           />
-        )}
+        ) : null}
 
         {/* Center: NarrativeReader + Audio Player */}
         <div style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
@@ -214,44 +214,8 @@ export default function StoryModeLayout() {
           )}
         </div>
 
-        {/* Right panel: EvidencePanel */}
-        {isMobile ? (
-          <>
-            {rightOpen && (
-              <div
-                onClick={() => setRightOpen(false)}
-                style={{
-                  position: 'fixed', inset: 0,
-                  background: 'rgba(0,0,0,0.5)',
-                  zIndex: 30,
-                }}
-              />
-            )}
-            <div style={{
-              position: 'fixed',
-              top: 0, right: 0, bottom: 0,
-              width: '85vw',
-              maxWidth: 400,
-              transform: rightOpen ? 'translateX(0)' : 'translateX(100%)',
-              transition: 'transform 0.25s ease',
-              zIndex: 31,
-              background: 'var(--bg-secondary)',
-              boxShadow: rightOpen ? '-4px 0 20px rgba(0,0,0,0.4)' : 'none',
-              display: 'flex',
-              flexDirection: 'column',
-              height: '100%',
-              overflow: 'hidden',
-            }}>
-              <EvidencePanel
-                chapter={activeChapter}
-                evidence={evidence}
-                selectedEntity={selectedEntity}
-                onClearEntity={handleClearEntity}
-                activeCulture={activeCulture}
-              />
-            </div>
-          </>
-        ) : (
+        {/* Right panel: EvidencePanel (desktop/tablet only inside grid) */}
+        {!isMobile && (
           <EvidencePanel
             chapter={activeChapter}
             evidence={evidence}
@@ -262,13 +226,87 @@ export default function StoryModeLayout() {
         )}
       </div>
 
-      {/* Mobile: audio bar fixed at bottom, outside grid */}
+      {/* Mobile: audio bar at bottom, outside grid */}
       {isMobile && activeChapterId && (
         <AudioPlayerBar
           chapterId={activeChapterId}
           chapters={chapters}
           onChapterChange={handleAudioChapterChange}
         />
+      )}
+
+      {/* Mobile: left nav slide-over, outside grid */}
+      {isMobile && (
+        <>
+          {leftOpen && (
+            <div
+              onClick={() => setLeftOpen(false)}
+              style={{
+                position: 'fixed', inset: 0,
+                background: 'rgba(0,0,0,0.5)',
+                zIndex: 30,
+              }}
+            />
+          )}
+          <div style={{
+            position: 'fixed',
+            top: 0, left: 0, bottom: 0,
+            width: '85vw',
+            maxWidth: 360,
+            transform: leftOpen ? 'translateX(0)' : 'translateX(-100%)',
+            transition: 'transform 0.25s ease',
+            zIndex: 31,
+            background: 'var(--bg-secondary)',
+            boxShadow: leftOpen ? '4px 0 20px rgba(0,0,0,0.4)' : 'none',
+          }}>
+            <BookNav
+              epochs={epochs}
+              chapters={chapters}
+              activeChapterId={activeChapterId}
+              onSelectChapter={handleSelectChapter}
+              onClose={() => setLeftOpen(false)}
+            />
+          </div>
+        </>
+      )}
+
+      {/* Mobile: evidence panel slide-over, outside grid */}
+      {isMobile && (
+        <>
+          {rightOpen && (
+            <div
+              onClick={() => setRightOpen(false)}
+              style={{
+                position: 'fixed', inset: 0,
+                background: 'rgba(0,0,0,0.5)',
+                zIndex: 30,
+              }}
+            />
+          )}
+          <div style={{
+            position: 'fixed',
+            top: 0, right: 0, bottom: 0,
+            width: '85vw',
+            maxWidth: 400,
+            transform: rightOpen ? 'translateX(0)' : 'translateX(100%)',
+            transition: 'transform 0.25s ease',
+            zIndex: 31,
+            background: 'var(--bg-secondary)',
+            boxShadow: rightOpen ? '-4px 0 20px rgba(0,0,0,0.4)' : 'none',
+            display: 'flex',
+            flexDirection: 'column',
+            height: '100%',
+            overflow: 'hidden',
+          }}>
+            <EvidencePanel
+              chapter={activeChapter}
+              evidence={evidence}
+              selectedEntity={selectedEntity}
+              onClearEntity={handleClearEntity}
+              activeCulture={activeCulture}
+            />
+          </div>
+        </>
       )}
     </div>
   )
