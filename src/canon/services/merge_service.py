@@ -183,6 +183,39 @@ ALIAS_VARIANTS = {
     "aeneas": ["aineas"],
     "rama": ["ramachandra"],
     "arjuna": ["partha"],
+
+    # ── Cross-Cultural Creator/Sky Deity Equivalences ──
+    # These connect entities across different cultural traditions
+    # that serve the same archetypal role
+
+    # Creator/wisdom god across cultures
+    "enki": ["ea", "ptah", "thoth", "hermes"],
+    # Sky father / supreme deity
+    "anu": ["an", "el", "el elyon"],
+    # Great flood survivor
+    "ziusudra": ["utnapishtim", "atrahasis", "xisuthros", "noah", "nuh", "manu", "deucalion"],
+    # Sky/storm god
+    "enlil": ["ellil", "zeus", "jupiter", "indra"],
+    # Mother goddess / earth mother
+    "ninhursag": ["ninmah", "nintu", "ki", "belet-ili", "aruru", "gaia", "pachamama"],
+    # Love/fertility goddess
+    "inanna": ["ishtar", "astarte", "ashtoreth", "anat", "aphrodite", "venus", "hathor", "freya"],
+    # Sun deity
+    "utu": ["shamash", "ra", "surya", "apollo", "sol"],
+    # Death/underworld deity
+    "ereshkigal": ["allatu", "hel", "persephone"],
+    # War deity
+    "nergal": ["erra", "ares", "mars"],
+    # Chaos serpent / primordial sea
+    "tiamat": ["tehom", "leviathan", "apep", "jormungandr", "vritra"],
+    # Celestial watchers / divine council
+    "anunnaki": ["anunna", "elohim", "deva", "netjeru"],
+    # Fallen/rebel divine beings
+    "igigi": ["watchers", "irin", "nephilim", "titans", "asuras"],
+    # Trickster/culture hero
+    "prometheus": ["prometheia", "loki", "coyote", "maui", "anansi"],
+    # Feathered/winged serpent deity
+    "quetzalcoatl": ["kukulkan", "q'uq'umatz", "ehecatl", "viracocha"],
 }
 
 CANON_MERGE_THRESHOLD = 0.7
