@@ -329,9 +329,11 @@ function ChapterViewSelector({
                 }}>
                   {v.culture}
                 </span>
-                <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 'auto' }}>
-                  {v.source_count} source{v.source_count !== 1 ? 's' : ''}
-                </span>
+                {v.source_count > 0 && (
+                  <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 'auto' }}>
+                    {v.source_count} source{v.source_count !== 1 ? 's' : ''}
+                  </span>
+                )}
               </button>
             ))}
 
@@ -362,14 +364,35 @@ export default function NarrativeReader({ chapters, activeChapterId, onChapterIn
     }
   }, [activeChapterId])
 
+  const [loadingCulture, setLoadingCulture] = useState<string | null>(null)
+
   const handleViewChange = useCallback((chapterId: string, view: string) => {
     setCultureViews(prev => ({ ...prev, [chapterId]: view }))
     if (view === 'unified') {
       onCultureSelect?.(null)
+      setLoadingCulture(null)
     } else {
+      // Check if we already have full detail for this culture
       const variants = loadedVariants[chapterId]
-      const match = variants?.find(v => v.culture === view)
-      if (match) onCultureSelect?.(match)
+      const cached = variants?.find(v => v.culture === view && v.source_texts.length > 0)
+      if (cached) {
+        onCultureSelect?.(cached)
+        setLoadingCulture(null)
+      } else {
+        setLoadingCulture(view)
+        api.getStoryCultureDetail(chapterId, view).then(detail => {
+          setLoadedVariants(prev => {
+            const existing = prev[chapterId] || []
+            const idx = existing.findIndex(v => v.culture === view)
+            const updated = [...existing]
+            if (idx >= 0) updated[idx] = detail
+            else updated.push(detail)
+            return { ...prev, [chapterId]: updated }
+          })
+          onCultureSelect?.(detail)
+          setLoadingCulture(null)
+        }).catch(() => setLoadingCulture(null))
+      }
     }
   }, [loadedVariants, onCultureSelect])
 
@@ -575,8 +598,12 @@ export default function NarrativeReader({ chapters, activeChapterId, onChapterIn
               ) : selectedVariant ? (
                 <CultureView variant={selectedVariant} />
               ) : (
-                <div style={{ padding: 24, color: 'var(--text-muted)', textAlign: 'center' }}>
-                  Loading {currentView} perspective...
+                <div style={{ padding: 24, color: 'var(--text-muted)', textAlign: 'center', fontSize: 14 }}>
+                  {loadingCulture === currentView ? (
+                    <>Loading {currentView} sources...</>
+                  ) : (
+                    <>Select a tradition above to view its sources</>
+                  )}
                 </div>
               )}
             </div>

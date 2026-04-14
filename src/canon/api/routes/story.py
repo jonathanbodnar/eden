@@ -379,124 +379,145 @@ async def get_culture_variants(
     q: str | None = None,
     session: AsyncSession = Depends(get_session),
 ):
-    """Get per-culture variants for a story chapter.
+    """Return the list of available cultures for a chapter (fast, names only).
 
-    Uses canonical chapter titles to identify cultures (fast), then fetches
-    source texts and entities per-culture using the chapter-level dependencies
-    (bounded, not epoch-wide).
+    Details (source texts + entities) are loaded lazily via the
+    /culture-detail endpoint below.
     """
     sc = await session.get(StoryChapter, _uuid.UUID(story_chapter_id))
     if not sc:
         raise HTTPException(404, "Story chapter not found")
 
-    # Get all canonical chapters in this epoch, extract culture from title
     import re as _re
-    ch_q = select(CanonicalChapter).where(
+    ch_q = select(CanonicalChapter.id, CanonicalChapter.title).where(
         CanonicalChapter.epoch_id == sc.epoch_id,
         CanonicalChapter.is_current.is_(True),
-    ).order_by(CanonicalChapter.chapter_order)
-    all_chapters = (await session.execute(ch_q)).scalars().all()
+    )
+    ch_rows = (await session.execute(ch_q)).all()
 
     culture_pattern = _re.compile(r':\s*(.+?)(?:\s+Tradition)?$')
-    cultures: dict[str, list] = {}
-    for ch in all_chapters:
-        match = culture_pattern.search(ch.title)
+    cultures: dict[str, int] = {}
+    for _ch_id, title in ch_rows:
+        match = culture_pattern.search(title)
         if not match:
             continue
         cname = match.group(1).strip()
         if cname.lower() == "overview":
             continue
-        if cname not in cultures:
-            cultures[cname] = []
-        cultures[cname].append(ch)
+        # Strip trailing " Tradition" that may remain
+        cname = _re.sub(r'\s+Tradition$', '', cname).strip()
+        cultures[cname] = cultures.get(cname, 0) + 1
 
     if q:
         q_lower = q.lower()
         cultures = {k: v for k, v in cultures.items() if q_lower in k.lower()}
 
-    result = []
-    for culture_name, chapters in sorted(cultures.items()):
-        culture_key = culture_name.split("/")[0].strip().replace("'", "")
-        ch_ids = [str(ch.id) for ch in chapters[:8]]
-        if not ch_ids:
-            continue
-        ch_ids_sql = ",".join(f"'{cid}'" for cid in ch_ids)
+    return [
+        {"culture": name, "source_count": count, "source_texts": [], "actors": [], "events": [], "places": []}
+        for name, count in sorted(cultures.items())
+    ]
 
-        # Get source texts via chapter-level entities (bounded by small chapter set)
-        src_q = text(f"""
-            SELECT DISTINCT ON (sr.id)
-                sr.canonical_title, sr.culture,
-                LEFT(sv.text_extracted, 1500),
-                cl.weight
-            FROM canon_dependencies d
-            JOIN canon_support_links cl ON cl.canonical_id = d.child_id
-            JOIN source_records sr ON sr.id = cl.archive_object_id
-            JOIN source_versions sv ON sv.source_record_id = sr.id
-            WHERE d.parent_type = 'chapter' AND d.parent_id IN ({ch_ids_sql})
-              AND d.child_type IN ('actor', 'event')
-              AND sv.text_extracted IS NOT NULL
-              AND LENGTH(sv.text_extracted) > 150
-            ORDER BY sr.id, cl.weight DESC
-            LIMIT 8
-        """)
 
-        # Get entities for right panel
-        ent_q = text(f"""
-            SELECT DISTINCT ON (d.child_id)
-                d.child_id::text, d.child_type,
-                COALESCE(
-                    (SELECT canonical_name FROM canonical_actors WHERE id = d.child_id),
-                    (SELECT canonical_name FROM canonical_events WHERE id = d.child_id),
-                    (SELECT canonical_name FROM canonical_places WHERE id = d.child_id)
-                ),
-                COALESCE(
-                    (SELECT LEFT(summary, 200) FROM canonical_actors WHERE id = d.child_id),
-                    (SELECT LEFT(summary, 200) FROM canonical_events WHERE id = d.child_id),
-                    (SELECT LEFT(summary, 200) FROM canonical_places WHERE id = d.child_id)
-                )
-            FROM canon_dependencies d
-            WHERE d.parent_type = 'chapter' AND d.parent_id IN ({ch_ids_sql})
-              AND d.child_type IN ('actor', 'event', 'place')
-            ORDER BY d.child_id
-            LIMIT 20
-        """)
+@router.get("/chapters/{story_chapter_id}/culture-detail")
+async def get_culture_detail(
+    story_chapter_id: str,
+    culture: str,
+    session: AsyncSession = Depends(get_session),
+):
+    """Lazy-load source texts + entities for a specific culture within a chapter."""
+    sc = await session.get(StoryChapter, _uuid.UUID(story_chapter_id))
+    if not sc:
+        raise HTTPException(404, "Story chapter not found")
 
-        try:
-            src_rows = (await session.execute(src_q)).all()
-            ent_rows = (await session.execute(ent_q)).all()
-        except Exception:
-            logger.exception("Failed to get culture detail for %s", culture_name)
-            continue
+    import re as _re
+    ch_q = select(CanonicalChapter).where(
+        CanonicalChapter.epoch_id == sc.epoch_id,
+        CanonicalChapter.is_current.is_(True),
+    )
+    all_chs = (await session.execute(ch_q)).scalars().all()
 
-        source_texts = [
-            {"title": r[0] or "Unknown", "culture": r[1], "text": r[2] or "", "weight": float(r[3] or 0)}
-            for r in src_rows if r[2] and len(r[2].strip()) > 100
-        ]
-        source_texts.sort(key=lambda x: x["weight"], reverse=True)
+    culture_lower = culture.lower()
+    matching_chs = [
+        ch for ch in all_chs
+        if culture_lower in ch.title.lower()
+    ][:8]
 
-        actors = [
-            {"id": r[0], "name": r[2] or "Unknown", "type": r[1], "summary": r[3] or ""}
-            for r in ent_rows if r[1] == "actor" and r[2]
-        ]
-        events = [
-            {"id": r[0], "name": r[2] or "Unknown", "type": r[1], "summary": r[3] or ""}
-            for r in ent_rows if r[1] == "event" and r[2]
-        ]
-        places = [
-            {"id": r[0], "name": r[2] or "Unknown", "type": r[1], "summary": r[3] or ""}
-            for r in ent_rows if r[1] == "place" and r[2]
-        ]
+    if not matching_chs:
+        return {"culture": culture, "source_texts": [], "actors": [], "events": [], "places": []}
 
-        result.append({
-            "culture": culture_name,
-            "source_count": len(source_texts),
-            "source_texts": source_texts[:6],
-            "actors": actors[:10],
-            "events": events[:10],
-            "places": places[:5],
-        })
+    ch_ids_sql = ",".join(f"'{ch.id}'" for ch in matching_chs)
 
-    return result
+    src_q = text(f"""
+        SELECT DISTINCT ON (sr.id)
+            sr.canonical_title, sr.culture,
+            LEFT(sv.text_extracted, 1500),
+            cl.weight
+        FROM canon_dependencies d
+        JOIN canon_support_links cl ON cl.canonical_id = d.child_id
+        JOIN source_records sr ON sr.id = cl.archive_object_id
+        JOIN source_versions sv ON sv.source_record_id = sr.id
+        WHERE d.parent_type = 'chapter' AND d.parent_id IN ({ch_ids_sql})
+          AND d.child_type IN ('actor', 'event')
+          AND sv.text_extracted IS NOT NULL
+          AND LENGTH(sv.text_extracted) > 150
+        ORDER BY sr.id, cl.weight DESC
+        LIMIT 8
+    """)
+
+    ent_q = text(f"""
+        SELECT DISTINCT ON (d.child_id)
+            d.child_id::text, d.child_type,
+            COALESCE(
+                (SELECT canonical_name FROM canonical_actors WHERE id = d.child_id),
+                (SELECT canonical_name FROM canonical_events WHERE id = d.child_id),
+                (SELECT canonical_name FROM canonical_places WHERE id = d.child_id)
+            ),
+            COALESCE(
+                (SELECT LEFT(summary, 200) FROM canonical_actors WHERE id = d.child_id),
+                (SELECT LEFT(summary, 200) FROM canonical_events WHERE id = d.child_id),
+                (SELECT LEFT(summary, 200) FROM canonical_places WHERE id = d.child_id)
+            )
+        FROM canon_dependencies d
+        WHERE d.parent_type = 'chapter' AND d.parent_id IN ({ch_ids_sql})
+          AND d.child_type IN ('actor', 'event', 'place')
+        ORDER BY d.child_id
+        LIMIT 20
+    """)
+
+    try:
+        src_rows = (await session.execute(src_q)).all()
+        ent_rows = (await session.execute(ent_q)).all()
+    except Exception:
+        logger.exception("Failed to get culture detail for %s", culture)
+        return {"culture": culture, "source_texts": [], "actors": [], "events": [], "places": []}
+
+    source_texts = [
+        {"title": r[0] or "Unknown", "culture": r[1], "text": r[2] or "", "weight": float(r[3] or 0)}
+        for r in src_rows if r[2] and len(r[2].strip()) > 100
+    ]
+    source_texts.sort(key=lambda x: x["weight"], reverse=True)
+
+    actors = [
+        {"id": r[0], "name": r[2] or "Unknown", "type": r[1], "summary": r[3] or ""}
+        for r in ent_rows if r[1] == "actor" and r[2]
+    ]
+    events = [
+        {"id": r[0], "name": r[2] or "Unknown", "type": r[1], "summary": r[3] or ""}
+        for r in ent_rows if r[1] == "event" and r[2]
+    ]
+    places = [
+        {"id": r[0], "name": r[2] or "Unknown", "type": r[1], "summary": r[3] or ""}
+        for r in ent_rows if r[1] == "place" and r[2]
+    ]
+
+    return {
+        "culture": culture,
+        "source_count": len(source_texts),
+        "source_texts": source_texts[:6],
+        "actors": actors[:10],
+        "events": events[:10],
+        "places": places[:5],
+    }
 
 
 @router.get("/outlines")

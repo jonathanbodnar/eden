@@ -501,4 +501,6 @@ export const api = {
     cachedGet<EntityMergeBreakdown>(`/story/entities/${entityType}/${entityId}/merge-breakdown`),
   getCultureVariants: (storyChapterId: string, q?: string) =>
     cachedGet<CultureVariant[]>(`/story/chapters/${storyChapterId}/culture-variants${q ? `?q=${encodeURIComponent(q)}` : ''}`),
+  getStoryCultureDetail: (storyChapterId: string, culture: string) =>
+    cachedGet<CultureVariant>(`/story/chapters/${storyChapterId}/culture-detail?culture=${encodeURIComponent(culture)}`),
 }
