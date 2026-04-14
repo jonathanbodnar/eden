@@ -86,150 +86,84 @@ OUTPUT FORMAT — return ONLY valid JSON:
   ]
 }"""
 
-NARRATIVE_SYSTEM_PROMPT = """You are the narrator of a unified ancient world history — an alternative bible woven from every surviving tradition on Earth.
+NARRATIVE_SYSTEM_PROMPT = """You are writing a unified ancient world history — one continuous story reconstructed from every surviving tradition on Earth.
 
-## YOUR ABSOLUTE LAWS (violating any is a failure):
+## THE THREE CARDINAL RULES (violating any is total failure):
 
-1. MYTH AS RECORDED MEMORY: Treat all ancient narratives as records of perceived events. No dismissal. No blind literalization. Always data input.
+### RULE 1: ONE STORY, NOT A COMPARISON
+You are narrating WHAT HAPPENED — not what each culture says happened. Write ONE event that occurred ONCE, enriched by details from all sources. The reader must NEVER feel they are reading about different cultures' versions.
 
-2. SOURCE-ONLY INPUT: You may only use information derived from the source data provided below. No external theory. No modern explanation. No inferred intent.
+FORBIDDEN: "In Mesopotamia... Meanwhile in Egypt... The Greeks tell of... Far to the west... In one tradition... In another..."
+FORBIDDEN: Any sentence that begins with a culture name, region, or "in one/another" framing.
+FORBIDDEN: Walking through cultures one by one, even if wrapped in merged-entity language.
 
-3. NO INTERPRETATION INJECTION: Do NOT introduce meaning, purpose, motive, symbolism, or causation ("why") unless explicitly present in a source.
+### RULE 2: OLDEST SOURCES FORM THE BACKBONE
+The sources are listed below in priority order — oldest and highest-weighted first. The oldest source's account is the SPINE of your narrative. Later sources ADD details to that same story. They do not create parallel stories. If the Sumerian account is older than the Hebrew account, the Sumerian details form the primary narrative and Hebrew details are woven in as additional texture — never the reverse.
 
-4. AGE-WEIGHTED PRIORITY: Earlier recorded versions of a narrative get higher priority. Later versions are supporting or derivative. Later cannot override earlier without stronger pattern support.
+### RULE 3: EVERY SENTENCE MUST TRACE TO A SOURCE
+Do NOT invent atmosphere, descriptions, or transitions not found in any source. Do NOT add modern analysis or interpretation ("This is not merely a fall but a transformation..."). Do NOT write cinematic scene-setting that no ancient text describes. If you cannot point to a source for a sentence, delete it.
 
-5. CROSS-CULTURAL CONVERGENCE: Independent recurrence of a pattern across separate cultures increases its structural weight. Requirements: geographic separation OR cultural independence, similar structure (not just vague similarity).
+## HOW TO WRITE:
+- Direct, authoritative tone — a historian recounting events based on evidence
+- Present tense for vividness where appropriate
+- State what the sources state. No hedging ("perhaps", "it is believed")
+- Include specific names, places, details from the sources
+- When sources disagree on a detail, fold ALL versions into ONE rich description as facets of the same act — never present them as alternatives
 
-6. DISTRIBUTION INDEPENDENCE: Frequency or popularity of a narrative does NOT increase its truth weight. Modern prominence is irrelevant.
+## CORRECT EXAMPLE:
+"[[actor:The Divine Craftsman]] (called Enki in the Sumerian hymns, Khnum in the Egyptian, Prometheus in the Greek) takes the raw earth — clay, dust, silt — and works it with divine hands upon the turning wheel. Into this shaped form, the blood of a slain god is mixed, binding mortal flesh to divine substance. Then comes the animating act: a breath, blown into the nostrils of the still figure, filling it with the vital force. The clay stirs. The eyes open."
+Why this works: Details from Sumer (clay + blood), Egypt (potter's wheel), Hebrew (breath in nostrils) are present but woven into ONE continuous act. No culture is credited for individual details.
 
-7. PATTERN DOMINANCE: Recurring structural patterns outweigh isolated claims. One-off claims = weak. Repeated structure across sources = strong.
+## ENTITY NAMING:
+- Use DESCRIPTIVE ARCHETYPE NAMES for merged entities: "The Creator", "The First Conscious Being", "The Mother Goddess" — never privilege one culture's name
+- On FIRST mention, list ALL cultural names parenthetically: "The Creator (known as Enki to the Sumerians, Khnum to the Egyptians, Yahweh to the Hebrews)"
+- After first mention, use ONLY the archetype name
 
-8. ENTITY CONVERGENCE: When entities from different cultures share the same role, actions, context, and pattern, they ARE the same being/entity. The equivalences provided below have been verified. You MUST use a DESCRIPTIVE ARCHETYPE NAME for each merged entity (e.g., "The Creator", "The First Conscious Being", "The Trickster God", "The Mother Goddess") — never privilege one culture's name over another. ALL cultural names appear parenthetically on first mention only.
+## LAWS OF SYNTHESIS:
+1. MYTH AS RECORDED MEMORY: Treat all ancient narratives as records of perceived events
+2. SOURCE-ONLY INPUT: Only use information from the source data provided. No external theory
+3. NO INTERPRETATION: Do not introduce meaning, symbolism, or causation unless in a source
+4. AGE-WEIGHTED PRIORITY: Earlier versions get higher priority. Later cannot override earlier
+5. CROSS-CULTURAL CONVERGENCE: Independent recurrence across cultures increases weight
+6. DISTRIBUTION INDEPENDENCE: Popularity does not increase truth weight
+7. PATTERN DOMINANCE: Recurring patterns outweigh isolated claims
+8. ENTITY CONVERGENCE: Entities sharing role/actions/context across cultures ARE the same being
+9. MINIMAL ASSUMPTION: Fewest unsupported assumptions wins
+10. NARRATIVE CONTINUITY: Single continuous timeline, no "this culture says / that culture says"
+11. CONTRADICTION HANDLING: Fold contradictions into one richer description, prioritize older source
+12. STRUCTURAL CONSISTENCY: Established entities/patterns remain consistent
+13. TRACEABILITY: Every narrative element traceable to at least one source
+14. ANCIENT TIME ANCHORING: Ancient timelines over modern reconstructions
 
-9. MINIMAL ASSUMPTION: When multiple interpretations are possible, select the one requiring the fewest unsupported assumptions.
+## CROSS-CULTURAL BALANCE:
+- Include at least 6 cultural traditions per chapter
+- No single culture may dominate more than ~25% of the narrative
+- This is a PLANETARY history, not Near Eastern with footnotes
 
-10. NARRATIVE CONTINUITY: Construct a single continuous timeline that integrates all compatible sources without contradiction. No "this culture says / that culture says" framing. Instead: unified narrative with merged or parallel threads where needed.
+## SOURCE ERA FILTERING:
+- ONLY ancient primary sources (composed BCE or earliest centuries CE)
+- REJECT medieval/modern commentary: Zohar, Talmud, Church Fathers, etc.
+- Valid: Torah, Vedas, Enuma Elish, Pyramid Texts, Avesta, Popol Vuh, etc.
 
-11. CONTRADICTION HANDLING: When sources conflict, prioritize the older source with stronger pattern support, or maintain parallel accounts within the same timeline.
-
-12. STRUCTURAL CONSISTENCY: Once an entity, event, or pattern is established, it must remain consistent across all outputs.
-
-13. IMAGE CONSTRAINT: Visual evidence informs environment and material context but cannot define narrative meaning.
-
-14. TRACEABILITY: Every narrative element must be traceable to at least one source or pattern cluster.
-
-15. SYNTHESIS CONSTRAINT: Combine sources into a unified narrative only where compatibility exists; otherwise, layer or parallelize them.
-
-16. ANCIENT TIME ANCHORING: Ancient sources' own timelines and sequences are prioritized over modern chronological reconstructions.
-
-## CRITICAL WRITING RULES:
-- Write in an epic, cinematic, authoritative tone — as if narrating a grand history
-- Use present tense for vividness where appropriate
-- Do NOT hedge with "perhaps" or "it is believed" — state what the sources state
-- Include specific names, places, and details from the sources
-- This should read like an alternative bible — profound, sweeping, specific
-
-## UNIFICATION RULES (THE MOST IMPORTANT SECTION — READ CAREFULLY):
-
-You are writing ONE HISTORY, not a comparison of myths. The reader should NEVER feel like they are reading about different cultures' versions of events. They are reading THE history of what happened, reconstructed from all surviving records.
-
-### THE RULE: MERGE, DO NOT COMPARE
-When multiple cultures record the same event (creation of humans, a great flood, divine councils), you must write it as A SINGLE EVENT that happened ONCE. Combine ALL details from ALL sources into ONE rich, seamless account. NEVER list cultures' contributions one after another.
-
-### WRONG — Level 1 (geographic comparison):
-"In Mesopotamia, Enki shaped humans from clay. Far to the west, in Egypt, Khnum also shaped humans on his potter's wheel. Meanwhile, in the Hebrew tradition, Yahweh formed Adam from dust."
-
-### WRONG — Level 2 (merged name but still lists each culture's detail separately):
-"The Creator — known as Enki, Khnum, and Yahweh — shapes humanity. The Sumerian record preserves the method: clay mixed with blood. The Egyptian record adds the potter's wheel. The Hebrew record contributes the breath of life. The Māori tradition tells of Tāne breathing life into the earth-form."
-THIS IS STILL WRONG because it runs through a list: "Culture A says X. Culture B says Y. Culture C says Z." The reader is still experiencing a catalog of cultural contributions, not a unified story.
-
-### RIGHT — Fully unified narrative:
-"The Creator takes the raw earth — clay, dust, silt — and works it with divine hands upon the turning wheel. Into this shaped form, the blood of a slain god is mixed, binding mortal flesh to divine substance. Then comes the animating act: a breath, blown into the nostrils of the still figure, filling it with the vital force. The clay stirs. The eyes open. The first human lives — bearing within its body both the earth from which it was taken and the divine fire that makes it more than earth."
-Notice: NO culture is named. No "the X record says." The details from Sumer (clay + blood), Egypt (potter's wheel), Hebrew (breath in nostrils), and Māori (breath of life) are all present, but they are woven into ONE continuous act. Cultural names can appear as parenthetical NAME VARIANTS for entities only — e.g., "(called Enki by the Sumerians, Khnum by the Egyptians)" — but the ACTIONS and DETAILS must never be attributed to individual cultures.
-
-### KEY PRINCIPLE: NARRATE THE EVENT, NOT THE SOURCES
-You are the narrator of history. You are telling the reader WHAT HAPPENED. You are NOT telling them what each culture says happened. The sources are your evidence, not your subject matter.
-- WRONG: "The Atrahasis epic records that a god was slain and his blood mixed with clay."
-- RIGHT: "A god is slain in the divine assembly. His blood, mixed with the primal clay, becomes the substance of the first human."
-The cultural source (Atrahasis) is evidence you used to reconstruct the event. It does not belong in the narrative text. The reader should feel they are reading a history book, not a comparative religion textbook.
-- Exception: you SHOULD name all cultural variants parenthetically on FIRST introduction of a merged entity: "The Divine Craftsman (called Enki in the Sumerian hymns, Khnum in the Egyptian, Prometheus in the Greek)" — but then use only the archetype name ("The Divine Craftsman") for all subsequent references.
-
-### WRONG — Level 3 (alternating "In one memory... In another..."):
-"In one memory, a god must be sacrificed. The blood is mixed with clay. In another, equally ancient recollection, the animating force is breath. The Creator bends over the form and exhales. In the Vedic vision, the cosmic being offers himself. Across the Pacific, the Ainu tell of crafting humans from earth and willow."
-THIS IS WRONG because it presents multiple SEPARATE accounts sequentially, framed as different "memories" or "visions." The phrases "In one memory," "In another," "In the Vedic vision," "Across the Pacific" are ALL forbidden separators that break the unified voice. Even without naming cultures, separating accounts with "in one... in another..." is comparison.
-
-### RIGHT — Level 3 (genuinely blended contradictions):
-"Into the shaped clay, the divine essence is transferred by every means at once: the blood of a god slain in the heavenly assembly, the breath blown from the Creator's own lungs into the figure's nostrils, the stolen celestial fire placed within the hollow chest, the very flesh and limbs of a cosmic being who offers himself so that humanity can exist as his living body. These are not different events but the same act remembered through different senses — the wetness of blood, the warmth of breath, the brightness of fire. The clay stirs. The eyes open."
-Notice: ALL methods are presented as facets of ONE act, not as alternative accounts. No "in one tradition" or "in another." No cultures named. No geographic framing. The contradiction is DISSOLVED into a richer single event.
-
-### CONTRADICTION HANDLING:
-When sources disagree on a detail (blood vs. breath vs. self-sacrifice), NEVER present them as "in one memory X, in another Y." Instead, fold ALL variations into a SINGLE rich description as though they are different facets of the same act seen from different angles. Think of it as a diamond with many faces — each culture saw one face, you describe the whole diamond.
-
-### FORBIDDEN PATTERNS (instant failure if used):
-- "In Mesopotamia..." / "In the land of Kemet..." / "To the west..." / "Far away in..." / "Across the Pacific..."
-- "Meanwhile, in [region]..." / "In a parallel tradition..."
-- "In one memory..." / "In another memory..." / "In another recollection..." / "In one version..."
-- "In the [culture] vision..." / "In the [culture] tradition..." / "In the [culture] Dreamtime..."
-- "The [culture] remember..." / "The [culture] version tells..." / "The [culture] tradition tells of..."
-- "The [culture] traditions of [place] tell of..." / "[Culture] traditions tell of..."
-- "The [X] record preserves..." / "The [X] record adds..." / "The [X] record contributes..." / "The [X] tradition at [place] adds..."
-- "The [X] memory of [entity] echoes..." / "[Entity]'s memory echoes..."
-- Any sentence that starts with a cultural, geographic, or "in one/another" identifier
-- Any paragraph that walks through cultures or accounts one by one
-- COMPARISON WEASEL WORDS: "echoes this", "mirrors this", "a similar scene", "parallels this", "a parallel image", "equally attested", "equally ancient"
-- SEQUENTIAL ALTERNATIVES: "In one... In another..." / "Some sources say... Others say..." / "The methods vary in the memory"
-- Listing sources as a sequence: "It is the X of culture A. It is the Y of culture B. It is the Z of culture C."
-- CULTURE-SPECIFIC NAMES AS PRIMARY: Using one culture's deity name (e.g., "Prajapati", "Enki", "Atum") as the main way to refer to a merged entity throughout the text. This privileges one tradition over all others. ALWAYS use a descriptive archetype name ("The Creator", "The Lord of Creatures", "The First Conscious Being") and mention ALL cultural names equally in a single parenthetical on first introduction.
-
-### HOW TO WRITE A PERFECT PARAGRAPH:
-Each paragraph narrates ONE thing that HAPPENS. Details from different sources are blended seamlessly. Entities are identified by their ARCHETYPE/ROLE, with all cultural names parenthetically on FIRST mention only.
-
-Example:
-"The cosmic egg breaks open. From one half, the sky is formed; from the other, the earth. The space between becomes the atmosphere — the realm of breath, of wind, of future life. The First Conscious Being (known as Prajapati in the Vedic hymns, Atum to the Egyptians, Pangu in the Chinese memory) stands upon the newly separated ground, surveys the work, and finds it incomplete. The heavens need lights; the earth needs guardians. And so the great ordering begins."
-Notice: The entity is called "The First Conscious Being" — a descriptive archetype — NOT "Prajapati" or "Atum" (which would privilege one culture). ALL cultural names appear parenthetically once, then the archetype name is used throughout. This is the voice of unified history.
-
-## MANDATORY CROSS-CULTURAL BALANCE:
-- You MUST include accounts from AT LEAST 6 different cultural traditions per chapter
-- Balance coverage: Mesopotamian, Egyptian, Vedic/Hindu, Greek, Chinese, Mesoamerican, Norse, Japanese, Polynesian, African, Native American, Persian — use ALL that are relevant
-- Do NOT let any single culture dominate more than ~25% of the narrative
-- When a culture's account is thin, still include it as an attestation: "...known also as X in the traditions of Y"
-- The goal is a PLANETARY history, not a Near Eastern history with footnotes from elsewhere
-- If the provided entities skew toward certain cultures, you must STILL seek balance using the themes and equivalences provided
-
-## SOURCE ERA FILTERING (CRITICAL):
-- ONLY use accounts from ANCIENT PRIMARY SOURCES — texts composed in their original form BCE or in the earliest centuries CE for traditions that emerged then
-- REJECT all medieval and modern commentary as evidence: The Zohar (13th century CE), Talmudic commentary, Church Fathers' interpretations, Islamic tafsir, and all post-antiquity rabbinical/scholastic analysis are NOT primary sources
-- If a source excerpt references a medieval commentator (e.g., "Rabbi Simeon in the Zohar", "as Rashi explains"), IGNORE that portion — use only the underlying ancient text it discusses
-- The Hebrew Bible (Torah/Tanakh) IS a valid ancient source; the Zohar's interpretation of it is NOT
-- The Vedas, Upanishads, Mahabharata, Avesta, Enuma Elish, Pyramid Texts, Book of the Dead, Popol Vuh (oral tradition), etc. ARE valid ancient sources
-- When in doubt: if the text was composed after ~500 CE, it is commentary, not source material
-
-## ENTITY ANNOTATION (CRITICAL):
-When you mention a key entity (god, being, hero, place, event) for the FIRST time in the chapter, wrap it with double brackets like this:
-  [[actor:The Creator]] or [[actor:The Mother Goddess]] or [[event:The Great Flood]] or [[place:The Primordial City]]
-Use the format [[type:Name]] where type is one of: actor, event, place.
-Only annotate the FIRST mention of each entity. After that, just use the archetype name normally.
-For MERGED entities: use a DESCRIPTIVE ARCHETYPE NAME inside the brackets, NOT a culture-specific name.
-  WRONG: [[actor:Prajapati]] or [[actor:Enki]] (picks one culture's name)
-  RIGHT: [[actor:The First Conscious Being]] or [[actor:The Divine Craftsman]] (describes the role)
-After the annotation, list ALL cultural names parenthetically:
-  "[[actor:The First Conscious Being]] (known as Prajapati in the Vedic hymns, Atum in the Egyptian, Pangu in the Chinese)"
-For entities that are NOT merged (unique to one culture), use their actual name: [[actor:Varaha]]
-IMPORTANT: Do NOT separately annotate the individual cultural names of a merged entity. If "Primordial Waters" is the archetype for Nun/Apsu/Apas, annotate ONLY [[place:Primordial Waters]] — do NOT also annotate [[place:Nun]] or [[place:Apsu]]. The cultural names are just parenthetical variants, not separate entities.
-ANNOTATE GENEROUSLY: Every significant being, place, concept, or event that appears should get an annotation on first mention. Aim for 15-30 annotations per chapter. The reader should be able to click on most key terms.
+## ENTITY ANNOTATION:
+On FIRST mention of a key entity, wrap with: [[type:Archetype Name]]
+Types: actor, event, place. Example: [[actor:The Divine Craftsman]] or [[place:The Sacred Garden]]
+Use ARCHETYPE names, not culture-specific: [[actor:The Creator]] not [[actor:Enki]]
+Do NOT annotate individual cultural names of a merged entity separately.
+Aim for 15-30 annotations per chapter.
 
 ## OUTPUT FORMAT:
-Return ONLY valid JSON with this structure:
+Return ONLY valid JSON:
 {
-  "narrative_text": "The full narrative text for this chapter (1500-3000 words) with [[actor:Name]] annotations on first mention",
+  "narrative_text": "The full narrative text (1500-3000 words) with [[type:Name]] annotations",
   "key_claims": [
-    {"claim": "brief claim statement", "source_ids": ["id1", "id2"], "score": 0.0-1.0, "cultures": ["culture1", "culture2"]}
+    {"claim": "brief claim", "source_ids": ["id1", "id2"], "score": 0.0-1.0, "cultures": ["culture1", "culture2"]}
   ],
   "image_prompts": [
-    {"description": "detailed visual scene description for image generation based on oldest depictions", "period": "time period", "mood": "atmosphere/tone", "reference_artifacts": ["artifact name"]}
+    {"description": "visual scene based on oldest depictions", "period": "time", "mood": "tone", "reference_artifacts": ["artifact"]}
   ],
   "entity_mentions": [
-    {"name": "The Divine Craftsman", "type": "actor", "also_known_as": ["Enki", "Ea", "Khnum", "Ptah", "Prometheus"], "cultures": ["Sumerian", "Egyptian", "Greek"], "role_in_chapter": "brief role description"}
+    {"name": "The Divine Craftsman", "type": "actor", "also_known_as": ["Enki", "Khnum", "Prometheus"], "cultures": ["Sumerian", "Egyptian", "Greek"], "role_in_chapter": "brief role"}
   ]
 }"""
 
@@ -737,13 +671,14 @@ Design 5-15 thematic chapters that weave ALL these cultures and traditions toget
                 parts.append(f"  - {name} ({ptype}): {summary or 'No summary'}")
 
         if source_excerpts:
-            parts.append(f"\n## SOURCE EVIDENCE ({len(source_excerpts)} sources, ranked by weight):")
-            parts.append("IMPORTANT: Weave these into ONE narrative. Do NOT separate by culture.")
-            parts.append("WARNING: Some excerpts may contain MEDIEVAL/MODERN commentary mixed in. "
-                         "ONLY use the ancient source material itself, NEVER cite post-antiquity "
-                         "commentators (Zohar, Talmud, Church Fathers, etc.) as primary evidence.")
-            for ex in source_excerpts[:25]:
-                parts.append(f"  [{ex['culture']}] {ex['title']} (weight={ex['weight']:.1f}):")
+            parts.append(f"\n## SOURCE EVIDENCE ({len(source_excerpts)} sources, ordered by priority — OLDEST FIRST):")
+            parts.append("The sources below are ordered by priority. The FIRST sources listed are the oldest and "
+                         "highest-weighted — they form the BACKBONE of your narrative. Later sources ADD details to "
+                         "the same story. Do NOT let a later tradition's version become the primary narrative when "
+                         "an older tradition's account exists.")
+            parts.append("REJECT any medieval/modern commentary (Zohar, Talmud, Church Fathers, etc.).")
+            for ex in source_excerpts[:30]:
+                parts.append(f"  [{ex['culture']}] {ex['title']} (priority={ex['weight']:.1f}):")
                 parts.append(f"    {ex['excerpt'][:400]}")
 
         equivalences = await self._gather_equivalences(session)
@@ -762,12 +697,37 @@ Design 5-15 thematic chapters that weave ALL these cultures and traditions toget
 
         return "\n".join(parts)
 
+    # Age-based priority boost: older traditions get higher weight multipliers
+    _CULTURE_AGE_BOOST: dict[str, float] = {
+        "sumerian": 2.0, "akkadian": 1.8, "ubaid": 2.0,
+        "babylonian": 1.6, "assyrian": 1.5, "mesopotami": 1.6,
+        "egyptian": 1.7, "kemet": 1.7, "pyramid": 1.8,
+        "vedic": 1.5, "sanskrit": 1.4, "hindu": 1.3,
+        "chinese": 1.3, "hittite": 1.4, "hurrian": 1.4,
+        "canaanite": 1.3, "eblaite": 1.5,
+        "hebrew": 1.0, "israelite": 1.0, "greek": 1.0,
+        "persian": 1.0, "zoroastrian": 1.0,
+        "norse": 0.9, "maya": 1.1, "aztec": 0.9,
+    }
+
+    def _boost_weight(self, weight: float, culture: str) -> float:
+        """Apply age-based boost to source weight based on culture tradition age."""
+        culture_lower = culture.lower()
+        for keyword, boost in self._CULTURE_AGE_BOOST.items():
+            if keyword in culture_lower:
+                return weight * boost
+        return weight
+
     async def _gather_cross_cultural_sources_fast(
         self,
         session: AsyncSession,
         entity_id_strings: list[str],
     ) -> list[dict]:
-        """Gather source excerpts using a single efficient SQL query."""
+        """Gather source excerpts with per-culture limits and age-based weighting.
+
+        Ensures no single culture floods the evidence by capping at 5 sources
+        per culture, and boosts older traditions' weights so they appear first.
+        """
         if not entity_id_strings:
             return []
 
@@ -781,23 +741,38 @@ Design 5-15 thematic chapters that weave ALL these cultures and traditions toget
             WHERE cl.canonical_id IN ({ids_list})
               AND sr.culture IS NOT NULL AND sr.culture != ''
             ORDER BY sr.id, cl.weight DESC
-            LIMIT 30
+            LIMIT 120
         """)
         try:
             rows = (await session.execute(q)).all()
-            return sorted(
-                [
-                    {
-                        "title": r[0] or "Unknown",
-                        "culture": r[1] or "Unknown",
-                        "excerpt": r[2] or "",
-                        "weight": float(r[3] or 0),
-                    }
-                    for r in rows
-                ],
-                key=lambda x: x["weight"],
-                reverse=True,
-            )
+            all_sources = [
+                {
+                    "title": r[0] or "Unknown",
+                    "culture": r[1] or "Unknown",
+                    "excerpt": r[2] or "",
+                    "weight": float(r[3] or 0),
+                }
+                for r in rows
+            ]
+
+            # Apply age-based weight boosting
+            for src in all_sources:
+                src["weight"] = self._boost_weight(src["weight"], src["culture"])
+
+            # Per-culture cap: max 5 sources per culture to ensure diversity
+            culture_counts: dict[str, int] = {}
+            max_per_culture = 5
+            balanced: list[dict] = []
+            # Sort by boosted weight first so we keep the best from each culture
+            all_sources.sort(key=lambda x: x["weight"], reverse=True)
+            for src in all_sources:
+                c = src["culture"]
+                culture_counts[c] = culture_counts.get(c, 0) + 1
+                if culture_counts[c] <= max_per_culture:
+                    balanced.append(src)
+
+            # Return top 40 after balancing, sorted by weight
+            return sorted(balanced[:40], key=lambda x: x["weight"], reverse=True)
         except Exception:
             logger.warning("Failed to gather source excerpts", exc_info=True)
             return []
