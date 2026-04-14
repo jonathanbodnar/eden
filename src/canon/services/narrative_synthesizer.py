@@ -511,12 +511,14 @@ Design 5-15 thematic chapters that weave ALL these cultures and traditions toget
                             continue
 
                 logger.info("Synthesizing [%d] %s / %s", total_chapters + 1, epoch.title, outline.title)
-                story = await self.synthesize_unified_chapter(None, outline, epoch, prior_narrative)
-                prior_narrative = story.narrative_text
-                total_chapters += 1
-                total_words += story.word_count or 0
-
-                logger.info("  → committed chapter %d: '%s' (%d words)", total_chapters, outline.title, story.word_count or 0)
+                try:
+                    story = await self.synthesize_unified_chapter(None, outline, epoch, prior_narrative)
+                    prior_narrative = story.narrative_text
+                    total_chapters += 1
+                    total_words += story.word_count or 0
+                    logger.info("  → committed chapter %d: '%s' (%d words)", total_chapters, outline.title, story.word_count or 0)
+                except Exception:
+                    logger.exception("Failed to synthesize chapter '%s', skipping", outline.title)
 
         logger.info("Synthesized %d unified chapters, ~%d words total", total_chapters, total_words)
         return {"chapters_synthesized": total_chapters, "total_words": total_words}
@@ -532,78 +534,61 @@ Design 5-15 thematic chapters that weave ALL these cultures and traditions toget
         epoch: CanonicalEpoch,
         prior_narrative: str | None,
     ) -> str:
-        """Build a cross-cultural evidence prompt for a single planned chapter."""
+        """Build a cross-cultural evidence prompt for a single planned chapter.
+
+        Uses efficient SQL with theme-based filtering to avoid loading all entities.
+        """
         themes = outline.themes or []
-        theme_keywords = [t.lower() for t in themes]
+        theme_pattern = "%|%".join(t.lower() for t in themes) if themes else "%"
 
-        # Get ALL entities in this epoch
-        ch_q = select(CanonicalChapter.id).where(
-            CanonicalChapter.epoch_id == epoch.id,
-            CanonicalChapter.is_current.is_(True),
-        )
-        chapter_ids = [r[0] for r in (await session.execute(ch_q)).all()]
+        epoch_id = str(epoch.id)
 
-        # Find entities matching our themes
-        matching_actors = []
-        matching_events = []
-        matching_places = []
-        entity_ids_for_sources: list[tuple] = []
+        # Efficient: find actors matching themes via SQL ILIKE
+        actors_q = text("""
+            SELECT DISTINCT a.canonical_name, a.actor_type, LEFT(a.summary, 200), a.id::text
+            FROM canonical_actors a
+            JOIN canon_dependencies d ON d.child_type = 'actor' AND d.child_id = a.id
+            JOIN canonical_chapters c ON c.id = d.parent_id AND d.parent_type = 'chapter'
+            WHERE c.epoch_id = :eid AND c.is_current = true AND a.is_current = true
+              AND (LOWER(a.canonical_name) LIKE ANY(string_to_array(:pattern, '|'))
+                   OR LOWER(a.summary) LIKE ANY(string_to_array(:pattern, '|')))
+            ORDER BY a.canonical_name
+            LIMIT 50
+        """)
+        events_q = text("""
+            SELECT DISTINCT e.canonical_name, e.event_type, LEFT(e.summary, 200), e.id::text
+            FROM canonical_events e
+            JOIN canon_dependencies d ON d.child_type = 'event' AND d.child_id = e.id
+            JOIN canonical_chapters c ON c.id = d.parent_id AND d.parent_type = 'chapter'
+            WHERE c.epoch_id = :eid AND c.is_current = true AND e.is_current = true
+              AND (LOWER(e.canonical_name) LIKE ANY(string_to_array(:pattern, '|'))
+                   OR LOWER(e.summary) LIKE ANY(string_to_array(:pattern, '|')))
+            ORDER BY e.canonical_name
+            LIMIT 50
+        """)
+        places_q = text("""
+            SELECT DISTINCT p.canonical_name, p.place_type, LEFT(p.summary, 200)
+            FROM canonical_places p
+            JOIN canon_dependencies d ON d.child_type = 'place' AND d.child_id = p.id
+            JOIN canonical_chapters c ON c.id = d.parent_id AND d.parent_type = 'chapter'
+            WHERE c.epoch_id = :eid AND c.is_current = true AND p.is_current = true
+              AND (LOWER(p.canonical_name) LIKE ANY(string_to_array(:pattern, '|'))
+                   OR LOWER(p.summary) LIKE ANY(string_to_array(:pattern, '|')))
+            ORDER BY p.canonical_name
+            LIMIT 25
+        """)
 
-        if chapter_ids:
-            batch_size = 500
-            for i in range(0, len(chapter_ids), batch_size):
-                batch = chapter_ids[i:i + batch_size]
-                deps_q = select(CanonDependency.child_type, CanonDependency.child_id).where(
-                    CanonDependency.parent_type == CanonicalType.CHAPTER,
-                    CanonDependency.parent_id.in_(batch),
-                )
-                deps = (await session.execute(deps_q)).all()
+        params = {"eid": epoch_id, "pattern": theme_pattern}
+        actor_rows = (await session.execute(actors_q, params)).all()
+        event_rows = (await session.execute(events_q, params)).all()
+        place_rows = (await session.execute(places_q, params)).all()
 
-                actor_ids = list({d[1] for d in deps if d[0] == CanonicalType.ACTOR})
-                event_ids = list({d[1] for d in deps if d[0] == CanonicalType.EVENT})
-                place_ids = list({d[1] for d in deps if d[0] == CanonicalType.PLACE})
+        # Get source excerpts efficiently
+        entity_ids = [r[3] for r in actor_rows[:20]] + [r[3] for r in event_rows[:20]]
+        source_excerpts = await self._gather_cross_cultural_sources_fast(session, entity_ids)
 
-                for aid_batch in [actor_ids[j:j+200] for j in range(0, len(actor_ids), 200)]:
-                    rows = (await session.execute(
-                        select(CanonicalActor).where(
-                            CanonicalActor.id.in_(aid_batch), CanonicalActor.is_current.is_(True)
-                        )
-                    )).scalars().all()
-                    for a in rows:
-                        if self._matches_themes(a.canonical_name, a.summary, theme_keywords):
-                            matching_actors.append(a)
-                            entity_ids_for_sources.append((CanonicalType.ACTOR, a.id))
-
-                for eid_batch in [event_ids[j:j+200] for j in range(0, len(event_ids), 200)]:
-                    rows = (await session.execute(
-                        select(CanonicalEvent).where(
-                            CanonicalEvent.id.in_(eid_batch), CanonicalEvent.is_current.is_(True)
-                        )
-                    )).scalars().all()
-                    for e in rows:
-                        if self._matches_themes(e.canonical_name, e.summary, theme_keywords):
-                            matching_events.append(e)
-                            entity_ids_for_sources.append((CanonicalType.EVENT, e.id))
-
-                for pid_batch in [place_ids[j:j+200] for j in range(0, len(place_ids), 200)]:
-                    rows = (await session.execute(
-                        select(CanonicalPlace).where(
-                            CanonicalPlace.id.in_(pid_batch), CanonicalPlace.is_current.is_(True)
-                        )
-                    )).scalars().all()
-                    for p in rows:
-                        if self._matches_themes(p.canonical_name, p.summary, theme_keywords):
-                            matching_places.append(p)
-
-        # Gather cross-cultural source excerpts
-        source_excerpts = await self._gather_cross_cultural_sources(
-            session, entity_ids_for_sources
-        )
-
-        # Count cultures
         culture_set = {ex["culture"] for ex in source_excerpts if ex.get("culture")}
 
-        # Build the prompt
         scope = outline.scope or "universal"
         regions = outline.regions or []
         parts = [
@@ -623,20 +608,20 @@ Design 5-15 thematic chapters that weave ALL these cultures and traditions toget
         if culture_set:
             parts.append(f"Cultures: {', '.join(sorted(culture_set)[:30])}")
 
-        if matching_actors:
-            parts.append(f"\n## ACTORS ({len(matching_actors)}):")
-            for a in matching_actors[:40]:
-                parts.append(f"  - {a.canonical_name} ({a.actor_type.value}): {(a.summary or '')[:150]}")
+        if actor_rows:
+            parts.append(f"\n## ACTORS ({len(actor_rows)}):")
+            for name, atype, summary, _ in actor_rows:
+                parts.append(f"  - {name} ({atype}): {summary or 'No summary'}")
 
-        if matching_events:
-            parts.append(f"\n## EVENTS ({len(matching_events)}):")
-            for e in matching_events[:40]:
-                parts.append(f"  - {e.canonical_name} ({e.event_type.value}): {(e.summary or '')[:150]}")
+        if event_rows:
+            parts.append(f"\n## EVENTS ({len(event_rows)}):")
+            for name, etype, summary, _ in event_rows:
+                parts.append(f"  - {name} ({etype}): {summary or 'No summary'}")
 
-        if matching_places:
-            parts.append(f"\n## PLACES ({len(matching_places)}):")
-            for p in matching_places[:20]:
-                parts.append(f"  - {p.canonical_name} ({p.place_type.value}): {(p.summary or '')[:150]}")
+        if place_rows:
+            parts.append(f"\n## PLACES ({len(place_rows)}):")
+            for name, ptype, summary in place_rows:
+                parts.append(f"  - {name} ({ptype}): {summary or 'No summary'}")
 
         if source_excerpts:
             parts.append(f"\n## SOURCE EVIDENCE ({len(source_excerpts)} sources, ranked by weight):")
@@ -656,57 +641,45 @@ Design 5-15 thematic chapters that weave ALL these cultures and traditions toget
 
         return "\n".join(parts)
 
-    def _matches_themes(self, name: str, summary: str | None, theme_keywords: list[str]) -> bool:
-        """Check if an entity's name or summary matches any of the chapter themes."""
-        if not theme_keywords:
-            return True
-        searchable = (name + " " + (summary or "")).lower()
-        return any(kw in searchable for kw in theme_keywords)
-
-    async def _gather_cross_cultural_sources(
+    async def _gather_cross_cultural_sources_fast(
         self,
         session: AsyncSession,
-        entity_ids: list[tuple],
+        entity_id_strings: list[str],
     ) -> list[dict]:
-        """Gather source excerpts from across all cultures for a set of entities."""
-        excerpts = []
-        seen_sources = set()
+        """Gather source excerpts using a single efficient SQL query."""
+        if not entity_id_strings:
+            return []
 
-        for entity_type, entity_id in entity_ids[:100]:
-            links_q = (
-                select(CanonSupportLink, SASourceRecord)
-                .join(SASourceRecord, SASourceRecord.id == CanonSupportLink.archive_object_id)
-                .where(
-                    CanonSupportLink.canonical_type == entity_type,
-                    CanonSupportLink.canonical_id == entity_id,
-                )
-                .order_by(CanonSupportLink.weight.desc())
-                .limit(3)
+        ids_list = ",".join(f"'{eid}'" for eid in entity_id_strings[:40])
+        q = text(f"""
+            SELECT DISTINCT ON (sr.id)
+                sr.canonical_title, sr.culture, LEFT(sv.text_extracted, 500), cl.weight
+            FROM canon_support_links cl
+            JOIN source_records sr ON sr.id = cl.archive_object_id
+            LEFT JOIN source_versions sv ON sv.source_record_id = sr.id
+            WHERE cl.canonical_id IN ({ids_list})
+              AND sr.culture IS NOT NULL AND sr.culture != ''
+            ORDER BY sr.id, cl.weight DESC
+            LIMIT 30
+        """)
+        try:
+            rows = (await session.execute(q)).all()
+            return sorted(
+                [
+                    {
+                        "title": r[0] or "Unknown",
+                        "culture": r[1] or "Unknown",
+                        "excerpt": r[2] or "",
+                        "weight": float(r[3] or 0),
+                    }
+                    for r in rows
+                ],
+                key=lambda x: x["weight"],
+                reverse=True,
             )
-            try:
-                for link, sr in (await session.execute(links_q)).all():
-                    if sr.id in seen_sources:
-                        continue
-                    seen_sources.add(sr.id)
-
-                    sv_q = select(SASourceVersion.text_extracted).where(
-                        SASourceVersion.source_record_id == sr.id
-                    ).limit(1)
-                    sv_result = await session.execute(sv_q)
-                    text_row = sv_result.first()
-                    excerpt_text = text_row[0][:600] if text_row and text_row[0] else ""
-
-                    excerpts.append({
-                        "source_id": str(sr.id),
-                        "title": sr.canonical_title,
-                        "culture": sr.culture or "Unknown",
-                        "excerpt": excerpt_text,
-                        "weight": link.weight,
-                    })
-            except Exception:
-                continue
-
-        return sorted(excerpts, key=lambda x: x["weight"], reverse=True)[:30]
+        except Exception:
+            logger.warning("Failed to gather source excerpts", exc_info=True)
+            return []
 
     # -----------------------------------------------------------------------
     # Shared helpers
