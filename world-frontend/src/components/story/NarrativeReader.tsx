@@ -50,7 +50,6 @@ export default function NarrativeReader({ chapters, activeChapterId, onChapterIn
     userScrolling.current = true
 
     const container = scrollRef.current
-    const scrollTop = container.scrollTop
     const containerHeight = container.clientHeight
 
     let closestId: string | null = null
