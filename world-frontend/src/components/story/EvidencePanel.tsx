@@ -225,16 +225,59 @@ function CultureEntitiesView({ culture }: { culture: CultureVariant }) {
           fontSize: 11, textTransform: 'uppercase', letterSpacing: 1.5,
           color: 'var(--gold)', marginBottom: 4,
         }}>
-          {culture.culture} Tradition
+          {culture.culture} &mdash; Source Texts
         </div>
         <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-          {culture.source_count} sources
+          {culture.source_texts.length} text{culture.source_texts.length !== 1 ? 's' : ''}
           {culture.actors.length > 0 && ` \u00B7 ${culture.actors.length} figures`}
           {culture.events.length > 0 && ` \u00B7 ${culture.events.length} events`}
         </div>
       </div>
 
       <div style={{ flex: 1, overflow: 'auto', padding: '12px 16px' }}>
+        {/* Source Texts — the actual writings used */}
+        {culture.source_texts.length > 0 && (
+          <div style={{ marginBottom: 20 }}>
+            <div style={{
+              fontSize: 11, textTransform: 'uppercase', letterSpacing: 1,
+              color: 'var(--text-muted)', marginBottom: 8,
+            }}>
+              Original Writings ({culture.source_texts.length})
+            </div>
+            {culture.source_texts.map((src, i) => (
+              <details key={i} open={i === 0} style={{
+                marginBottom: 8,
+                background: 'var(--bg-tertiary)',
+                borderRadius: 6,
+                overflow: 'hidden',
+              }}>
+                <summary style={{
+                  padding: '8px 10px',
+                  cursor: 'pointer',
+                  fontSize: 12,
+                  color: 'var(--gold)',
+                  fontWeight: 600,
+                  listStyle: 'none',
+                }}>
+                  {src.title}
+                </summary>
+                <div style={{
+                  padding: '0 10px 10px',
+                  fontSize: 12,
+                  color: 'var(--text-secondary)',
+                  lineHeight: 1.7,
+                  fontFamily: "'Georgia', 'Times New Roman', serif",
+                  fontStyle: 'italic',
+                }}>
+                  {src.text.slice(0, 600)}
+                  {src.text.length > 600 && '...'}
+                </div>
+              </details>
+            ))}
+          </div>
+        )}
+
+        {/* Entity breakdowns */}
         {culture.actors.length > 0 && (
           <div style={{ marginBottom: 20 }}>
             <div style={{

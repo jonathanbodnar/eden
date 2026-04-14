@@ -76,105 +76,14 @@ function parseNarrativeWithEntities(
   })
 }
 
-function ClaimIndicator({ cultures, score }: { cultures: string[]; score: number }) {
-  const isStrong = cultures.length >= 3 || score >= 0.7
-  return (
-    <span
-      title={`${cultures.length} culture${cultures.length !== 1 ? 's' : ''}: ${cultures.join(', ')} (score: ${score.toFixed(2)})`}
-      style={{
-        display: 'inline-block',
-        width: 3,
-        height: '100%',
-        minHeight: 16,
-        background: isStrong ? 'var(--gold)' : 'var(--border)',
-        borderRadius: 1,
-        marginRight: 8,
-        flexShrink: 0,
-      }}
-    />
-  )
-}
-
-function CultureView({ variant }: { variant: CultureVariant }) {
-  return (
-    <div style={{ marginTop: 16 }}>
-      <div style={{
-        fontSize: 11,
-        textTransform: 'uppercase',
-        letterSpacing: 2,
-        color: 'var(--gold)',
-        marginBottom: 16,
-        paddingBottom: 8,
-        borderBottom: '1px solid var(--border)',
-      }}>
-        {variant.culture} Tradition
-        <span style={{ color: 'var(--text-muted)', marginLeft: 8, letterSpacing: 0 }}>
-          {variant.source_count} source{variant.source_count !== 1 ? 's' : ''}
-        </span>
-      </div>
-
-      {variant.source_texts.length > 0 ? (
-        <div>
-          {variant.source_texts.map((src, i) => (
-            <div key={i} style={{ marginBottom: 28 }}>
-              <div style={{
-                fontSize: 12,
-                fontWeight: 600,
-                color: 'var(--gold)',
-                marginBottom: 8,
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-              }}>
-                <span style={{
-                  width: 20, height: 20, borderRadius: '50%',
-                  background: 'rgba(212, 168, 83, 0.15)',
-                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                  fontSize: 10, flexShrink: 0,
-                }}>
-                  {i + 1}
-                </span>
-                {src.title}
-              </div>
-              <div style={{
-                fontSize: 15,
-                lineHeight: 1.85,
-                color: 'var(--text-primary)',
-                fontFamily: "'Georgia', 'Times New Roman', serif",
-                paddingLeft: 16,
-                borderLeft: '2px solid var(--border)',
-              }}>
-                {src.text.split('\n\n').map((para, pIdx) => (
-                  <p key={pIdx} style={{ marginBottom: 16 }}>{para}</p>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div style={{
-          padding: 24,
-          color: 'var(--text-muted)',
-          textAlign: 'center',
-          fontSize: 14,
-        }}>
-          No original source texts found for this culture in this epoch.
-        </div>
-      )}
-    </div>
-  )
-}
-
 function ChapterViewSelector({
   chapterId,
   selectedView,
   onViewChange,
-  onVariantsLoaded,
 }: {
   chapterId: string
   selectedView: string
   onViewChange: (view: string) => void
-  onVariantsLoaded?: (variants: CultureVariant[]) => void
 }) {
   const [variants, setVariants] = useState<CultureVariant[] | null>(null)
   const [loading, setLoading] = useState(false)
@@ -186,10 +95,7 @@ function ChapterViewSelector({
   useEffect(() => {
     setLoading(true)
     api.getCultureVariants(chapterId)
-      .then(v => {
-        setVariants(v)
-        onVariantsLoaded?.(v)
-      })
+      .then(v => setVariants(v))
       .catch(() => setVariants(null))
       .finally(() => setLoading(false))
   }, [chapterId])
@@ -243,7 +149,7 @@ function ChapterViewSelector({
           borderRadius: 8,
           color: 'var(--text-muted)',
         }}>
-          {variants.length} traditions
+          {variants.length}
         </span>
       </button>
 
@@ -331,11 +237,6 @@ function ChapterViewSelector({
                 }}>
                   {v.culture}
                 </span>
-                {v.source_count > 0 && (
-                  <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 'auto' }}>
-                    {v.source_count} source{v.source_count !== 1 ? 's' : ''}
-                  </span>
-                )}
               </button>
             ))}
 
@@ -353,299 +254,354 @@ function ChapterViewSelector({
 
 export default function NarrativeReader({ chapters, activeChapterId, onChapterInView, onEntityClick, onCultureSelect, onPlayChapter, isMobile }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null)
-  const chapterRefs = useRef<Map<string, HTMLDivElement>>(new Map())
-  const userScrolling = useRef(false)
-  const [cultureViews, setCultureViews] = useState<Record<string, string>>({})
-  const [loadedVariants, setLoadedVariants] = useState<Record<string, CultureVariant[]>>({})
-
-  useEffect(() => {
-    if (!activeChapterId || userScrolling.current) return
-    const el = chapterRefs.current.get(activeChapterId)
-    if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    }
-  }, [activeChapterId])
-
+  const [currentView, setCurrentView] = useState('unified')
   const [loadingCulture, setLoadingCulture] = useState<string | null>(null)
+  const [cultureDetail, setCultureDetail] = useState<CultureVariant | null>(null)
 
-  const handleViewChange = useCallback((chapterId: string, view: string) => {
-    setCultureViews(prev => ({ ...prev, [chapterId]: view }))
-    if (view === 'unified') {
-      onCultureSelect?.(null)
-      setLoadingCulture(null)
-    } else {
-      // Check if we already have full detail for this culture
-      const variants = loadedVariants[chapterId]
-      const cached = variants?.find(v => v.culture === view && v.source_texts.length > 0)
-      if (cached) {
-        onCultureSelect?.(cached)
-        setLoadingCulture(null)
-      } else {
-        setLoadingCulture(view)
-        api.getStoryCultureDetail(chapterId, view).then(detail => {
-          setLoadedVariants(prev => {
-            const existing = prev[chapterId] || []
-            const idx = existing.findIndex(v => v.culture === view)
-            const updated = [...existing]
-            if (idx >= 0) updated[idx] = detail
-            else updated.push(detail)
-            return { ...prev, [chapterId]: updated }
-          })
-          onCultureSelect?.(detail)
-          setLoadingCulture(null)
-        }).catch(() => setLoadingCulture(null))
-      }
-    }
-  }, [loadedVariants, onCultureSelect])
+  const chapterIdx = chapters.findIndex(c => c.id === activeChapterId)
+  const ch = chapterIdx >= 0 ? chapters[chapterIdx] : null
 
-  const handleVariantsLoaded = useCallback((chapterId: string, variants: CultureVariant[]) => {
-    setLoadedVariants(prev => ({ ...prev, [chapterId]: variants }))
-  }, [])
-
-  const handleScroll = useCallback(() => {
-    if (!scrollRef.current) return
-    userScrolling.current = true
-
-    const container = scrollRef.current
-    const containerHeight = container.clientHeight
-
-    let closestId: string | null = null
-    let closestDist = Infinity
-
-    chapterRefs.current.forEach((el, id) => {
-      const rect = el.getBoundingClientRect()
-      const containerRect = container.getBoundingClientRect()
-      const relativeTop = rect.top - containerRect.top
-      const dist = Math.abs(relativeTop - containerHeight * 0.2)
-      if (dist < closestDist) {
-        closestDist = dist
-        closestId = id
-      }
-    })
-
-    if (closestId && closestId !== activeChapterId) {
-      onChapterInView(closestId)
-    }
-
-    setTimeout(() => { userScrolling.current = false }, 500)
-  }, [activeChapterId, onChapterInView])
-
-  const epochPartNumbers = useMemo(() => {
+  const epochPartNumber = useMemo(() => {
     let partNum = 0
     let lastEpochId: string | null = null
-    const map = new Map<string, number>()
-    for (const ch of chapters) {
-      if (ch.epoch_id !== lastEpochId) {
+    for (const c of chapters) {
+      if (c.epoch_id !== lastEpochId) {
         partNum++
-        lastEpochId = ch.epoch_id
+        lastEpochId = c.epoch_id
       }
-      map.set(ch.id, partNum)
+      if (c.id === activeChapterId) return partNum
     }
-    return map
-  }, [chapters])
+    return 1
+  }, [chapters, activeChapterId])
+
+  useEffect(() => {
+    setCurrentView('unified')
+    setCultureDetail(null)
+    setLoadingCulture(null)
+    onCultureSelect?.(null)
+    if (scrollRef.current) scrollRef.current.scrollTop = 0
+  }, [activeChapterId])
+
+  const handleViewChange = useCallback((view: string) => {
+    setCurrentView(view)
+    if (view === 'unified') {
+      setCultureDetail(null)
+      onCultureSelect?.(null)
+      setLoadingCulture(null)
+    } else if (ch) {
+      setLoadingCulture(view)
+      api.getStoryCultureDetail(ch.id, view).then(detail => {
+        setCultureDetail(detail)
+        onCultureSelect?.(detail)
+        setLoadingCulture(null)
+      }).catch(() => {
+        setCultureDetail(null)
+        setLoadingCulture(null)
+      })
+    }
+  }, [ch, onCultureSelect])
+
+  const goPrev = () => {
+    if (chapterIdx > 0) onChapterInView(chapters[chapterIdx - 1].id)
+  }
+  const goNext = () => {
+    if (chapterIdx < chapters.length - 1) onChapterInView(chapters[chapterIdx + 1].id)
+  }
+
+  if (!ch) {
+    return (
+      <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)' }}>
+        Select a chapter
+      </div>
+    )
+  }
+
+  const showEpochHeader = chapterIdx === 0 || ch.epoch_id !== chapters[chapterIdx - 1].epoch_id
 
   return (
     <div
       ref={scrollRef}
-      onScroll={handleScroll}
       style={{
         height: '100%',
         overflow: 'auto',
         background: 'var(--bg-primary)',
       }}
     >
-      <div style={{ maxWidth: 720, margin: '0 auto', padding: isMobile ? '24px 16px 120px' : '40px 24px 120px' }}>
-        {chapters.map((ch, idx) => {
-          const prevEpoch = idx > 0 ? chapters[idx - 1].epoch_id : null
-          const showEpochHeader = ch.epoch_id !== prevEpoch
-          const currentView = cultureViews[ch.id] || 'unified'
-          const variants = loadedVariants[ch.id]
-          const selectedVariant = currentView !== 'unified' && variants
-            ? variants.find(v => v.culture === currentView)
-            : null
+      <div style={{ maxWidth: 720, margin: '0 auto', padding: isMobile ? '24px 16px 80px' : '40px 24px 80px' }}>
+        {/* Epoch header */}
+        {showEpochHeader && (
+          <div style={{
+            textAlign: 'center',
+            padding: '20px 0 32px',
+          }}>
+            <div style={{
+              fontSize: 11,
+              textTransform: 'uppercase',
+              letterSpacing: 3,
+              color: 'var(--gold)',
+              marginBottom: 8,
+            }}>
+              Part {epochPartNumber}
+            </div>
+            <h1 style={{
+              fontSize: isMobile ? 22 : 28,
+              fontWeight: 700,
+              color: 'var(--text-primary)',
+              fontFamily: "'Georgia', 'Times New Roman', serif",
+              lineHeight: 1.3,
+            }}>
+              {ch.epoch_title}
+            </h1>
+          </div>
+        )}
 
-          return (
-            <div
-              key={ch.id}
-              ref={el => { if (el) chapterRefs.current.set(ch.id, el) }}
-              style={{ marginBottom: 64 }}
-            >
-              {showEpochHeader && (
-                <div style={{
-                  textAlign: 'center',
-                  padding: '40px 0 32px',
-                  borderTop: idx > 0 ? '1px solid var(--border)' : 'none',
-                  marginTop: idx > 0 ? 40 : 0,
-                }}>
-                  <div style={{
-                    fontSize: 11,
-                    textTransform: 'uppercase',
-                    letterSpacing: 3,
-                    color: 'var(--gold)',
-                    marginBottom: 8,
-                  }}>
-                    Part {epochPartNumbers.get(ch.id) || ''}
-                  </div>
-                  <h1 style={{
-                    fontSize: 28,
-                    fontWeight: 700,
-                    color: 'var(--text-primary)',
-                    fontFamily: "'Georgia', 'Times New Roman', serif",
-                    lineHeight: 1.3,
-                  }}>
-                    {ch.epoch_title}
-                  </h1>
-                </div>
-              )}
+        {/* Chapter header */}
+        <div style={{ marginBottom: 24 }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+            <h2 style={{
+              flex: 1,
+              fontSize: isMobile ? 18 : 20,
+              fontWeight: 600,
+              color: 'var(--text-primary)',
+              fontFamily: "'Georgia', 'Times New Roman', serif",
+              marginBottom: 4,
+            }}>
+              {ch.chapter_title}
+            </h2>
+            {onPlayChapter && (
+              <button
+                onClick={() => onPlayChapter(ch.id)}
+                title="Listen to this chapter"
+                style={{
+                  background: 'none',
+                  border: '1px solid var(--border)',
+                  borderRadius: '50%',
+                  width: 32,
+                  height: 32,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: 'pointer',
+                  color: 'var(--gold)',
+                  fontSize: 14,
+                  flexShrink: 0,
+                  marginTop: 2,
+                  transition: 'border-color 0.15s, background 0.15s',
+                }}
+                onMouseOver={e => {
+                  (e.currentTarget as HTMLElement).style.borderColor = 'var(--gold)'
+                  ;(e.currentTarget as HTMLElement).style.background = 'rgba(212,168,83,0.1)'
+                }}
+                onMouseOut={e => {
+                  (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)'
+                  ;(e.currentTarget as HTMLElement).style.background = 'none'
+                }}
+              >
+                &#9654;
+              </button>
+            )}
+          </div>
+          {ch.time_hint && (
+            <div style={{ fontSize: 13, color: 'var(--gold)', fontWeight: 500 }}>
+              {ch.time_hint}
+            </div>
+          )}
+          {ch.chapter_summary && currentView === 'unified' && (
+            <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4, fontStyle: 'italic', lineHeight: 1.5 }}>
+              {ch.chapter_summary}
+            </div>
+          )}
+          <ChapterViewSelector
+            chapterId={ch.id}
+            selectedView={currentView}
+            onViewChange={handleViewChange}
+          />
+        </div>
 
-              <div style={{ marginBottom: 24 }}>
-                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-                  <h2 style={{
-                    flex: 1,
-                    fontSize: isMobile ? 18 : 20,
-                    fontWeight: 600,
-                    color: 'var(--text-primary)',
-                    fontFamily: "'Georgia', 'Times New Roman', serif",
-                    marginBottom: 4,
-                  }}>
-                    {ch.chapter_title}
-                  </h2>
-                  {onPlayChapter && (
-                    <button
-                      onClick={() => onPlayChapter(ch.id)}
-                      title="Listen to this chapter"
-                      style={{
-                        background: 'none',
-                        border: '1px solid var(--border)',
-                        borderRadius: '50%',
-                        width: 32,
-                        height: 32,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        cursor: 'pointer',
-                        color: 'var(--gold)',
-                        fontSize: 14,
-                        flexShrink: 0,
-                        marginTop: 2,
-                        transition: 'border-color 0.15s, background 0.15s',
-                      }}
-                      onMouseOver={e => {
-                        (e.currentTarget as HTMLElement).style.borderColor = 'var(--gold)'
-                        ;(e.currentTarget as HTMLElement).style.background = 'rgba(212,168,83,0.1)'
-                      }}
-                      onMouseOut={e => {
-                        (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)'
-                        ;(e.currentTarget as HTMLElement).style.background = 'none'
-                      }}
-                    >
-                      &#9654;
-                    </button>
-                  )}
-                </div>
-                {ch.time_hint && (
-                  <div style={{ fontSize: 13, color: 'var(--gold)', fontWeight: 500 }}>
-                    {ch.time_hint}
-                  </div>
-                )}
-                {ch.chapter_summary && currentView === 'unified' && (
-                  <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4, fontStyle: 'italic', lineHeight: 1.5 }}>
-                    {ch.chapter_summary}
-                  </div>
-                )}
-                <ChapterViewSelector
-                  chapterId={ch.id}
-                  selectedView={currentView}
-                  onViewChange={(view) => handleViewChange(ch.id, view)}
-                  onVariantsLoaded={(v) => handleVariantsLoaded(ch.id, v)}
+        {/* Chapter content */}
+        {currentView === 'unified' ? (
+          <>
+            {ch.images && ch.images.length > 0 && ch.images[0].url && (
+              <div style={{
+                marginBottom: 28,
+                borderRadius: 8,
+                overflow: 'hidden',
+                aspectRatio: '16 / 9',
+                background: 'var(--bg-tertiary)',
+              }}>
+                <img
+                  src={ch.images[0].url}
+                  alt={ch.images[0].caption || ch.chapter_title}
+                  style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                 />
               </div>
+            )}
 
-              {currentView === 'unified' ? (
-                <>
-                  {ch.images && ch.images.length > 0 && ch.images[0].url && (
-                    <div style={{
-                      marginBottom: 28,
-                      borderRadius: 8,
-                      overflow: 'hidden',
-                      aspectRatio: '16 / 9',
-                      background: 'var(--bg-tertiary)',
+            <div style={{
+              fontSize: 16,
+              lineHeight: 1.8,
+              color: 'var(--text-primary)',
+              fontFamily: "'Georgia', 'Times New Roman', serif",
+            }}>
+              {ch.narrative_text.split('\n\n').map((para, pIdx) => (
+                <p key={pIdx} style={{ marginBottom: 20, textIndent: pIdx > 0 ? 24 : 0 }}>
+                  {parseNarrativeWithEntities(para, ch.entity_mentions || [], onEntityClick)}
+                </p>
+              ))}
+            </div>
+          </>
+        ) : loadingCulture ? (
+          <div style={{ padding: 40, color: 'var(--text-muted)', textAlign: 'center', fontSize: 14 }}>
+            Loading {loadingCulture} tradition...
+          </div>
+        ) : cultureDetail ? (
+          <div>
+            <div style={{
+              fontSize: 11,
+              textTransform: 'uppercase',
+              letterSpacing: 2,
+              color: 'var(--gold)',
+              marginBottom: 8,
+              paddingBottom: 8,
+              borderBottom: '1px solid var(--border)',
+            }}>
+              {cultureDetail.culture} Tradition &mdash; {ch.chapter_title}
+            </div>
+
+            {/* Figures/entities from this culture relevant to the chapter */}
+            {cultureDetail.actors.length > 0 && (
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8 }}>
+                  Key figures in this tradition:
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 16 }}>
+                  {cultureDetail.actors.slice(0, 12).map(a => (
+                    <span key={a.id} style={{
+                      padding: '3px 10px',
+                      background: 'rgba(212, 168, 83, 0.1)',
+                      border: '1px solid rgba(212, 168, 83, 0.25)',
+                      borderRadius: 12,
+                      fontSize: 12,
+                      color: 'var(--gold)',
                     }}>
-                      <img
-                        src={ch.images[0].url}
-                        alt={ch.images[0].caption || ch.chapter_title}
-                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                      />
-                    </div>
-                  )}
+                      {a.name}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
 
-                  <div style={{
-                    fontSize: 16,
-                    lineHeight: 1.8,
-                    color: 'var(--text-primary)',
-                    fontFamily: "'Georgia', 'Times New Roman', serif",
-                  }}>
-                    {ch.narrative_text.split('\n\n').map((para, pIdx) => (
-                      <p key={pIdx} style={{ marginBottom: 20, textIndent: pIdx > 0 ? 24 : 0 }}>
-                        {parseNarrativeWithEntities(para, ch.entity_mentions || [], onEntityClick)}
-                      </p>
+            {/* Narrative-style rendering of source texts in the center */}
+            {cultureDetail.source_texts.length > 0 ? (
+              <div style={{
+                fontSize: 16,
+                lineHeight: 1.85,
+                color: 'var(--text-primary)',
+                fontFamily: "'Georgia', 'Times New Roman', serif",
+              }}>
+                {cultureDetail.source_texts.map((src, i) => (
+                  <div key={i} style={{ marginBottom: 32 }}>
+                    <div style={{
+                      fontSize: 13,
+                      fontWeight: 600,
+                      color: 'var(--gold)',
+                      marginBottom: 12,
+                      fontFamily: "'Inter', sans-serif",
+                    }}>
+                      From: {src.title}
+                    </div>
+                    {src.text.split('\n\n').map((para, pIdx) => (
+                      <p key={pIdx} style={{ marginBottom: 16 }}>{para}</p>
                     ))}
                   </div>
+                ))}
+              </div>
+            ) : (
+              <div style={{
+                padding: 40,
+                color: 'var(--text-muted)',
+                textAlign: 'center',
+                fontSize: 14,
+              }}>
+                No source texts found for this culture on this chapter.
+              </div>
+            )}
+          </div>
+        ) : (
+          <div style={{ padding: 40, color: 'var(--text-muted)', textAlign: 'center', fontSize: 14 }}>
+            Select a tradition above to view its account
+          </div>
+        )}
 
-                  {ch.claims && ch.claims.length > 0 && (
-                    <div style={{
-                      marginTop: 20,
-                      padding: '12px 16px',
-                      background: 'var(--bg-secondary)',
-                      borderRadius: 8,
-                      borderLeft: '3px solid var(--gold)',
-                    }}>
-                      <div style={{
-                        fontSize: 11,
-                        textTransform: 'uppercase',
-                        letterSpacing: 1,
-                        color: 'var(--text-muted)',
-                        marginBottom: 8,
-                      }}>
-                        Key Claims
-                      </div>
-                      {ch.claims.slice(0, 5).map((claim, cIdx) => (
-                        <div key={cIdx} style={{
-                          display: 'flex',
-                          alignItems: 'flex-start',
-                          gap: 0,
-                          marginBottom: 6,
-                        }}>
-                          <ClaimIndicator cultures={claim.cultures || []} score={claim.score || 0} />
-                          <div>
-                            <span style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-                              {claim.claim}
-                            </span>
-                            {claim.cultures && claim.cultures.length > 0 && (
-                              <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 6 }}>
-                                ({claim.cultures.join(', ')})
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </>
-              ) : selectedVariant ? (
-                <CultureView variant={selectedVariant} />
-              ) : (
-                <div style={{ padding: 24, color: 'var(--text-muted)', textAlign: 'center', fontSize: 14 }}>
-                  {loadingCulture === currentView ? (
-                    <>Loading {currentView} sources...</>
-                  ) : (
-                    <>Select a tradition above to view its sources</>
-                  )}
-                </div>
-              )}
-            </div>
-          )
-        })}
+        {/* Prev / Next navigation */}
+        <div style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginTop: 40,
+          paddingTop: 24,
+          borderTop: '1px solid var(--border)',
+        }}>
+          <button
+            onClick={goPrev}
+            disabled={chapterIdx <= 0}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '10px 16px',
+              background: chapterIdx > 0 ? 'var(--bg-secondary)' : 'transparent',
+              border: `1px solid ${chapterIdx > 0 ? 'var(--border)' : 'transparent'}`,
+              borderRadius: 8,
+              cursor: chapterIdx > 0 ? 'pointer' : 'default',
+              color: chapterIdx > 0 ? 'var(--text-secondary)' : 'var(--bg-tertiary)',
+              fontSize: 13,
+              maxWidth: '45%',
+              textAlign: 'left',
+            }}
+          >
+            <span style={{ fontSize: 16 }}>&larr;</span>
+            <span style={{
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}>
+              {chapterIdx > 0 ? chapters[chapterIdx - 1].chapter_title : ''}
+            </span>
+          </button>
+
+          <span style={{ fontSize: 12, color: 'var(--text-muted)', flexShrink: 0 }}>
+            {chapterIdx + 1} / {chapters.length}
+          </span>
+
+          <button
+            onClick={goNext}
+            disabled={chapterIdx >= chapters.length - 1}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '10px 16px',
+              background: chapterIdx < chapters.length - 1 ? 'var(--bg-secondary)' : 'transparent',
+              border: `1px solid ${chapterIdx < chapters.length - 1 ? 'var(--border)' : 'transparent'}`,
+              borderRadius: 8,
+              cursor: chapterIdx < chapters.length - 1 ? 'pointer' : 'default',
+              color: chapterIdx < chapters.length - 1 ? 'var(--text-secondary)' : 'var(--bg-tertiary)',
+              fontSize: 13,
+              maxWidth: '45%',
+              textAlign: 'right',
+            }}
+          >
+            <span style={{
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}>
+              {chapterIdx < chapters.length - 1 ? chapters[chapterIdx + 1].chapter_title : ''}
+            </span>
+            <span style={{ fontSize: 16 }}>&rarr;</span>
+          </button>
+        </div>
       </div>
     </div>
   )
