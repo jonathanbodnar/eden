@@ -14,6 +14,12 @@ interface Props {
 function EntityBreakdownView({ data, onBack, archetypeName }: { data: EntityMergeBreakdown; onBack: () => void; archetypeName?: string }) {
   const displayName = archetypeName || data.entity.name
   const hasMultipleIdentities = data.equivalences.length > 1
+
+  const allCultures = Array.from(new Set(
+    data.equivalences.flatMap(eq => eq.cultures || [])
+      .concat(data.cultures || [])
+  ))
+
   return (
     <>
       <div style={{
@@ -61,7 +67,7 @@ function EntityBreakdownView({ data, onBack, archetypeName }: { data: EntityMerg
 
       <div style={{ flex: 1, overflow: 'auto', padding: '12px 16px' }}>
         {/* Cultures */}
-        {data.cultures.length > 0 && (
+        {allCultures.length > 0 && (
           <div style={{ marginBottom: 20 }}>
             <div style={{
               fontSize: 11,
@@ -70,10 +76,10 @@ function EntityBreakdownView({ data, onBack, archetypeName }: { data: EntityMerg
               color: 'var(--text-muted)',
               marginBottom: 8,
             }}>
-              Found in {data.cultures.length} culture{data.cultures.length !== 1 ? 's' : ''}
+              Found in {allCultures.length} culture{allCultures.length !== 1 ? 's' : ''}
             </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-              {data.cultures.map(c => (
+              {allCultures.map(c => (
                 <span key={c} style={{
                   padding: '3px 8px',
                   background: 'rgba(212, 168, 83, 0.12)',
@@ -114,39 +120,34 @@ function EntityBreakdownView({ data, onBack, archetypeName }: { data: EntityMerg
                 marginBottom: 8,
                 borderLeft: `3px solid var(--gold)`,
               }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
-                  <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>
-                    {eq.equivalent_name || eq.equivalent_id}
-                  </span>
-                  {eq.cultures.length > 0 && (
-                    <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                      {eq.cultures[0]}
-                    </span>
-                  )}
+                <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 4 }}>
+                  {eq.equivalent_name || eq.equivalent_id}
                 </div>
-                {eq.equivalent_summary && (
-                  <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 6, lineHeight: 1.5 }}>
-                    {eq.equivalent_summary.slice(0, 200)}
-                  </div>
-                )}
-                {eq.cultures.length > 1 && (
+                {eq.cultures.length > 0 && (
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3, marginBottom: 6 }}>
                     {eq.cultures.map(c => (
                       <span key={c} style={{
                         fontSize: 10,
-                        padding: '1px 6px',
-                        background: 'var(--bg-secondary)',
-                        borderRadius: 6,
-                        color: 'var(--text-muted)',
+                        padding: '2px 7px',
+                        background: 'rgba(212, 168, 83, 0.1)',
+                        border: '1px solid rgba(212, 168, 83, 0.25)',
+                        borderRadius: 8,
+                        color: 'var(--gold)',
                       }}>
                         {c}
                       </span>
                     ))}
                   </div>
                 )}
-                {eq.reasoning && eq.merge_basis !== 'primary_resolution' && (
+                {eq.equivalent_summary && (
                   <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 6, lineHeight: 1.5 }}>
-                    <strong>Why merged:</strong> {eq.reasoning}
+                    {eq.equivalent_summary.slice(0, 250)}
+                    {(eq.equivalent_summary.length > 250) && '...'}
+                  </div>
+                )}
+                {eq.reasoning && (
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                    <strong style={{ color: 'var(--text-secondary)' }}>Why merged:</strong> {eq.reasoning}
                   </div>
                 )}
               </div>
