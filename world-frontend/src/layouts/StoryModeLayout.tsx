@@ -22,7 +22,6 @@ export default function StoryModeLayout() {
 
   const [leftOpen, setLeftOpen] = useState(false)
   const [rightOpen, setRightOpen] = useState(false)
-  const [audioChapterId, setAudioChapterId] = useState<string | null>(null)
 
   useEffect(() => {
     Promise.all([api.getStoryEpochs(), api.getStoryChapters()])
@@ -63,17 +62,11 @@ export default function StoryModeLayout() {
     if (isMobile) setLeftOpen(false)
   }, [isMobile])
 
-  const handlePlayChapter = useCallback((chapterId: string) => {
-    setAudioChapterId(chapterId)
-  }, [])
-
   const handleAudioChapterChange = useCallback((chapterId: string) => {
-    setAudioChapterId(chapterId)
     setActiveChapterId(chapterId)
   }, [])
 
   const activeChapter = chapters.find(c => c.id === activeChapterId) || null
-  const showPlayer = audioChapterId !== null
 
   if (loading) {
     return (
@@ -210,15 +203,13 @@ export default function StoryModeLayout() {
             onChapterInView={setActiveChapterId}
             onEntityClick={handleEntityClick}
             onCultureSelect={handleCultureSelect}
-            onPlayChapter={handlePlayChapter}
             isMobile={isMobile}
           />
-          {showPlayer && (
+          {activeChapterId && (
             <AudioPlayerBar
-              chapterId={audioChapterId}
+              chapterId={activeChapterId}
               chapters={chapters}
               onChapterChange={handleAudioChapterChange}
-              onClose={() => setAudioChapterId(null)}
             />
           )}
         </div>

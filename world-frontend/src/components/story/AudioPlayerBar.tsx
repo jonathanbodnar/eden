@@ -7,7 +7,6 @@ interface Props {
   chapterId: string
   chapters: StoryChapter[]
   onChapterChange: (chapterId: string) => void
-  onClose: () => void
 }
 
 function formatTime(seconds: number): string {
@@ -19,7 +18,7 @@ function formatTime(seconds: number): string {
 
 const SPEEDS = [0.75, 1, 1.25, 1.5]
 
-export default function AudioPlayerBar({ chapterId, chapters, onChapterChange, onClose }: Props) {
+export default function AudioPlayerBar({ chapterId, chapters, onChapterChange }: Props) {
   const audioRef = useRef<HTMLAudioElement>(null)
   const [playing, setPlaying] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -29,22 +28,36 @@ export default function AudioPlayerBar({ chapterId, chapters, onChapterChange, o
   const [speed, setSpeed] = useState(1)
   const [error, setError] = useState<string | null>(null)
   const [audioSrc, setAudioSrc] = useState<string | null>(null)
+  const [readyChapterId, setReadyChapterId] = useState<string | null>(null)
 
   const chapter = chapters.find(c => c.id === chapterId)
   const chapterIdx = chapters.findIndex(c => c.id === chapterId)
 
-  const loadAudio = useCallback(async (id: string) => {
+  useEffect(() => {
+    if (chapterId === readyChapterId) return
+    const audio = audioRef.current
+    if (audio) { audio.pause(); audio.removeAttribute('src') }
+    setPlaying(false)
+    setCurrentTime(0)
+    setDuration(0)
+    setError(null)
+    setAudioSrc(null)
+    setLoading(false)
+    setGenerating(false)
+  }, [chapterId, readyChapterId])
+
+  const loadAndPlay = useCallback(async (id: string) => {
     setLoading(true)
     setError(null)
     setGenerating(false)
     setCurrentTime(0)
     setDuration(0)
-    setPlaying(false)
 
     try {
       const checkRes = await fetch(`${BASE}/story/chapters/${id}/audio`, { method: 'HEAD' })
       if (checkRes.ok) {
         setAudioSrc(`${BASE}/story/chapters/${id}/audio`)
+        setReadyChapterId(id)
         setLoading(false)
         return
       }
@@ -59,6 +72,7 @@ export default function AudioPlayerBar({ chapterId, chapters, onChapterChange, o
       const genData = await genRes.json()
       if (genData.status === 'already_exists') {
         setAudioSrc(`${BASE}/story/chapters/${id}/audio?t=${Date.now()}`)
+        setReadyChapterId(id)
         setLoading(false)
         setGenerating(false)
         return
@@ -73,6 +87,7 @@ export default function AudioPlayerBar({ chapterId, chapters, onChapterChange, o
           const pollRes = await fetch(`${BASE}/story/chapters/${id}/audio`, { method: 'HEAD' })
           if (pollRes.ok) {
             setAudioSrc(`${BASE}/story/chapters/${id}/audio?t=${Date.now()}`)
+            setReadyChapterId(id)
             setLoading(false)
             setGenerating(false)
             return
@@ -82,6 +97,7 @@ export default function AudioPlayerBar({ chapterId, chapters, onChapterChange, o
             const retryData = await retryGen.json()
             if (retryData.status === 'already_exists') {
               setAudioSrc(`${BASE}/story/chapters/${id}/audio?t=${Date.now()}`)
+              setReadyChapterId(id)
               setLoading(false)
               setGenerating(false)
               return
@@ -103,10 +119,6 @@ export default function AudioPlayerBar({ chapterId, chapters, onChapterChange, o
       setGenerating(false)
     }
   }, [])
-
-  useEffect(() => {
-    loadAudio(chapterId)
-  }, [chapterId, loadAudio])
 
   useEffect(() => {
     const audio = audioRef.current
@@ -143,6 +155,10 @@ export default function AudioPlayerBar({ chapterId, chapters, onChapterChange, o
   }, [audioSrc, chapterIdx, chapters, onChapterChange, speed])
 
   const togglePlay = () => {
+    if (!audioSrc && !loading && !generating) {
+      loadAndPlay(chapterId)
+      return
+    }
     const audio = audioRef.current
     if (!audio) return
     if (playing) {
@@ -185,6 +201,7 @@ export default function AudioPlayerBar({ chapterId, chapters, onChapterChange, o
   }
 
   const progress = duration > 0 ? (currentTime / duration) * 100 : 0
+  const idle = !audioSrc && !loading && !generating && !error
 
   return (
     <div style={{
@@ -241,11 +258,15 @@ export default function AudioPlayerBar({ chapterId, chapters, onChapterChange, o
             {chapter?.chapter_title || 'Loading...'}
           </div>
           <div style={{ fontSize: 11, color: generating ? 'var(--gold)' : 'var(--text-muted)' }}>
-            {loading || generating
-              ? (generating ? 'Generating audio \u2014 this is cached for all listeners...' : 'Loading...')
-              : error
-                ? error
-                : `${formatTime(currentTime)} / ${formatTime(duration)}`
+            {generating
+              ? 'Generating audio \u2014 cached for all listeners...'
+              : loading
+                ? 'Loading audio...'
+                : error
+                  ? error
+                  : idle
+                    ? 'Press play to listen'
+                    : `${formatTime(currentTime)} / ${formatTime(duration)}`
             }
           </div>
         </div>
@@ -320,17 +341,6 @@ export default function AudioPlayerBar({ chapterId, chapters, onChapterChange, o
           }}
         >
           {speed}x
-        </button>
-
-        {/* Close */}
-        <button
-          onClick={onClose}
-          style={{
-            background: 'none', border: 'none', cursor: 'pointer',
-            color: 'var(--text-muted)', fontSize: 18, padding: 4,
-          }}
-        >
-          &times;
         </button>
       </div>
     </div>
