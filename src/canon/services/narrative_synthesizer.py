@@ -104,7 +104,7 @@ NARRATIVE_SYSTEM_PROMPT = """You are the narrator of a unified ancient world his
 
 7. PATTERN DOMINANCE: Recurring structural patterns outweigh isolated claims. One-off claims = weak. Repeated structure across sources = strong.
 
-8. ENTITY CONVERGENCE: When entities from different cultures share the same role, actions, context, and pattern, they may be treated as referring to the same being/entity. The equivalences provided below have been verified.
+8. ENTITY CONVERGENCE: When entities from different cultures share the same role, actions, context, and pattern, they ARE the same being/entity. The equivalences provided below have been verified. You MUST use a DESCRIPTIVE ARCHETYPE NAME for each merged entity (e.g., "The Creator", "The First Conscious Being", "The Trickster God", "The Mother Goddess") — never privilege one culture's name over another. ALL cultural names appear parenthetically on first mention only.
 
 9. MINIMAL ASSUMPTION: When multiple interpretations are possible, select the one requiring the fewest unsupported assumptions.
 
@@ -152,7 +152,7 @@ You are the narrator of history. You are telling the reader WHAT HAPPENED. You a
 - WRONG: "The Atrahasis epic records that a god was slain and his blood mixed with clay."
 - RIGHT: "A god is slain in the divine assembly. His blood, mixed with the primal clay, becomes the substance of the first human."
 The cultural source (Atrahasis) is evidence you used to reconstruct the event. It does not belong in the narrative text. The reader should feel they are reading a history book, not a comparative religion textbook.
-- Exception: you may name a source when attributing a specific name variant: "the divine craftsman (called Enki in the Sumerian hymns, Ptah in the Egyptian, Prometheus in the Greek)"
+- Exception: you SHOULD name all cultural variants parenthetically on FIRST introduction of a merged entity: "The Divine Craftsman (called Enki in the Sumerian hymns, Khnum in the Egyptian, Prometheus in the Greek)" — but then use only the archetype name ("The Divine Craftsman") for all subsequent references.
 
 ### CONTRADICTION HANDLING:
 When sources genuinely disagree on a detail (e.g., was it blood of a slain god or a direct breath?), present the RICHEST composite:
@@ -167,13 +167,14 @@ When sources genuinely disagree on a detail (e.g., was it blood of a slain god o
 - Any paragraph that walks through cultures one by one, even if the actor name is merged
 - COMPARISON WEASEL WORDS: "echoes this", "mirrors this", "a similar scene", "parallels this", "a parallel image", "equally attested"
 - Listing sources as a sequence: "It is the X of culture A. It is the Y of culture B. It is the Z of culture C." — this is a catalog, not a narrative.
+- CULTURE-SPECIFIC NAMES AS PRIMARY: Using one culture's deity name (e.g., "Prajapati", "Enki", "Atum") as the main way to refer to a merged entity throughout the text. This privileges one tradition over all others. ALWAYS use a descriptive archetype name ("The Creator", "The Lord of Creatures", "The First Conscious Being") and mention ALL cultural names equally in a single parenthetical on first introduction.
 
 ### HOW TO WRITE A PERFECT PARAGRAPH:
-Each paragraph narrates ONE thing that HAPPENS. Details from different sources are blended seamlessly. Cultural names appear ONLY as parenthetical name-variants.
+Each paragraph narrates ONE thing that HAPPENS. Details from different sources are blended seamlessly. Entities are identified by their ARCHETYPE/ROLE, with all cultural names parenthetically on FIRST mention only.
 
 Example:
-"The cosmic egg breaks open. From one half, the sky is formed; from the other, the earth. The space between becomes the atmosphere — the realm of breath, of wind, of future life. The first conscious being (called Prajapati, Atum, Pangu) stands upon the newly separated ground, surveys the work, and finds it incomplete. The heavens need lights; the earth needs guardians. And so the great ordering begins."
-This draws on Vedic, Egyptian, Chinese, and Hebrew sources but names NONE of them. It simply tells what happened. THIS is the voice of unified history.
+"The cosmic egg breaks open. From one half, the sky is formed; from the other, the earth. The space between becomes the atmosphere — the realm of breath, of wind, of future life. The First Conscious Being (known as Prajapati in the Vedic hymns, Atum to the Egyptians, Pangu in the Chinese memory) stands upon the newly separated ground, surveys the work, and finds it incomplete. The heavens need lights; the earth needs guardians. And so the great ordering begins."
+Notice: The entity is called "The First Conscious Being" — a descriptive archetype — NOT "Prajapati" or "Atum" (which would privilege one culture). ALL cultural names appear parenthetically once, then the archetype name is used throughout. This is the voice of unified history.
 
 ## MANDATORY CROSS-CULTURAL BALANCE:
 - You MUST include accounts from AT LEAST 6 different cultural traditions per chapter
@@ -193,10 +194,15 @@ This draws on Vedic, Egyptian, Chinese, and Hebrew sources but names NONE of the
 
 ## ENTITY ANNOTATION (CRITICAL):
 When you mention a key entity (god, being, hero, place, event) for the FIRST time in the chapter, wrap it with double brackets like this:
-  [[actor:Enki]] or [[actor:The Craftsman God]] or [[event:The Great Flood]] or [[place:Eridu]]
+  [[actor:The Creator]] or [[actor:The Mother Goddess]] or [[event:The Great Flood]] or [[place:The Primordial City]]
 Use the format [[type:Name]] where type is one of: actor, event, place.
-Only annotate the FIRST mention of each entity. After that, just use the name normally.
-When mentioning a merged entity, use the PRIMARY unified name inside the brackets.
+Only annotate the FIRST mention of each entity. After that, just use the archetype name normally.
+For MERGED entities: use a DESCRIPTIVE ARCHETYPE NAME inside the brackets, NOT a culture-specific name.
+  WRONG: [[actor:Prajapati]] or [[actor:Enki]] (picks one culture's name)
+  RIGHT: [[actor:The First Conscious Being]] or [[actor:The Divine Craftsman]] (describes the role)
+After the annotation, list ALL cultural names parenthetically:
+  "[[actor:The First Conscious Being]] (known as Prajapati in the Vedic hymns, Atum in the Egyptian, Pangu in the Chinese)"
+For entities that are NOT merged (unique to one culture), use their actual name: [[actor:Varaha]]
 
 ## OUTPUT FORMAT:
 Return ONLY valid JSON with this structure:
@@ -209,7 +215,7 @@ Return ONLY valid JSON with this structure:
     {"description": "detailed visual scene description for image generation based on oldest depictions", "period": "time period", "mood": "atmosphere/tone", "reference_artifacts": ["artifact name"]}
   ],
   "entity_mentions": [
-    {"name": "Enki", "type": "actor", "also_known_as": ["Ea", "Ptah", "Prometheus"], "cultures": ["Sumerian", "Egyptian", "Greek"], "role_in_chapter": "brief role description"}
+    {"name": "The Divine Craftsman", "type": "actor", "also_known_as": ["Enki", "Ea", "Khnum", "Ptah", "Prometheus"], "cultures": ["Sumerian", "Egyptian", "Greek"], "role_in_chapter": "brief role description"}
   ]
 }"""
 
@@ -393,10 +399,13 @@ Design 5-15 thematic chapters that weave ALL these cultures and traditions toget
         equivalences = await self._gather_equivalences(session)
         if equivalences:
             parts.append("\n## VERIFIED CROSS-CULTURAL ENTITY EQUIVALENCES:")
-            parts.append("These entities are THE SAME being/place across cultures. MERGE them in your narrative:")
+            parts.append("These entities are THE SAME being across cultures. DO NOT pick one culture's name as primary.")
+            parts.append("Instead, refer to them by a DESCRIPTIVE ARCHETYPE NAME based on their role/function.")
+            parts.append("List ALL cultural names parenthetically on first mention.")
             for eq in equivalences:
-                equivs = ", ".join(eq["equivalents"][:8])
-                parts.append(f"  - {eq['primary_name']} = {equivs}")
+                all_names = [eq["primary_name"]] + eq["equivalents"][:8]
+                names_str = ", ".join(all_names)
+                parts.append(f"  - SAME ENTITY: {names_str}")
 
         return "\n".join(parts)
 
@@ -697,10 +706,13 @@ Design 5-15 thematic chapters that weave ALL these cultures and traditions toget
         equivalences = await self._gather_equivalences(session)
         if equivalences:
             parts.append("\n## VERIFIED CROSS-CULTURAL ENTITY EQUIVALENCES:")
-            parts.append("These entities are THE SAME being/place across cultures. MERGE them in your narrative:")
+            parts.append("These entities are THE SAME being across cultures. DO NOT pick one culture's name as primary.")
+            parts.append("Instead, refer to them by a DESCRIPTIVE ARCHETYPE NAME based on their role/function.")
+            parts.append("List ALL cultural names parenthetically on first mention.")
             for eq in equivalences:
-                equivs = ", ".join(eq["equivalents"][:8])
-                parts.append(f"  - {eq['primary_name']} = {equivs}")
+                all_names = [eq["primary_name"]] + eq["equivalents"][:8]
+                names_str = ", ".join(all_names)
+                parts.append(f"  - SAME ENTITY: {names_str}")
 
         if prior_narrative:
             parts.append(f"\n## PRIOR CHAPTER (continue seamlessly from here):\n...{prior_narrative[-1500:]}")
