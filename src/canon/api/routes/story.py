@@ -437,10 +437,33 @@ async def get_entity_merge_breakdown(
     except Exception:
         pass
 
+    # Include the resolved/primary entity as a peer in equivalences so
+    # the frontend treats ALL cultural identities equally under the archetype.
+    resolved_peer = {
+        "equivalent_id": entity_info["id"],
+        "equivalent_type": entity_info["type"],
+        "equivalent_name": entity_info["name"],
+        "equivalent_summary": entity_info.get("summary"),
+        "cultures": primary_cultures,
+        "merge_basis": "primary_resolution",
+        "confidence": 1.0,
+        "reasoning": "Resolved canonical entity in the database",
+        "role_match": True,
+        "action_match": True,
+        "context_match": True,
+        "pattern_match": True,
+    }
+    all_identities = [resolved_peer] + equivalences
+
+    # Collect all cultures across all identities
+    all_cultures = list(dict.fromkeys(
+        c for ident in all_identities for c in ident.get("cultures", [])
+    ))
+
     return {
         "entity": entity_info,
-        "cultures": primary_cultures,
-        "equivalences": equivalences,
+        "cultures": all_cultures,
+        "equivalences": all_identities,
         "sources": sources,
     }
 

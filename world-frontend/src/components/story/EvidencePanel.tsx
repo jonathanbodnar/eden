@@ -10,47 +10,10 @@ interface Props {
   activeCulture?: CultureVariant | null
 }
 
-function ScoreBar({ value, label, color }: { value: number; label: string; color?: string }) {
-  return (
-    <div style={{ marginBottom: 6 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--text-muted)', marginBottom: 2 }}>
-        <span>{label}</span>
-        <span>{(value * 100).toFixed(0)}%</span>
-      </div>
-      <div style={{ height: 4, background: 'var(--bg-secondary)', borderRadius: 2, overflow: 'hidden' }}>
-        <div style={{
-          height: '100%',
-          width: `${value * 100}%`,
-          background: color || 'var(--gold)',
-          borderRadius: 2,
-        }} />
-      </div>
-    </div>
-  )
-}
-
-function CriterionBadge({ label, met }: { label: string; met: boolean | undefined }) {
-  if (met === undefined) return null
-  return (
-    <span style={{
-      display: 'inline-flex',
-      alignItems: 'center',
-      gap: 4,
-      padding: '2px 8px',
-      fontSize: 11,
-      borderRadius: 8,
-      background: met ? 'rgba(168, 213, 162, 0.15)' : 'rgba(255,100,100,0.1)',
-      border: `1px solid ${met ? 'rgba(168, 213, 162, 0.4)' : 'rgba(255,100,100,0.25)'}`,
-      color: met ? '#a8d5a2' : '#ff8888',
-    }}>
-      {met ? '\u2713' : '\u2717'} {label}
-    </span>
-  )
-}
 
 function EntityBreakdownView({ data, onBack, archetypeName }: { data: EntityMergeBreakdown; onBack: () => void; archetypeName?: string }) {
   const displayName = archetypeName || data.entity.name
-  const isArchetype = archetypeName && archetypeName !== data.entity.name
+  const hasMultipleIdentities = data.equivalences.length > 1
   return (
     <>
       <div style={{
@@ -81,7 +44,7 @@ function EntityBreakdownView({ data, onBack, archetypeName }: { data: EntityMerg
           color: 'var(--gold)',
           marginBottom: 4,
         }}>
-          Entity Breakdown
+          {hasMultipleIdentities ? 'Merged Archetype' : 'Entity Breakdown'}
         </div>
         <div style={{
           fontSize: 16,
@@ -91,49 +54,12 @@ function EntityBreakdownView({ data, onBack, archetypeName }: { data: EntityMerg
         }}>
           {displayName}
         </div>
-        {isArchetype && (
-          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
-            Resolved as: {data.entity.name}
-          </div>
-        )}
         <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
           {data.entity.subtype}
         </div>
       </div>
 
       <div style={{ flex: 1, overflow: 'auto', padding: '12px 16px' }}>
-        {/* Summary */}
-        {data.entity.summary && (
-          <div style={{
-            fontSize: 13,
-            color: 'var(--text-secondary)',
-            lineHeight: 1.6,
-            marginBottom: 16,
-            fontStyle: 'italic',
-          }}>
-            {data.entity.summary}
-          </div>
-        )}
-
-        {/* Score */}
-        {data.entity.score && (
-          <div style={{ marginBottom: 20 }}>
-            <div style={{
-              fontSize: 11,
-              textTransform: 'uppercase',
-              letterSpacing: 1,
-              color: 'var(--text-muted)',
-              marginBottom: 8,
-            }}>
-              Confidence Score: {(data.entity.score.final * 100).toFixed(0)}%
-            </div>
-            <ScoreBar value={data.entity.score.age} label="Age Weight" />
-            <ScoreBar value={data.entity.score.corroboration} label="Corroboration" />
-            <ScoreBar value={data.entity.score.independence} label="Independence" />
-            <ScoreBar value={data.entity.score.ambiguity} label="Ambiguity" color="#ff8888" />
-          </div>
-        )}
-
         {/* Cultures */}
         {data.cultures.length > 0 && (
           <div style={{ marginBottom: 20 }}>
@@ -163,7 +89,7 @@ function EntityBreakdownView({ data, onBack, archetypeName }: { data: EntityMerg
           </div>
         )}
 
-        {/* Merged Equivalences */}
+        {/* Cultural Identities — all shown as equal peers */}
         {data.equivalences.length > 0 && (
           <div style={{ marginBottom: 20 }}>
             <div style={{
@@ -173,33 +99,37 @@ function EntityBreakdownView({ data, onBack, archetypeName }: { data: EntityMerg
               color: 'var(--text-muted)',
               marginBottom: 8,
             }}>
-              Merged Identities ({data.equivalences.length})
+              Cultural Identities ({data.equivalences.length})
             </div>
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8, lineHeight: 1.5 }}>
-              This entity was identified as equivalent to the following entities across cultures, based on Law 8 (Entity Convergence):
-            </div>
+            {hasMultipleIdentities && (
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8, lineHeight: 1.5 }}>
+                This archetype appears across {data.equivalences.length} cultural traditions, each preserving a facet of the same entity (Law 8: Entity Convergence):
+              </div>
+            )}
             {data.equivalences.map((eq, i) => (
               <div key={i} style={{
                 padding: '10px 12px',
                 background: 'var(--bg-tertiary)',
                 borderRadius: 8,
                 marginBottom: 8,
-                borderLeft: `3px solid ${eq.confidence >= 0.8 ? 'var(--gold)' : 'var(--border)'}`,
+                borderLeft: `3px solid var(--gold)`,
               }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
                   <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>
                     {eq.equivalent_name || eq.equivalent_id}
                   </span>
-                  <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                    {(eq.confidence * 100).toFixed(0)}% confidence
-                  </span>
+                  {eq.cultures.length > 0 && (
+                    <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                      {eq.cultures[0]}
+                    </span>
+                  )}
                 </div>
                 {eq.equivalent_summary && (
                   <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 6, lineHeight: 1.5 }}>
                     {eq.equivalent_summary.slice(0, 200)}
                   </div>
                 )}
-                {eq.cultures.length > 0 && (
+                {eq.cultures.length > 1 && (
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3, marginBottom: 6 }}>
                     {eq.cultures.map(c => (
                       <span key={c} style={{
@@ -214,17 +144,11 @@ function EntityBreakdownView({ data, onBack, archetypeName }: { data: EntityMerg
                     ))}
                   </div>
                 )}
-                {eq.reasoning && (
+                {eq.reasoning && eq.merge_basis !== 'primary_resolution' && (
                   <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 6, lineHeight: 1.5 }}>
                     <strong>Why merged:</strong> {eq.reasoning}
                   </div>
                 )}
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                  <CriterionBadge label="Role" met={eq.role_match} />
-                  <CriterionBadge label="Action" met={eq.action_match} />
-                  <CriterionBadge label="Context" met={eq.context_match} />
-                  <CriterionBadge label="Pattern" met={eq.pattern_match} />
-                </div>
               </div>
             ))}
           </div>
