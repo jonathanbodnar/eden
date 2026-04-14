@@ -48,7 +48,9 @@ function CriterionBadge({ label, met }: { label: string; met: boolean | undefine
   )
 }
 
-function EntityBreakdownView({ data, onBack }: { data: EntityMergeBreakdown; onBack: () => void }) {
+function EntityBreakdownView({ data, onBack, archetypeName }: { data: EntityMergeBreakdown; onBack: () => void; archetypeName?: string }) {
+  const displayName = archetypeName || data.entity.name
+  const isArchetype = archetypeName && archetypeName !== data.entity.name
   return (
     <>
       <div style={{
@@ -87,8 +89,13 @@ function EntityBreakdownView({ data, onBack }: { data: EntityMergeBreakdown; onB
           color: 'var(--text-primary)',
           lineHeight: 1.3,
         }}>
-          {data.entity.name}
+          {displayName}
         </div>
+        {isArchetype && (
+          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
+            Resolved as: {data.entity.name}
+          </div>
+        )}
         <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
           {data.entity.subtype}
         </div>
@@ -395,12 +402,17 @@ export default function EvidencePanel({ chapter, evidence, selectedEntity, onCle
       setMergeData(null)
       return
     }
+    // Find also_known_as from the chapter's entity mentions
+    const mention = chapter?.entity_mentions?.find(
+      m => m.canonical_id === selectedEntity.entityId
+    )
+    const aka = mention?.also_known_as
     setLoadingMerge(true)
-    api.getEntityMergeBreakdown(selectedEntity.entityType, selectedEntity.entityId)
+    api.getEntityMergeBreakdown(selectedEntity.entityType, selectedEntity.entityId, aka)
       .then(setMergeData)
       .catch(() => setMergeData(null))
       .finally(() => setLoadingMerge(false))
-  }, [selectedEntity])
+  }, [selectedEntity, chapter])
 
   if (!chapter) {
     return (
@@ -461,7 +473,11 @@ export default function EvidencePanel({ chapter, evidence, selectedEntity, onCle
         height: '100%',
         overflow: 'hidden',
       }}>
-        <EntityBreakdownView data={mergeData} onBack={() => onClearEntity?.()} />
+        <EntityBreakdownView
+          data={mergeData}
+          onBack={() => onClearEntity?.()}
+          archetypeName={selectedEntity?.entityName}
+        />
       </div>
     )
   }

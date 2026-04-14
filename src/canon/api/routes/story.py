@@ -180,10 +180,18 @@ async def get_story_chapter_evidence(
 
 @router.get("/entities/{entity_type}/{entity_id}/merge-breakdown")
 async def get_entity_merge_breakdown(
-    entity_type: str, entity_id: str, session: AsyncSession = Depends(get_session)
+    entity_type: str,
+    entity_id: str,
+    aka: str | None = None,
+    session: AsyncSession = Depends(get_session),
 ):
     """Get the merge breakdown for a canonical entity — which entities were unified,
-    why, and the source evidence for each component."""
+    why, and the source evidence for each component.
+
+    Args:
+        aka: comma-separated list of also-known-as names from the narrative's
+             entity mentions (used to find additional equivalences not in the DB).
+    """
     eid = _uuid.UUID(entity_id)
 
     # Get the primary entity
@@ -317,6 +325,70 @@ async def get_entity_merge_breakdown(
             })
     except Exception:
         logger.exception("Failed to get equivalences")
+
+    # Enrich with also_known_as names from the narrative (finds entities that
+    # share the same archetype but aren't in entity_equivalences yet)
+    if aka:
+        aka_names = [n.strip() for n in aka.split(",") if n.strip()]
+        existing_ids = {eq["equivalent_id"] for eq in equivalences}
+        existing_ids.add(entity_id)
+
+        for aka_name in aka_names:
+            aka_lower = aka_name.lower()
+            found_entity = None
+            found_type = entity_type
+
+            for tbl_type, tbl in [("actor", CanonicalActor), ("event", CanonicalEvent), ("place", CanonicalPlace)]:
+                try:
+                    q = select(tbl).where(
+                        func.lower(tbl.canonical_name) == aka_lower,
+                        tbl.is_current.is_(True),
+                    ).limit(1)
+                    row = (await session.execute(q)).scalar_one_or_none()
+                    if row:
+                        found_entity = row
+                        found_type = tbl_type
+                        break
+                except Exception:
+                    pass
+
+            if not found_entity or str(found_entity.id) in existing_ids:
+                continue
+            existing_ids.add(str(found_entity.id))
+
+            # Get cultures for this entity
+            aka_cultures = []
+            try:
+                aka_type_map = {"actor": CanonicalType.ACTOR, "event": CanonicalType.EVENT, "place": CanonicalType.PLACE}
+                c_q = (
+                    select(distinct(SASourceRecord.culture))
+                    .select_from(CanonSupportLink)
+                    .join(SASourceRecord, SASourceRecord.id == CanonSupportLink.archive_object_id)
+                    .where(
+                        CanonSupportLink.canonical_type == aka_type_map.get(found_type, CanonicalType.ACTOR),
+                        CanonSupportLink.canonical_id == found_entity.id,
+                        SASourceRecord.culture.isnot(None),
+                        SASourceRecord.culture != "",
+                    ).limit(10)
+                )
+                aka_cultures = [c[0] for c in (await session.execute(c_q)).all()]
+            except Exception:
+                pass
+
+            equivalences.append({
+                "equivalent_id": str(found_entity.id),
+                "equivalent_type": found_type,
+                "equivalent_name": found_entity.canonical_name,
+                "equivalent_summary": found_entity.summary,
+                "cultures": aka_cultures,
+                "merge_basis": "narrative_convergence",
+                "confidence": 0.85,
+                "reasoning": f"Identified as the same archetype entity across cultures by narrative synthesis (Law 8: Entity Convergence)",
+                "role_match": True,
+                "action_match": True,
+                "context_match": True,
+                "pattern_match": True,
+            })
 
     # Get source evidence for the primary entity
     sources = []

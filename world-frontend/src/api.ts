@@ -497,8 +497,12 @@ export const api = {
   getStoryChapter: (id: string) => cachedGet<StoryChapter>(`/story/chapters/${id}`),
   getStoryChapterEvidence: (id: string) => cachedGet<StoryEvidence[]>(`/story/chapters/${id}/evidence`),
   getStoryStats: () => cachedGet<StoryStats>('/story/stats'),
-  getEntityMergeBreakdown: (entityType: string, entityId: string) =>
-    cachedGet<EntityMergeBreakdown>(`/story/entities/${entityType}/${entityId}/merge-breakdown`),
+  getEntityMergeBreakdown: (entityType: string, entityId: string, alsoKnownAs?: string[]) => {
+    const akaParam = alsoKnownAs && alsoKnownAs.length > 0
+      ? `?aka=${encodeURIComponent(alsoKnownAs.join(','))}`
+      : ''
+    return cachedGet<EntityMergeBreakdown>(`/story/entities/${entityType}/${entityId}/merge-breakdown${akaParam}`)
+  },
   getCultureVariants: (storyChapterId: string, q?: string) =>
     cachedGet<CultureVariant[]>(`/story/chapters/${storyChapterId}/culture-variants${q ? `?q=${encodeURIComponent(q)}` : ''}`),
   getStoryCultureDetail: (storyChapterId: string, culture: string) =>

@@ -18,7 +18,7 @@ class Settings(BaseSettings):
 
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com"
-    deepseek_model: str = "deepseek-chat"
+    deepseek_model: str = "deepseek-reasoner"
 
     ollama_base_url: str = ""
     ollama_model: str = "qwen3:14b"
