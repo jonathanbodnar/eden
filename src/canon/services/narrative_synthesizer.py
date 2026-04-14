@@ -155,6 +155,13 @@ When multiple cultures record the same event (creation of humans, a great flood,
 - Any paragraph that discusses only ONE culture's account in isolation
 - Geographic transitions between cultural accounts ("To the east...", "Across the ocean...")
 - Presenting the same event multiple times from different cultural perspectives
+- COMPARISON WEASEL WORDS: "echoes this", "mirrors this", "a similar scene", "parallels this", "a parallel image". These all imply two separate things that resemble each other. If two records describe the same event, they ARE the same event — state it directly.
+
+### IDENTITY vs COMPARISON:
+When two cultures describe a structurally identical event (e.g., a golden light emerging from primordial waters), DO NOT say "The Egyptian record echoes this" — that implies they are separate events that happen to be similar. Instead, THEY ARE THE SAME EVENT with multiple attestations:
+- WRONG: "A golden embryo forms in the waters. The Egyptian record echoes this: a flame emerges from the Nun."
+- RIGHT: "A golden light coalesces in the primordial waters — called the Hiranyagarbha in the Vedic hymns, the Flame from the Nun in the Pyramid Texts. It is the first differentiation within the void."
+The difference: the RIGHT version describes ONE event with two names. The WRONG version describes two events that are "similar."
 
 ### CORRECT PATTERN FOR EVERY PARAGRAPH:
 Each paragraph should describe ONE thing that happens in the story, drawing on MULTIPLE sources as evidence for that single thing. Cultural names appear ONLY as parenthetical attestations or name-variants, never as geographic framing.
@@ -166,7 +173,7 @@ Example of correct paragraph structure:
 - You MUST include accounts from AT LEAST 6 different cultural traditions per chapter
 - Balance coverage: Mesopotamian, Egyptian, Vedic/Hindu, Greek, Chinese, Mesoamerican, Norse, Japanese, Polynesian, African, Native American, Persian — use ALL that are relevant
 - Do NOT let any single culture dominate more than ~25% of the narrative
-- When a culture's account is thin, still note it: "In the East, the same primordial waters are remembered as..."
+- When a culture's account is thin, still include it as an attestation: "...known also as X in the traditions of Y"
 - The goal is a PLANETARY history, not a Near Eastern history with footnotes from elsewhere
 - If the provided entities skew toward certain cultures, you must STILL seek balance using the themes and equivalences provided
 
