@@ -524,7 +524,8 @@ async def get_culture_detail(
     # Get story chapter themes for relevance filtering
     outline = await session.get(StoryOutline, sc.story_outline_id) if sc.story_outline_id else None
     themes = outline.themes if outline else []
-    title_words = [w.lower() for w in (sc.chapter_title or "").split() if len(w) > 3]
+    outline_title = outline.title if outline else ""
+    title_words = [w.lower() for w in (outline_title or "").split() if len(w) > 3]
     relevance_words = list(set(title_words + [t.lower() for t in themes if t]))
 
     # Build a relevance filter — source text should mention at least one theme/keyword
