@@ -397,9 +397,26 @@ async def get_culture_variants(
 
     epoch_id = str(sc.epoch_id)
 
-    # Find cultures that have source material linked to entities in this epoch.
-    # No theme filtering (too slow on text fields) — just require the culture
-    # has at least one source with meaningful text.
+    # Find cultures via canonical chapter titles (fast string parse) as primary
+    # source, then enrich with source record data where available.
+    # This avoids the slow join across 10K+ entities.
+    import re as _re
+    ch_q = select(CanonicalChapter.title).where(
+        CanonicalChapter.epoch_id == sc.epoch_id,
+        CanonicalChapter.is_current.is_(True),
+    )
+    ch_rows = (await session.execute(ch_q)).all()
+    culture_pattern = _re.compile(r':\s*(.+?)(?:\s+Tradition)?$')
+    culture_names: dict[str, int] = {}
+    for (title,) in ch_rows:
+        m = culture_pattern.search(title)
+        if m:
+            cname = m.group(1).strip()
+            if cname.lower() != "overview":
+                culture_names[cname] = culture_names.get(cname, 0) + 1
+
+    # Now for each culture, check if there's actual source text via a fast
+    # bounded query using only a sample of entities (LIMIT 500).
     culture_q = text("""
         WITH epoch_entities AS (
             SELECT DISTINCT d.child_id as entity_id
@@ -407,26 +424,20 @@ async def get_culture_variants(
             JOIN canonical_chapters c ON c.id = d.parent_id AND d.parent_type = 'chapter'
             WHERE c.epoch_id = :epoch_id AND c.is_current = true
               AND d.child_type IN ('actor', 'event')
-        ),
-        culture_sources AS (
-            SELECT DISTINCT
-                sr.culture,
-                sr.id as source_id,
-                LENGTH(sv.text_extracted) as text_len
-            FROM epoch_entities ee
-            JOIN canon_support_links cl ON cl.canonical_id = ee.entity_id
-            JOIN source_records sr ON sr.id = cl.archive_object_id
-            JOIN source_versions sv ON sv.source_record_id = sr.id
-            WHERE sr.culture IS NOT NULL AND sr.culture != ''
-              AND sv.text_extracted IS NOT NULL
-              AND LENGTH(sv.text_extracted) > 100
+            LIMIT 500
         )
-        SELECT culture, count(DISTINCT source_id) as source_count,
-               sum(text_len) as total_text
-        FROM culture_sources
-        GROUP BY culture
-        HAVING sum(text_len) > 200
-        ORDER BY sum(text_len) DESC
+        SELECT sr.culture, count(DISTINCT sr.id) as source_count,
+               sum(LENGTH(sv.text_extracted)) as total_text
+        FROM epoch_entities ee
+        JOIN canon_support_links cl ON cl.canonical_id = ee.entity_id
+        JOIN source_records sr ON sr.id = cl.archive_object_id
+        JOIN source_versions sv ON sv.source_record_id = sr.id
+        WHERE sr.culture IS NOT NULL AND sr.culture != ''
+          AND sv.text_extracted IS NOT NULL
+          AND LENGTH(sv.text_extracted) > 100
+        GROUP BY sr.culture
+        HAVING sum(LENGTH(sv.text_extracted)) > 200
+        ORDER BY sum(LENGTH(sv.text_extracted)) DESC
         LIMIT 40
     """)
 
@@ -434,15 +445,31 @@ async def get_culture_variants(
         culture_rows = (await session.execute(culture_q, {"epoch_id": epoch_id})).all()
     except Exception:
         logger.exception("Failed to query culture variants")
-        return []
+        culture_rows = []
+
+    # Merge: use source-query cultures + chapter-title cultures
+    source_cultures = {r[0]: (int(r[1]), int(r[2])) for r in culture_rows}
+
+    # Build final list: prefer cultures that have source data, but also include
+    # cultures from chapter titles that might not have direct source links
+    all_cultures: list[tuple[str, int, int]] = []
+    seen = set()
+    for cname, (sc_count, tlen) in source_cultures.items():
+        all_cultures.append((cname, sc_count, tlen))
+        seen.add(cname.lower())
+    for cname, ch_count in culture_names.items():
+        if cname.lower() not in seen:
+            all_cultures.append((cname, 0, 0))
+
+    all_cultures.sort(key=lambda x: x[2], reverse=True)
 
     # Apply search filter
     if q:
         q_lower = q.lower()
-        culture_rows = [r for r in culture_rows if q_lower in r[0].lower()]
+        all_cultures = [r for r in all_cultures if q_lower in r[0].lower()]
 
     result = []
-    for culture_name, source_count, total_text in culture_rows[:30]:
+    for culture_name, source_count, total_text in all_cultures[:30]:
         culture_key = culture_name.split("/")[0].strip().replace("'", "")
 
         # Get the actual original source texts for this culture + epoch
