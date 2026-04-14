@@ -521,6 +521,25 @@ async def get_culture_detail(
 
     ch_ids_sql = ",".join(f"'{ch.id}'" for ch in matching_chs)
 
+    # Get story chapter themes for relevance filtering
+    outline = await session.get(StoryOutline, sc.story_outline_id) if sc.story_outline_id else None
+    themes = outline.themes if outline else []
+    title_words = [w.lower() for w in (sc.chapter_title or "").split() if len(w) > 3]
+    relevance_words = list(set(title_words + [t.lower() for t in themes if t]))
+
+    # Build a relevance filter — source text should mention at least one theme/keyword
+    if relevance_words:
+        relevance_conditions = " OR ".join(
+            f"LOWER(sv.text_extracted) LIKE '%%{w.replace(chr(39), '')}%%'"
+            for w in relevance_words[:10]
+        )
+        relevance_filter = f"AND ({relevance_conditions})"
+    else:
+        relevance_filter = ""
+
+    # Also filter by culture match in the source record itself
+    culture_key = culture.split("/")[0].strip().replace("'", "")
+
     src_q = text(f"""
         SELECT DISTINCT ON (sr.id)
             sr.canonical_title, sr.culture,
@@ -534,6 +553,7 @@ async def get_culture_detail(
           AND d.child_type IN ('actor', 'event')
           AND sv.text_extracted IS NOT NULL
           AND LENGTH(sv.text_extracted) > 150
+          {relevance_filter}
         ORDER BY sr.id, cl.weight DESC
         LIMIT 8
     """)
