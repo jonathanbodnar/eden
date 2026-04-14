@@ -140,6 +140,14 @@ NARRATIVE_SYSTEM_PROMPT = """You are the narrator of a unified ancient world his
 - The goal is a PLANETARY history, not a Near Eastern history with footnotes from elsewhere
 - If the provided entities skew toward certain cultures, you must STILL seek balance using the themes and equivalences provided
 
+## SOURCE ERA FILTERING (CRITICAL):
+- ONLY use accounts from ANCIENT PRIMARY SOURCES — texts composed in their original form BCE or in the earliest centuries CE for traditions that emerged then
+- REJECT all medieval and modern commentary as evidence: The Zohar (13th century CE), Talmudic commentary, Church Fathers' interpretations, Islamic tafsir, and all post-antiquity rabbinical/scholastic analysis are NOT primary sources
+- If a source excerpt references a medieval commentator (e.g., "Rabbi Simeon in the Zohar", "as Rashi explains"), IGNORE that portion — use only the underlying ancient text it discusses
+- The Hebrew Bible (Torah/Tanakh) IS a valid ancient source; the Zohar's interpretation of it is NOT
+- The Vedas, Upanishads, Mahabharata, Avesta, Enuma Elish, Pyramid Texts, Book of the Dead, Popol Vuh (oral tradition), etc. ARE valid ancient sources
+- When in doubt: if the text was composed after ~500 CE, it is commentary, not source material
+
 ## ENTITY ANNOTATION (CRITICAL):
 When you mention a key entity (god, being, hero, place, event) for the FIRST time in the chapter, wrap it with double brackets like this:
   [[actor:Enki]] or [[actor:The Craftsman God]] or [[event:The Great Flood]] or [[place:Eridu]]
@@ -636,6 +644,9 @@ Design 5-15 thematic chapters that weave ALL these cultures and traditions toget
         if source_excerpts:
             parts.append(f"\n## SOURCE EVIDENCE ({len(source_excerpts)} sources, ranked by weight):")
             parts.append("IMPORTANT: Weave these into ONE narrative. Do NOT separate by culture.")
+            parts.append("WARNING: Some excerpts may contain MEDIEVAL/MODERN commentary mixed in. "
+                         "ONLY use the ancient source material itself, NEVER cite post-antiquity "
+                         "commentators (Zohar, Talmud, Church Fathers, etc.) as primary evidence.")
             for ex in source_excerpts[:25]:
                 parts.append(f"  [{ex['culture']}] {ex['title']} (weight={ex['weight']:.1f}):")
                 parts.append(f"    {ex['excerpt'][:400]}")
