@@ -238,104 +238,79 @@ Design 5-15 thematic chapters that weave ALL these cultures and traditions toget
     async def _build_epoch_summary(
         self, session: AsyncSession, epoch: CanonicalEpoch
     ) -> str:
-        """Build a rich summary of ALL entities and sources in this epoch for the planner."""
-        # Get all canonical chapters in this epoch
-        ch_q = select(CanonicalChapter.id).where(
+        """Build a rich summary of entities and sources in this epoch for the planner.
+
+        Uses efficient SQL queries to avoid loading 100K+ entities into memory.
+        Extracts culture names from canonical chapter titles and uses LIMIT
+        to keep the summary concise enough for the LLM context window.
+        """
+        # Extract cultures from canonical chapter titles (fast — just string parsing)
+        ch_q = select(CanonicalChapter.title, CanonicalChapter.chapter_summary).where(
             CanonicalChapter.epoch_id == epoch.id,
             CanonicalChapter.is_current.is_(True),
-        )
-        chapter_ids = [r[0] for r in (await session.execute(ch_q)).all()]
+        ).order_by(CanonicalChapter.chapter_order)
+        ch_rows = (await session.execute(ch_q)).all()
 
-        if not chapter_ids:
+        if not ch_rows:
             return "No data available for this epoch."
 
-        # Gather all entity IDs linked to chapters in this epoch (batched)
-        all_actors: dict[uuid.UUID, CanonicalActor] = {}
-        all_events: dict[uuid.UUID, CanonicalEvent] = {}
-        all_places: dict[uuid.UUID, CanonicalPlace] = {}
-
-        batch_size = 500
-        for i in range(0, len(chapter_ids), batch_size):
-            batch = chapter_ids[i:i + batch_size]
-            deps_q = select(CanonDependency.child_type, CanonDependency.child_id).where(
-                CanonDependency.parent_type == CanonicalType.CHAPTER,
-                CanonDependency.parent_id.in_(batch),
-            )
-            deps = (await session.execute(deps_q)).all()
-
-            actor_ids = [d[1] for d in deps if d[0] == CanonicalType.ACTOR]
-            event_ids = [d[1] for d in deps if d[0] == CanonicalType.EVENT]
-            place_ids = [d[1] for d in deps if d[0] == CanonicalType.PLACE]
-
-            if actor_ids:
-                for aid_batch in [actor_ids[j:j+200] for j in range(0, len(actor_ids), 200)]:
-                    rows = (await session.execute(
-                        select(CanonicalActor).where(
-                            CanonicalActor.id.in_(aid_batch),
-                            CanonicalActor.is_current.is_(True),
-                        )
-                    )).scalars().all()
-                    for a in rows:
-                        all_actors[a.id] = a
-
-            if event_ids:
-                for eid_batch in [event_ids[j:j+200] for j in range(0, len(event_ids), 200)]:
-                    rows = (await session.execute(
-                        select(CanonicalEvent).where(
-                            CanonicalEvent.id.in_(eid_batch),
-                            CanonicalEvent.is_current.is_(True),
-                        )
-                    )).scalars().all()
-                    for e in rows:
-                        all_events[e.id] = e
-
-            if place_ids:
-                for pid_batch in [place_ids[j:j+200] for j in range(0, len(place_ids), 200)]:
-                    rows = (await session.execute(
-                        select(CanonicalPlace).where(
-                            CanonicalPlace.id.in_(pid_batch),
-                            CanonicalPlace.is_current.is_(True),
-                        )
-                    )).scalars().all()
-                    for p in rows:
-                        all_places[p.id] = p
-
-        # Get distinct cultures
+        import re
+        culture_pattern = re.compile(r':\s*(.+?)(?:\s+Tradition)?$')
         cultures = set()
-        try:
-            culture_q = (
-                select(distinct(SASourceRecord.culture))
-                .select_from(CanonSupportLink)
-                .join(SASourceRecord, SASourceRecord.id == CanonSupportLink.archive_object_id)
-                .where(
-                    CanonSupportLink.canonical_id.in_(
-                        list(all_actors.keys())[:500] + list(all_events.keys())[:500]
-                    ),
-                    SASourceRecord.culture.isnot(None),
-                    SASourceRecord.culture != "",
-                )
-                .limit(200)
-            )
-            culture_rows = (await session.execute(culture_q)).all()
-            cultures = {r[0] for r in culture_rows}
-        except Exception:
-            pass
+        for title, _ in ch_rows:
+            m = culture_pattern.search(title)
+            if m and m.group(1).strip().lower() != "overview":
+                cultures.add(m.group(1).strip())
+
+        # Use efficient single queries with LIMITs for actors/events/places
+        actors_q = text("""
+            SELECT DISTINCT a.canonical_name, a.actor_type, LEFT(a.summary, 150)
+            FROM canonical_actors a
+            JOIN canon_dependencies d ON d.child_type = 'actor' AND d.child_id = a.id
+            JOIN canonical_chapters c ON c.id = d.parent_id AND d.parent_type = 'chapter'
+            WHERE c.epoch_id = :eid AND c.is_current = true AND a.is_current = true
+            ORDER BY a.canonical_name
+            LIMIT 100
+        """)
+        events_q = text("""
+            SELECT DISTINCT e.canonical_name, e.event_type, LEFT(e.summary, 150)
+            FROM canonical_events e
+            JOIN canon_dependencies d ON d.child_type = 'event' AND d.child_id = e.id
+            JOIN canonical_chapters c ON c.id = d.parent_id AND d.parent_type = 'chapter'
+            WHERE c.epoch_id = :eid AND c.is_current = true AND e.is_current = true
+            ORDER BY e.canonical_name
+            LIMIT 100
+        """)
+        places_q = text("""
+            SELECT DISTINCT p.canonical_name, p.place_type, LEFT(p.summary, 150)
+            FROM canonical_places p
+            JOIN canon_dependencies d ON d.child_type = 'place' AND d.child_id = p.id
+            JOIN canonical_chapters c ON c.id = d.parent_id AND d.parent_type = 'chapter'
+            WHERE c.epoch_id = :eid AND c.is_current = true AND p.is_current = true
+            ORDER BY p.canonical_name
+            LIMIT 50
+        """)
+
+        params = {"eid": str(epoch.id)}
+        actor_rows = (await session.execute(actors_q, params)).all()
+        event_rows = (await session.execute(events_q, params)).all()
+        place_rows = (await session.execute(places_q, params)).all()
 
         parts = [f"## {len(cultures)} distinct cultures contribute to this epoch"]
         if cultures:
-            parts.append(f"Cultures: {', '.join(sorted(cultures)[:50])}")
+            parts.append(f"Cultures: {', '.join(sorted(cultures)[:60])}")
 
-        parts.append(f"\n## KEY ACTORS ({len(all_actors)} total, showing top 80):")
-        for a in sorted(all_actors.values(), key=lambda x: x.canonical_name)[:80]:
-            parts.append(f"  - {a.canonical_name} ({a.actor_type.value}): {(a.summary or 'No summary')[:120]}")
+        parts.append(f"\n## KEY ACTORS ({len(actor_rows)} shown):")
+        for name, atype, summary in actor_rows:
+            parts.append(f"  - {name} ({atype}): {summary or 'No summary'}")
 
-        parts.append(f"\n## KEY EVENTS ({len(all_events)} total, showing top 80):")
-        for e in sorted(all_events.values(), key=lambda x: x.canonical_name)[:80]:
-            parts.append(f"  - {e.canonical_name} ({e.event_type.value}): {(e.summary or 'No summary')[:120]}")
+        parts.append(f"\n## KEY EVENTS ({len(event_rows)} shown):")
+        for name, etype, summary in event_rows:
+            parts.append(f"  - {name} ({etype}): {summary or 'No summary'}")
 
-        parts.append(f"\n## KEY PLACES ({len(all_places)} total, showing top 40):")
-        for p in sorted(all_places.values(), key=lambda x: x.canonical_name)[:40]:
-            parts.append(f"  - {p.canonical_name} ({p.place_type.value}): {(p.summary or 'No summary')[:120]}")
+        parts.append(f"\n## KEY PLACES ({len(place_rows)} shown):")
+        for name, ptype, summary in place_rows:
+            parts.append(f"  - {name} ({ptype}): {summary or 'No summary'}")
 
         equivalences = await self._gather_equivalences(session)
         if equivalences:
