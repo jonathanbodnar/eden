@@ -56,7 +56,46 @@ export default function AudioPlayerBar({ chapterId, chapters, onChapterChange, o
         throw new Error(errText || `Generation failed (${genRes.status})`)
       }
 
-      setAudioSrc(`${BASE}/story/chapters/${id}/audio?t=${Date.now()}`)
+      const genData = await genRes.json()
+      if (genData.status === 'already_exists') {
+        setAudioSrc(`${BASE}/story/chapters/${id}/audio?t=${Date.now()}`)
+        setLoading(false)
+        setGenerating(false)
+        return
+      }
+
+      if (genData.status === 'generating') {
+        let attempts = 0
+        const maxAttempts = 120
+        while (attempts < maxAttempts) {
+          await new Promise(r => setTimeout(r, 3000))
+          attempts++
+          const pollRes = await fetch(`${BASE}/story/chapters/${id}/audio`, { method: 'HEAD' })
+          if (pollRes.ok) {
+            setAudioSrc(`${BASE}/story/chapters/${id}/audio?t=${Date.now()}`)
+            setLoading(false)
+            setGenerating(false)
+            return
+          }
+          const retryGen = await fetch(`${BASE}/story/chapters/${id}/audio`, { method: 'POST' })
+          if (retryGen.ok) {
+            const retryData = await retryGen.json()
+            if (retryData.status === 'already_exists') {
+              setAudioSrc(`${BASE}/story/chapters/${id}/audio?t=${Date.now()}`)
+              setLoading(false)
+              setGenerating(false)
+              return
+            }
+            if (retryData.status !== 'generating') break
+          } else {
+            const errText = await retryGen.text()
+            throw new Error(errText || `Generation failed (${retryGen.status})`)
+          }
+        }
+        if (attempts >= maxAttempts) {
+          throw new Error('Audio generation timed out')
+        }
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load audio')
     } finally {
@@ -201,9 +240,9 @@ export default function AudioPlayerBar({ chapterId, chapters, onChapterChange, o
           }}>
             {chapter?.chapter_title || 'Loading...'}
           </div>
-          <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+          <div style={{ fontSize: 11, color: generating ? 'var(--gold)' : 'var(--text-muted)' }}>
             {loading || generating
-              ? (generating ? 'Generating audio...' : 'Loading...')
+              ? (generating ? 'Generating audio \u2014 this is cached for all listeners...' : 'Loading...')
               : error
                 ? error
                 : `${formatTime(currentTime)} / ${formatTime(duration)}`

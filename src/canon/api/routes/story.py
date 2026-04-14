@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import uuid as _uuid
@@ -830,93 +831,123 @@ async def get_chapter_audio(
     )
 
 
+_audio_tasks: dict[str, str] = {}  # chapter_id -> "generating" | "failed:<msg>"
+
+
+async def _generate_audio_background(story_chapter_id: str) -> None:
+    """Run Cartesia TTS in background, store result in DB."""
+    from src.canon.database import async_session_factory
+
+    cid_str = str(story_chapter_id)
+    try:
+        async with async_session_factory() as session:
+            chapter = await session.get(StoryChapter, _uuid.UUID(cid_str))
+            if not chapter:
+                _audio_tasks[cid_str] = "failed:Chapter not found"
+                return
+
+            outline = await session.get(StoryOutline, chapter.story_outline_id) if chapter.story_outline_id else None
+            title = outline.title if outline else "Chapter"
+            clean_text = _strip_annotations(chapter.narrative_text or "")
+            transcript = f"{title}\n\n{clean_text}"
+
+            async with httpx.AsyncClient(timeout=600) as client:
+                resp = await client.post(
+                    "https://api.cartesia.ai/tts/bytes",
+                    headers={
+                        "X-API-Key": settings.cartesia_api_key,
+                        "Cartesia-Version": "2026-03-01",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model_id": "sonic-3",
+                        "transcript": transcript,
+                        "voice": {
+                            "mode": "id",
+                            "id": settings.cartesia_voice_id,
+                        },
+                        "language": "en",
+                        "output_format": {
+                            "container": "mp3",
+                            "sample_rate": 44100,
+                            "bit_rate": 128000,
+                        },
+                        "generation_config": {
+                            "speed": 0.9,
+                            "emotion": "contemplative",
+                        },
+                    },
+                )
+                if resp.status_code != 200:
+                    logger.error("Cartesia TTS error %s: %s", resp.status_code, resp.text[:500])
+                    _audio_tasks[cid_str] = f"failed:Cartesia error {resp.status_code}"
+                    return
+
+                audio_bytes = resp.content
+
+            word_count = len(transcript.split())
+            estimated_duration = word_count / 2.5
+
+            await session.execute(
+                text("""
+                    INSERT INTO story_chapter_audio (story_chapter_id, audio_data, duration_seconds, file_size_bytes, voice_id, model_id)
+                    VALUES (:cid, :audio, :dur, :size, :voice, :model)
+                    ON CONFLICT (story_chapter_id) DO UPDATE SET
+                        audio_data = EXCLUDED.audio_data,
+                        duration_seconds = EXCLUDED.duration_seconds,
+                        file_size_bytes = EXCLUDED.file_size_bytes,
+                        created_at = now()
+                """),
+                {
+                    "cid": cid_str,
+                    "audio": audio_bytes,
+                    "dur": estimated_duration,
+                    "size": len(audio_bytes),
+                    "voice": settings.cartesia_voice_id,
+                    "model": "sonic-3",
+                },
+            )
+            await session.commit()
+
+        _audio_tasks.pop(cid_str, None)
+        logger.info("Audio generated for chapter %s (%d bytes)", cid_str, len(audio_bytes))
+    except Exception as e:
+        logger.exception("Background audio generation failed for %s", cid_str)
+        _audio_tasks[cid_str] = f"failed:{e}"
+
+
 @router.post("/chapters/{story_chapter_id}/audio")
 async def generate_chapter_audio(
     story_chapter_id: str,
     session: AsyncSession = Depends(get_session),
 ):
-    """Generate TTS audio via Cartesia and cache the MP3."""
+    """Kick off TTS generation in background. Returns immediately with status."""
     cid = _uuid.UUID(story_chapter_id)
+    cid_str = str(cid)
 
     existing = (await session.execute(
         text("SELECT id FROM story_chapter_audio WHERE story_chapter_id = :cid"),
-        {"cid": str(cid)},
+        {"cid": cid_str},
     )).first()
     if existing:
         return {"status": "already_exists"}
+
+    task_status = _audio_tasks.get(cid_str)
+    if task_status == "generating":
+        return {"status": "generating"}
+    if task_status and task_status.startswith("failed:"):
+        msg = task_status[7:]
+        _audio_tasks.pop(cid_str, None)
+        raise HTTPException(502, f"Audio generation failed: {msg}")
 
     chapter = await session.get(StoryChapter, cid)
     if not chapter:
         raise HTTPException(404, "Chapter not found")
 
-    outline = await session.get(StoryOutline, chapter.story_outline_id) if chapter.story_outline_id else None
-    title = outline.title if outline else "Chapter"
-
-    clean_text = _strip_annotations(chapter.narrative_text or "")
-    transcript = f"{title}\n\n{clean_text}"
-
     if not settings.cartesia_api_key:
         raise HTTPException(500, "Cartesia API key not configured")
 
-    try:
-        async with httpx.AsyncClient(timeout=300) as client:
-            resp = await client.post(
-                "https://api.cartesia.ai/tts/bytes",
-                headers={
-                    "X-API-Key": settings.cartesia_api_key,
-                    "Cartesia-Version": "2026-03-01",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model_id": "sonic-3",
-                    "transcript": transcript,
-                    "voice": {
-                        "mode": "id",
-                        "id": settings.cartesia_voice_id,
-                    },
-                    "language": "en",
-                    "output_format": {
-                        "container": "mp3",
-                        "sample_rate": 44100,
-                        "bit_rate": 128000,
-                    },
-                    "generation_config": {
-                        "speed": 0.9,
-                        "emotion": "contemplative",
-                    },
-                },
-            )
-            if resp.status_code != 200:
-                logger.error("Cartesia TTS error %s: %s", resp.status_code, resp.text[:500])
-                raise HTTPException(502, f"Cartesia TTS error: {resp.status_code}")
+    _audio_tasks[cid_str] = "generating"
+    asyncio.create_task(_generate_audio_background(cid_str))
 
-            audio_bytes = resp.content
-    except httpx.HTTPError as e:
-        logger.exception("Cartesia request failed")
-        raise HTTPException(502, f"Cartesia request failed: {e}")
-
-    word_count = len(transcript.split())
-    estimated_duration = word_count / 2.5
-
-    await session.execute(
-        text("""
-            INSERT INTO story_chapter_audio (story_chapter_id, audio_data, duration_seconds, file_size_bytes, voice_id, model_id)
-            VALUES (:cid, :audio, :dur, :size, :voice, :model)
-            ON CONFLICT (story_chapter_id) DO UPDATE SET
-                audio_data = EXCLUDED.audio_data,
-                duration_seconds = EXCLUDED.duration_seconds,
-                file_size_bytes = EXCLUDED.file_size_bytes,
-                created_at = now()
-        """),
-        {
-            "cid": str(cid),
-            "audio": audio_bytes,
-            "dur": estimated_duration,
-            "size": len(audio_bytes),
-            "voice": settings.cartesia_voice_id,
-            "model": "sonic-3",
-        },
-    )
-    await session.commit()
-
-    return {"status": "generated", "size_bytes": len(audio_bytes), "estimated_duration": estimated_duration}
+    return {"status": "generating"}

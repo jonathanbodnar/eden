@@ -471,6 +471,10 @@ Design 5-15 thematic chapters that weave ALL these cultures and traditions toget
                 existing.entity_mentions_json = resolved_mentions
                 existing.word_count = len(narrative.split())
                 existing.synthesis_version += 1
+                await write_session.execute(
+                    text("DELETE FROM story_chapter_audio WHERE story_chapter_id = :cid"),
+                    {"cid": str(existing.id)},
+                )
                 await write_session.commit()
                 return existing
 
