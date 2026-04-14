@@ -520,43 +520,46 @@ async def get_culture_detail(
         return {"culture": culture, "source_texts": [], "actors": [], "events": [], "places": []}
 
     ch_ids_sql = ",".join(f"'{ch.id}'" for ch in matching_chs)
-
-    # Get story chapter themes for direct source search
-    outline = await session.get(StoryOutline, sc.story_outline_id) if sc.story_outline_id else None
-    themes = outline.themes if outline else []
     culture_key = culture.split("/")[0].strip().replace("'", "")
 
-    # Strategy: search source records directly by culture + theme relevance.
-    # This avoids the noisy canonical-chapter → entity → source join.
-    # Use core myth keywords that are universal to creation narratives.
-    core_keywords = [
-        "creation", "creator", "origin", "beginning", "primordial", "waters",
-        "chaos", "void", "cosmos", "divine", "gods", "heaven", "earth",
-        "flood", "deluge", "first", "mankind", "human",
-    ]
-    # Add theme-specific keywords
-    for t in themes:
-        for w in t.lower().split():
-            if len(w) > 4 and w not in core_keywords:
-                core_keywords.append(w.replace("'", ""))
-
-    # Require text to match at least 2 core keywords (reduces noise)
-    keyword_conditions = " + ".join(
-        f"CASE WHEN LOWER(sv.text_extracted) LIKE '%%{kw}%%' THEN 1 ELSE 0 END"
-        for kw in core_keywords[:15]
-    )
-
+    # Two-pronged source search:
+    # 1. Chapter-entity-source join filtered by culture match on source record
+    # 2. Direct culture search with creation keyword relevance (for English texts)
+    # Union both to get the best results.
     src_q = text(f"""
-        SELECT sr.canonical_title, sr.culture,
-            LEFT(sv.text_extracted, 1500),
-            ({keyword_conditions}) as relevance_score
-        FROM source_records sr
-        JOIN source_versions sv ON sv.source_record_id = sr.id
-        WHERE sr.culture ILIKE :culture_pattern
-          AND sv.text_extracted IS NOT NULL
-          AND LENGTH(sv.text_extracted) > 200
-          AND ({keyword_conditions}) >= 2
-        ORDER BY ({keyword_conditions}) DESC
+        (
+            SELECT DISTINCT ON (sr.id) sr.canonical_title, sr.culture,
+                LEFT(sv.text_extracted, 1500), cl.weight
+            FROM canon_dependencies d
+            JOIN canon_support_links cl ON cl.canonical_id = d.child_id
+            JOIN source_records sr ON sr.id = cl.archive_object_id
+            JOIN source_versions sv ON sv.source_record_id = sr.id
+            WHERE d.parent_type = 'chapter' AND d.parent_id IN ({ch_ids_sql})
+              AND d.child_type IN ('actor', 'event')
+              AND sr.culture ILIKE :culture_pattern
+              AND sv.text_extracted IS NOT NULL
+              AND LENGTH(sv.text_extracted) > 150
+            ORDER BY sr.id, cl.weight DESC
+            LIMIT 8
+        )
+        UNION ALL
+        (
+            SELECT sr.canonical_title, sr.culture,
+                LEFT(sv.text_extracted, 1500), 0.5 as weight
+            FROM source_records sr
+            JOIN source_versions sv ON sv.source_record_id = sr.id
+            WHERE sr.culture ILIKE :culture_pattern
+              AND sv.text_extracted IS NOT NULL
+              AND LENGTH(sv.text_extracted) > 200
+              AND (
+                LOWER(sr.canonical_title) LIKE '%%genesis%%'
+                OR LOWER(sr.canonical_title) LIKE '%%creation%%'
+                OR LOWER(sr.canonical_title) LIKE '%%origin%%'
+                OR LOWER(sr.canonical_title) LIKE '%%cosmogon%%'
+                OR LOWER(sr.canonical_title) LIKE '%%beginning%%'
+              )
+            LIMIT 4
+        )
         LIMIT 8
     """)
 
