@@ -1005,12 +1005,24 @@ Extract ALL events in chronological order, with actors, actions, locations, obje
             age_rank = CULTURE_AGE_ORDER.get(skel.culture_key, 99)
             events = skel.events_json if isinstance(skel.events_json, list) else []
 
+            ANTI_KEYWORDS = [
+                "garrison", "soldier", "army", "revolt", "military", "kingdom",
+                "dynasty", "emperor", "pharaoh", "inscription", "archaeolog",
+                "excavat", "museum", "script", "decipher", "merchant", "trade",
+                "tax", "census", "governor", "province", "colony", "treaty",
+                "ambassador", "alliance", "cook", "bullock", "butcher",
+            ]
+
             for ev in events[:15]:
                 ev_text = (
                     str(ev.get("event", "")) + " " +
                     str(ev.get("action", "")) + " " +
                     str(ev.get("outcome", ""))
                 ).lower()
+
+                # Skip obviously non-mythological events
+                if any(ak in ev_text for ak in ANTI_KEYWORDS):
+                    continue
 
                 tagged = {**ev, "_culture": label, "_age_rank": age_rank}
 
@@ -1022,21 +1034,18 @@ Extract ALL events in chronological order, with actors, actions, locations, obje
                         best_score = score
                         best_idx = idx
 
-                if best_score >= 1 and best_idx >= 0:
+                if best_score >= 2 and best_idx >= 0:
                     theme_buckets[best_idx][1].append(tagged)
-                else:
-                    overflow.append(tagged)
+                elif best_score == 1 and best_idx >= 0:
+                    theme_buckets[best_idx][1].append(tagged)
+                # Events with score 0 are dropped — they don't match
+                # any creation/cosmogonic theme and are likely irrelevant
 
         # Sort events within each bucket by age rank (oldest first)
         for _, events in theme_buckets:
             events.sort(key=lambda e: e.get("_age_rank", 99))
 
-        # Add overflow to a catch-all bucket if non-empty
-        if overflow:
-            overflow.sort(key=lambda e: e.get("_age_rank", 99))
-            theme_buckets.append(("Other Notable Events", overflow))
-
-        # Remove empty buckets
+        # Drop overflow entirely — unmatched events are noise
         return [(name, evs) for name, evs in theme_buckets if evs]
 
     async def _get_epoch_actor_names(
