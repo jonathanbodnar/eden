@@ -224,45 +224,50 @@ Return ONLY valid JSON:
 
 UNIFIED_MERGE_PROMPT = """You are writing an alternative bible — a single, unified ancient history as if one civilization existed.
 
-You will receive THEMATIC SECTIONS. Each section contains data from multiple traditions about the SAME event. For each section, write 1-2 paragraphs that FUSE every tradition's details into ONE rich description.
+You will receive THEMATIC SECTIONS. Each section lists actors who played the SAME ROLE and the combined details of what happened. Write ONE continuous narrative where each section becomes 1-3 paragraphs.
 
-## ABSOLUTE RULE: NO CULTURE NAMES
+## RULE 1: ONE CHARACTER PER ROLE
 
-BANNED (any of these in your output = failure):
+When a section lists multiple actor names for ONE role, they are the SAME being. Treat them as ONE character. On first mention, annotate with the primary name and list alternates:
+
+  [[actor:Enki]] (Ea, Khnum, Ptah) kneels at the potter's wheel.
+
+After first mention, use only the primary name. NEVER introduce the same role twice. NEVER write "another god also creates" — there is only ONE creator.
+
+## RULE 2: NO CULTURE NAMES
+
+BANNED words (instant failure):
 Sumerian, Hebrew, Egyptian, Greek, Norse, Chinese, Vedic, Hindu, Mesoamerican, Zoroastrian, Babylonian, Persian, Japanese, Ainu, African, Polynesian, Maya, Aztec, Hopi, Roman, Etruscan, Canaanite, Hurrian, Hittite, Celtic.
-Also banned: "In Mesopotamia", "In the east", "According to", "One tradition", "In another", "Similarly", "Likewise", "Perhaps", "It is believed"
+Also banned: "In Mesopotamia", "In the east", "According to", "One tradition", "In another", "Similarly", "Likewise", "Perhaps", "It is believed", "Some say"
 
-## HOW TO FUSE
+## RULE 3: ALL DETAILS, ONE MOMENT
 
-Each section has the SAME event seen by multiple peoples. ALL their details happened simultaneously.
+Each section's combined details ALL happened simultaneously. Layer them into ONE rich description:
 
-WRONG (retelling each separately):
-"A god shapes clay. Then a different god breathes life. A craftsman works a wheel."
+WRONG: "The creator shapes clay. Another deity breathes life. A craftsman uses a wheel."
+RIGHT: "[[actor:Enki]] (Ea, Khnum, Ptah) kneels at the potter's wheel, mixing clay with divine blood. He pinches seven male forms, seven female, and breathes into each nostril. The womb-goddesses assist, their fourteen breasts swelling."
 
-RIGHT (one fused moment):
-"[[actor:Enki]] (Ea, Khnum, Ptah) kneels at the potter's wheel. He mixes clay with the blood of a slain god — seven males, seven females. He breathes into each nostril. The womb-goddesses assist, pinching the clay into final form."
-
-One paragraph. All details coexist. No restarts. Every tradition's vivid details enrich the SAME moment.
+Every vivid detail from the data enriches ONE description. Never restart, retell, or add a second version.
 
 ## ENTITY ANNOTATION
 
-On FIRST mention of a named being/place, annotate with the canonical name from the list below:
-  [[actor:CanonicalName]] (AlternateName1, AlternateName2)
-  [[place:CanonicalName]] (AlternateName1)
+On FIRST mention of any named being, place, or event:
+  [[actor:PrimaryName]] (Alternate1, Alternate2)
+  [[place:PrimaryName]] (Alternate1)
 
-Use the CANONICAL ENTITY NAMES provided in the data. Aim for 15-25 annotations.
+Use the PRIMARY name from the data. Aim for 15-25 annotations.
 
 ## STYLE
 - Present tense, direct, authoritative
-- Every sentence from source evidence
+- Every sentence grounded in source details
 - No invented atmosphere, no modern commentary
-- Target: 1500-2500 words total
+- Target: 1500-2500 words
 
 ## OUTPUT — valid JSON only:
 {
   "narrative_text": "Full narrative with [[type:Name]] annotations...",
   "entity_mentions": [
-    {"name": "Enki", "type": "actor", "also_known_as": ["Ea", "Nudimmud"], "role_in_chapter": "shapes humanity from clay"}
+    {"name": "Enki", "type": "actor", "also_known_as": ["Ea", "Khnum", "Ptah"], "role_in_chapter": "shapes humanity from clay"}
   ]
 }"""
 
@@ -861,31 +866,14 @@ Extract ALL events in chronological order, with actors, actions, locations, obje
 
         actor_names = await self._get_epoch_actor_names(session, epoch.id)
 
-        parts = [
-            f"# CHAPTER: {outline.title}",
-            f"# EPOCH: {epoch.title}",
-            f"\nYou will write ONE unified story. The data below is organized by THEME, not by culture.",
-            "Under each theme, you see what multiple traditions remember about THAT SAME moment.",
-            "Write 1-2 paragraphs per theme, FUSING all cultures' details into one description.",
-            "",
-        ]
-
-        if actor_names:
-            parts.append("## ENTITY NAMES for [[actor:Name]] annotations:")
-            for name, aka in actor_names[:40]:
-                if aka:
-                    parts.append(f"  {name} (also: {aka})")
-                else:
-                    parts.append(f"  {name}")
-            parts.append("")
-
         equivalences = await self._gather_equivalences(session)
-        if equivalences:
-            parts.append("## SAME BEING across traditions:")
-            for eq in equivalences:
-                all_names = [eq["primary_name"]] + eq["equivalents"][:8]
-                parts.append(f"  {', '.join(all_names)}")
-            parts.append("")
+
+        # Build equivalence lookup: any name -> set of equivalent names
+        equiv_lookup: dict[str, set[str]] = {}
+        for eq in equivalences:
+            all_names = {eq["primary_name"].lower()} | {n.lower() for n in eq["equivalents"]}
+            for n in all_names:
+                equiv_lookup.setdefault(n, set()).update(all_names)
 
         # Assign every event to a thematic bucket
         buckets = self._assign_events_to_themes(skeletons, narr_labels)
@@ -894,29 +882,37 @@ Extract ALL events in chronological order, with actors, actions, locations, obje
             unique = skel.unique_details if isinstance(skel.unique_details, list) else []
             all_unique.extend(unique)
 
-        parts.append(f"## THE STORY — {len(buckets)} SECTIONS (write in this order)\n")
+        # Pre-merge actors within each thematic section by role similarity
+        merged_buckets = self._merge_actors_in_sections(buckets, equiv_lookup)
 
-        for i, (theme_name, theme_events) in enumerate(buckets, 1):
-            if not theme_events:
+        parts = [
+            f"# CHAPTER: {outline.title}",
+            f"# EPOCH: {epoch.title}",
+            "",
+        ]
+
+        parts.append(f"## THE STORY — {len(merged_buckets)} SECTIONS\n")
+        parts.append("For each section, write 1-3 paragraphs. Each ROLE is ONE character with")
+        parts.append("multiple names in parentheses. Use the FIRST name as primary.\n")
+
+        for i, (theme_name, roles) in enumerate(merged_buckets, 1):
+            if not roles:
                 continue
-            n_cultures = len(set(e["_culture"] for e in theme_events))
-            parts.append(f"### SECTION {i}: {theme_name} ({n_cultures} traditions)")
-            parts.append(f"Write 1-2 paragraphs fusing these into ONE moment:\n")
+            parts.append(f"### SECTION {i}: {theme_name}")
 
-            for ev in theme_events:
-                actors = ", ".join(ev.get("actors", [])[:5])
-                action = str(ev.get("action", ""))[:200]
-                detail = str(ev.get("source_detail", ""))[:200]
-                parts.append(f"  [{ev['_culture']}] {ev.get('event', '')}")
-                if actors:
-                    parts.append(f"    Who: {actors}")
-                parts.append(f"    What: {action}")
-                if detail and detail != "None":
-                    parts.append(f"    Vivid detail: {detail}")
+            for role in roles:
+                actor_names_str = ", ".join(role["names"])
+                parts.append(f"\n  ROLE: {role['role_label']}")
+                parts.append(f"  WHO: {actor_names_str}")
+                parts.append(f"  (Use [[actor:{role['names'][0]}]] ({', '.join(role['names'][1:])}) on first mention)")
+                if role["actions"]:
+                    parts.append(f"  ACTIONS: {' | '.join(role['actions'][:5])}")
+                if role["details"]:
+                    parts.append(f"  DETAILS: {' | '.join(role['details'][:5])}")
             parts.append("")
 
         if all_unique:
-            parts.append("## UNIQUE DETAILS — weave into relevant sections above:")
+            parts.append("## UNIQUE DETAILS — weave into relevant sections:")
             for ud in all_unique[:25]:
                 parts.append(f"  • {ud}")
             parts.append("")
@@ -925,6 +921,108 @@ Extract ALL events in chronological order, with actors, actions, locations, obje
             parts.append(f"## PRIOR CHAPTER (continue from here):\n...{prior_narrative[-800:]}")
 
         return "\n".join(parts)
+
+    @staticmethod
+    def _merge_actors_in_sections(
+        buckets: list[tuple[str, list[dict]]],
+        equiv_lookup: dict[str, set[str]],
+    ) -> list[tuple[str, list[dict]]]:
+        """Within each thematic section, merge events that share actors or equivalent actors
+        into unified ROLE entries.
+
+        Returns: [(theme_name, [role_dicts])] where each role_dict has:
+          names: list of all actor names (primary first)
+          role_label: short description of what this character does
+          actions: combined action descriptions
+          details: combined vivid details
+        """
+        result = []
+        for theme_name, events in buckets:
+            # Group by actor equivalence: find events whose actors overlap
+            role_groups: list[dict] = []
+
+            for ev in events:
+                ev_actors = set()
+                for a in ev.get("actors", []):
+                    a_lower = a.strip().lower()
+                    ev_actors.add(a_lower)
+                    ev_actors.update(equiv_lookup.get(a_lower, set()))
+
+                # Try to merge with an existing role group
+                merged = False
+                for rg in role_groups:
+                    if rg["_actor_set"] & ev_actors:
+                        rg["_actor_set"].update(ev_actors)
+                        for a in ev.get("actors", []):
+                            if a.strip() and a.strip() not in rg["_seen_names"]:
+                                rg["names"].append(a.strip())
+                                rg["_seen_names"].add(a.strip())
+                        action = str(ev.get("action", "")).strip()
+                        if action and action not in rg["_seen_actions"]:
+                            rg["actions"].append(action[:200])
+                            rg["_seen_actions"].add(action)
+                        detail = str(ev.get("source_detail", "")).strip()
+                        if detail and detail != "None" and detail not in rg["_seen_details"]:
+                            rg["details"].append(detail[:200])
+                            rg["_seen_details"].add(detail)
+                        merged = True
+                        break
+
+                if not merged:
+                    actor_list = [a.strip() for a in ev.get("actors", []) if a.strip()]
+                    action = str(ev.get("action", "")).strip()
+                    detail = str(ev.get("source_detail", "")).strip()
+                    rg = {
+                        "_actor_set": ev_actors,
+                        "_seen_names": set(actor_list),
+                        "_seen_actions": {action} if action else set(),
+                        "_seen_details": {detail} if detail and detail != "None" else set(),
+                        "names": actor_list,
+                        "role_label": str(ev.get("event", ""))[:100],
+                        "actions": [action[:200]] if action else [],
+                        "details": [detail[:200]] if detail and detail != "None" else [],
+                    }
+                    role_groups.append(rg)
+
+            # Also merge role groups that share actors with each other
+            merged_groups: list[dict] = []
+            for rg in role_groups:
+                did_merge = False
+                for mg in merged_groups:
+                    if mg["_actor_set"] & rg["_actor_set"]:
+                        mg["_actor_set"].update(rg["_actor_set"])
+                        for n in rg["names"]:
+                            if n not in mg["_seen_names"]:
+                                mg["names"].append(n)
+                                mg["_seen_names"].add(n)
+                        for a in rg["actions"]:
+                            if a not in mg["_seen_actions"]:
+                                mg["actions"].append(a)
+                                mg["_seen_actions"].add(a)
+                        for d in rg["details"]:
+                            if d not in mg["_seen_details"]:
+                                mg["details"].append(d)
+                                mg["_seen_details"].add(d)
+                        did_merge = True
+                        break
+                if not did_merge:
+                    merged_groups.append(rg)
+
+            # Clean output
+            clean_roles = []
+            for rg in merged_groups:
+                if not rg["names"]:
+                    rg["names"] = ["Unknown"]
+                clean_roles.append({
+                    "names": rg["names"],
+                    "role_label": rg["role_label"],
+                    "actions": rg["actions"],
+                    "details": rg["details"],
+                })
+
+            result.append((theme_name, clean_roles))
+
+        return result
 
     @staticmethod
     def _assign_events_to_themes(
