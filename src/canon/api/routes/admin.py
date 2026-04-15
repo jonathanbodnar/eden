@@ -235,7 +235,7 @@ async def run_narrative_pipeline(
     passes: str = "1,2,3",
     session: AsyncSession = Depends(get_session),
 ):
-    """Three-pass narrative pipeline with per-pass control.
+    """Three-pass narrative pipeline — runs in background, returns immediately.
 
     Args:
         epoch_orders: comma-separated epoch_order values (e.g. "0,1,2,3"), omit for all
@@ -245,15 +245,86 @@ async def run_narrative_pipeline(
             Pass 2: Extract event skeletons
             Pass 3: Merge into unified narrative
     """
+    import asyncio
+
     orders = [int(x.strip()) for x in epoch_orders.split(",")] if epoch_orders else None
-    svc = NarrativeSynthesizer()
-    result = await svc.run_full_pipeline(
-        session,
-        epoch_orders=orders,
-        skip_existing=skip_existing,
-        passes=passes,
-    )
-    return result
+
+    async def _run() -> None:
+        try:
+            svc = NarrativeSynthesizer()
+            result = await svc.run_full_pipeline(
+                session,
+                epoch_orders=orders,
+                skip_existing=skip_existing,
+                passes=passes,
+            )
+            logger.info("Narrative pipeline complete: %s", result)
+        except Exception:
+            logger.exception("Narrative pipeline failed")
+
+    asyncio.create_task(_run())
+    return {
+        "status": "started",
+        "epoch_orders": orders,
+        "passes": passes,
+        "message": "Pipeline running in background. Check /admin/narrative-pipeline-status for progress.",
+    }
+
+
+@router.get("/narrative-pipeline-status")
+async def narrative_pipeline_status(
+    epoch_orders: str | None = None,
+    session: AsyncSession = Depends(get_session),
+):
+    """Check progress of the narrative pipeline."""
+    from sqlalchemy import text as sql_text
+    from src.canon.models.culture_narrative import CultureNarrative, CultureEventSkeleton
+    from src.canon.models.story_outline import StoryOutline
+    from src.canon.models.story_chapter import StoryChapter
+
+    q_filter = ""
+    params: dict = {}
+    if epoch_orders:
+        orders = [int(x.strip()) for x in epoch_orders.split(",")]
+        q_filter = " WHERE so.epoch_id IN (SELECT id FROM canonical_epochs WHERE epoch_order = ANY(:orders))"
+        params["orders"] = orders
+
+    narratives = (await session.execute(sql_text(f"""
+        SELECT cn.culture_key, cn.culture_label, cn.word_count, cn.source_count,
+               so.title as chapter_title
+        FROM culture_narratives cn
+        JOIN story_outlines so ON so.id = cn.story_outline_id
+        {q_filter.replace("so.", "so.")}
+        ORDER BY so.chapter_number, cn.culture_key
+    """), params)).all()
+
+    skeletons = (await session.execute(sql_text(f"""
+        SELECT COUNT(*) FROM culture_event_skeletons ces
+        JOIN story_outlines so ON so.id = ces.story_outline_id
+        {q_filter.replace("so.", "so.")}
+    """), params)).scalar() or 0
+
+    unified = (await session.execute(sql_text(f"""
+        SELECT COUNT(*) FROM story_chapters sc
+        JOIN story_outlines so ON so.id = sc.story_outline_id
+        {q_filter.replace("so.", "so.")}
+        WHERE sc.narrative_text IS NOT NULL AND sc.narrative_text != ''
+    """), params)).scalar() or 0
+
+    return {
+        "culture_narratives": len(narratives),
+        "event_skeletons": skeletons,
+        "unified_chapters": unified,
+        "details": [
+            {
+                "chapter": r[4],
+                "culture": r[1],
+                "words": r[2],
+                "sources": r[3],
+            }
+            for r in narratives
+        ],
+    }
 
 
 @router.post("/run-entity-resolution")
