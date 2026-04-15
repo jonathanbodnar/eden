@@ -1011,6 +1011,10 @@ Extract ALL events in chronological order, with actors, actions, locations, obje
                 "excavat", "museum", "script", "decipher", "merchant", "trade",
                 "tax", "census", "governor", "province", "colony", "treaty",
                 "ambassador", "alliance", "cook", "bullock", "butcher",
+                "penumbra", "umbra", "chuang", "hui tz", "lao tz",
+                "passions", "philosopher", "philosophy", "instability of purpose",
+                "qualification", "psammetichos", "meroitic", "ethiopi",
+                "privy member", "deserter", "resinous rain",
             ]
 
             for ev in events[:15]:
