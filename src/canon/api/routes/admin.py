@@ -282,11 +282,11 @@ async def narrative_pipeline_status(
     from src.canon.models.story_outline import StoryOutline
     from src.canon.models.story_chapter import StoryChapter
 
-    q_filter = ""
+    epoch_filter = ""
     params: dict = {}
     if epoch_orders:
         orders = [int(x.strip()) for x in epoch_orders.split(",")]
-        q_filter = " WHERE so.epoch_id IN (SELECT id FROM canonical_epochs WHERE epoch_order = ANY(:orders))"
+        epoch_filter = " AND so.epoch_id IN (SELECT id FROM canonical_epochs WHERE epoch_order = ANY(:orders))"
         params["orders"] = orders
 
     narratives = (await session.execute(sql_text(f"""
@@ -294,21 +294,20 @@ async def narrative_pipeline_status(
                so.title as chapter_title
         FROM culture_narratives cn
         JOIN story_outlines so ON so.id = cn.story_outline_id
-        {q_filter.replace("so.", "so.")}
+        WHERE 1=1 {epoch_filter}
         ORDER BY so.chapter_number, cn.culture_key
     """), params)).all()
 
     skeletons = (await session.execute(sql_text(f"""
         SELECT COUNT(*) FROM culture_event_skeletons ces
         JOIN story_outlines so ON so.id = ces.story_outline_id
-        {q_filter.replace("so.", "so.")}
+        WHERE 1=1 {epoch_filter}
     """), params)).scalar() or 0
 
     unified = (await session.execute(sql_text(f"""
         SELECT COUNT(*) FROM story_chapters sc
         JOIN story_outlines so ON so.id = sc.story_outline_id
-        {q_filter.replace("so.", "so.")}
-        WHERE sc.narrative_text IS NOT NULL AND sc.narrative_text != ''
+        WHERE sc.narrative_text IS NOT NULL AND sc.narrative_text != '' {epoch_filter}
     """), params)).scalar() or 0
 
     return {
