@@ -497,11 +497,16 @@ export const api = {
   getStoryChapter: (id: string) => cachedGet<StoryChapter>(`/story/chapters/${id}`),
   getStoryChapterEvidence: (id: string) => cachedGet<StoryEvidence[]>(`/story/chapters/${id}/evidence`),
   getStoryStats: () => cachedGet<StoryStats>('/story/stats'),
-  getEntityMergeBreakdown: (entityType: string, entityId: string, alsoKnownAs?: string[]) => {
-    const akaParam = alsoKnownAs && alsoKnownAs.length > 0
-      ? `?aka=${encodeURIComponent(alsoKnownAs.join(','))}`
-      : ''
-    return cachedGet<EntityMergeBreakdown>(`/story/entities/${entityType}/${entityId}/merge-breakdown${akaParam}`)
+  getEntityMergeBreakdown: (entityType: string, entityId: string, alsoKnownAs?: string[], allCanonicalIds?: string[]) => {
+    const params = new URLSearchParams()
+    if (alsoKnownAs && alsoKnownAs.length > 0) {
+      params.set('aka', alsoKnownAs.join(','))
+    }
+    if (allCanonicalIds && allCanonicalIds.length > 0) {
+      params.set('all_ids', allCanonicalIds.join(','))
+    }
+    const qs = params.toString() ? `?${params.toString()}` : ''
+    return cachedGet<EntityMergeBreakdown>(`/story/entities/${entityType}/${entityId}/merge-breakdown${qs}`)
   },
   getCultureVariants: (storyChapterId: string, q?: string) =>
     cachedGet<CultureVariant[]>(`/story/chapters/${storyChapterId}/culture-variants${q ? `?q=${encodeURIComponent(q)}` : ''}`),

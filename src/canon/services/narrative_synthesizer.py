@@ -296,6 +296,9 @@ RIGHT: [[actor:The Mother of Chaos]] or [[place:The First City]]
 - Each chapter has a SPECIFIC TOPIC. Write ONLY about that topic. Do NOT retell prior chapters.
 - Write like scripture: things HAPPEN. Cause leads to effect. Include WHY from sources.
 - Do NOT list catalogs of creatures/names. Weave into flowing narrative.
+- CRITICAL: When multiple traditions describe the SAME event (e.g. creation of humanity), merge them into ONE telling that weaves the details together. Do NOT tell the event multiple times from different perspectives. ONE creation of man, ONE flood, ONE garden — not five separate versions.
+  WRONG: "In one act, the Craftsman molds clay. In another act, a creator gathers dust. Elsewhere, a trickster steals fire."
+  RIGHT: "The Craftsman kneels at the riverbed. He scoops clay and mixes it with the blood of a slain god. Into the nostrils of the clay figure, he breathes the breath of life and hides within it a spark of celestial fire."
 - Present tense, direct, authoritative. No modern commentary.
 - Target: 1500-2500 words.
 
@@ -1445,7 +1448,11 @@ Extract ALL events in chronological order, with actors, actions, locations, obje
     async def _resolve_entity_mentions(
         self, session: AsyncSession, mentions: list[dict]
     ) -> list[dict]:
-        """Resolve entity names from DeepSeek output to canonical entity IDs."""
+        """Resolve entity names from DeepSeek output to ALL matching canonical entity IDs.
+
+        For merged archetypes (e.g. "The Great Father" with also_known_as ["Nu", "Apsu", "Brahman"]),
+        we find ALL matching canonical entities so the frontend can display the full merge.
+        """
         table_map = {
             "actor": CanonicalActor,
             "event": CanonicalEvent,
@@ -1461,29 +1468,54 @@ Extract ALL events in chronological order, with actors, actions, locations, obje
                 continue
 
             tbl = table_map[entity_type]
-            canonical_id = None
+            all_canonical_ids: list[str] = []
+            primary_id: str | None = None
 
             names_to_try = [name.strip()]
             for aka in m.get("also_known_as", []):
                 if aka and aka.strip():
                     names_to_try.append(aka.strip())
 
+            # Find ALL matching canonical entities across all also_known_as names
+            seen_ids: set[str] = set()
             for try_name in names_to_try:
-                if canonical_id:
-                    break
                 try:
                     q = select(tbl.id).where(
                         func.lower(tbl.canonical_name) == try_name.lower(),
                         tbl.is_current.is_(True),
                     ).limit(1)
                     row = (await session.execute(q)).scalar_one_or_none()
-                    if row:
-                        canonical_id = str(row)
+                    if row and str(row) not in seen_ids:
+                        seen_ids.add(str(row))
+                        all_canonical_ids.append(str(row))
+                        if not primary_id:
+                            primary_id = str(row)
                 except Exception:
                     pass
 
-            # Fuzzy match: partial name match
-            if not canonical_id:
+            # Also check entity_equivalences for actor types
+            if entity_type == "actor":
+                for try_name in names_to_try:
+                    try:
+                        eq_rows = (await session.execute(text("""
+                            SELECT ee.primary_entity_id, ee.equivalent_entity_id
+                            FROM entity_equivalences ee
+                            JOIN canonical_actors ca ON ca.id = ee.equivalent_entity_id
+                            WHERE LOWER(ca.canonical_name) = :n
+                              AND ee.primary_entity_type = 'actor'
+                        """), {"n": try_name.lower()})).all()
+                        for eq_row in eq_rows:
+                            for eid in [str(eq_row[0]), str(eq_row[1])]:
+                                if eid not in seen_ids:
+                                    seen_ids.add(eid)
+                                    all_canonical_ids.append(eid)
+                                    if not primary_id:
+                                        primary_id = eid
+                    except Exception:
+                        pass
+
+            # Fuzzy match as last resort (only for primary_id if still missing)
+            if not primary_id:
                 try:
                     search_name = name.strip()
                     if search_name.lower().startswith("the "):
@@ -1494,31 +1526,16 @@ Extract ALL events in chronological order, with actors, actions, locations, obje
                     ).limit(1)
                     row = (await session.execute(q)).scalar_one_or_none()
                     if row:
-                        canonical_id = str(row)
+                        primary_id = str(row)
+                        if primary_id not in seen_ids:
+                            all_canonical_ids.append(primary_id)
                 except Exception:
                     pass
 
-            # Check entity_equivalences — the name might be an equivalent,
-            # not the primary canonical name
-            if not canonical_id and entity_type == "actor":
-                for try_name in names_to_try:
-                    if canonical_id:
-                        break
-                    try:
-                        eq_row = (await session.execute(text("""
-                            SELECT ee.primary_entity_id
-                            FROM entity_equivalences ee
-                            JOIN canonical_actors ca ON ca.id = ee.equivalent_entity_id
-                            WHERE LOWER(ca.canonical_name) = :n
-                              AND ee.primary_entity_type = 'actor'
-                            LIMIT 1
-                        """), {"n": try_name.lower()})).scalar_one_or_none()
-                        if eq_row:
-                            canonical_id = str(eq_row)
-                    except Exception:
-                        pass
-
-            resolved.append({**m, "canonical_id": canonical_id})
+            entry = {**m, "canonical_id": primary_id}
+            if len(all_canonical_ids) > 1:
+                entry["all_canonical_ids"] = all_canonical_ids
+            resolved.append(entry)
         return resolved
 
     async def _gather_equivalences(self, session: AsyncSession) -> list[dict]:

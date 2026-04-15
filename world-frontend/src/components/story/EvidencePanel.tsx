@@ -394,13 +394,13 @@ export default function EvidencePanel({ chapter, evidence, selectedEntity, onCle
       setMergeData(null)
       return
     }
-    // Find also_known_as from the chapter's entity mentions
     const mention = chapter?.entity_mentions?.find(
-      m => m.canonical_id === selectedEntity.entityId
+      (m: any) => m.canonical_id === selectedEntity.entityId
     )
     const aka = mention?.also_known_as
+    const allIds = (mention as any)?.all_canonical_ids as string[] | undefined
     setLoadingMerge(true)
-    api.getEntityMergeBreakdown(selectedEntity.entityType, selectedEntity.entityId, aka)
+    api.getEntityMergeBreakdown(selectedEntity.entityType, selectedEntity.entityId, aka, allIds)
       .then(setMergeData)
       .catch(() => setMergeData(null))
       .finally(() => setLoadingMerge(false))

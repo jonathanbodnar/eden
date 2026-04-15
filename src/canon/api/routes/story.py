@@ -257,6 +257,7 @@ async def get_entity_merge_breakdown(
     entity_type: str,
     entity_id: str,
     aka: str | None = None,
+    all_ids: str | None = None,
     session: AsyncSession = Depends(get_session),
 ):
     """Get the merge breakdown for a canonical entity — which entities were unified,
@@ -265,6 +266,8 @@ async def get_entity_merge_breakdown(
     Args:
         aka: comma-separated list of also-known-as names from the narrative's
              entity mentions (used to find additional equivalences not in the DB).
+        all_ids: comma-separated list of ALL canonical IDs matched by the archetype's
+                 also_known_as names (for proper multi-culture display).
     """
     eid = _uuid.UUID(entity_id)
 
@@ -476,6 +479,77 @@ async def get_entity_merge_breakdown(
                     entity_info["name"],
                     aka_cultures,
                 ),
+                "role_match": True,
+                "action_match": True,
+                "context_match": True,
+                "pattern_match": True,
+            })
+
+    # Resolve all_ids: these are additional canonical entities that the narrative
+    # synthesizer matched to this archetype's also_known_as names
+    if all_ids:
+        extra_ids = [i.strip() for i in all_ids.split(",") if i.strip()]
+        existing_ids = {eq["equivalent_id"] for eq in equivalences}
+        existing_ids.add(entity_id)
+
+        for extra_id_str in extra_ids:
+            if extra_id_str in existing_ids:
+                continue
+            existing_ids.add(extra_id_str)
+            try:
+                extra_uuid = _uuid.UUID(extra_id_str)
+            except ValueError:
+                continue
+
+            found_entity = None
+            found_type = entity_type
+            for tbl_type, tbl in [("actor", CanonicalActor), ("event", CanonicalEvent), ("place", CanonicalPlace)]:
+                try:
+                    row = await session.get(tbl, extra_uuid)
+                    if row:
+                        found_entity = row
+                        found_type = tbl_type
+                        break
+                except Exception:
+                    pass
+
+            if not found_entity:
+                continue
+
+            extra_cultures = []
+            try:
+                aka_type_map = {"actor": CanonicalType.ACTOR, "event": CanonicalType.EVENT, "place": CanonicalType.PLACE}
+                c_q = (
+                    select(distinct(SASourceRecord.culture))
+                    .select_from(CanonSupportLink)
+                    .join(SASourceRecord, SASourceRecord.id == CanonSupportLink.archive_object_id)
+                    .where(
+                        CanonSupportLink.canonical_type == aka_type_map.get(found_type, CanonicalType.ACTOR),
+                        CanonSupportLink.canonical_id == extra_uuid,
+                        SASourceRecord.culture.isnot(None),
+                        SASourceRecord.culture != "",
+                    ).limit(10)
+                )
+                extra_cultures = [c[0] for c in (await session.execute(c_q)).all()]
+            except Exception:
+                pass
+
+            ename = found_entity.canonical_name
+            esummary = getattr(found_entity, "summary", "") or ""
+            if extra_cultures:
+                extra_cultures = _refine_cultures(extra_cultures, ename, esummary)
+            elif not extra_cultures:
+                extra_cultures = _infer_culture_from_entity(ename, esummary)
+
+            equivalences.append({
+                "equivalent_id": extra_id_str,
+                "equivalent_type": found_type,
+                "equivalent_name": ename,
+                "equivalent_summary": esummary,
+                "cultures": extra_cultures,
+                "merge_basis": "narrative_convergence",
+                "confidence": 0.85,
+                "reasoning": _build_merge_reasoning(ename, esummary, entity_info["name"], extra_cultures),
                 "role_match": True,
                 "action_match": True,
                 "context_match": True,
