@@ -509,34 +509,16 @@ Design 5-15 thematic chapters that weave ALL these cultures and traditions toget
         Returns: [(culture_key, culture_label, [source_dicts])]
         Sorted by CULTURE_AGE_ORDER (oldest first).
         """
-        theme_pattern = "%|%".join(t.lower() for t in themes) if themes else "%"
-
-        # Two-pronged source gathering:
-        # 1. Through entity dependencies (actors/events linked to epoch chapters)
-        # 2. Through CanonicalChapter titles (culture tagged in chapter name)
+        # Grab ALL sources linked to ANY entity in this epoch — no theme filtering
+        # because for early epochs like creation, all entities are relevant to all chapters
         q = text("""
             WITH epoch_entity_ids AS (
                 SELECT DISTINCT d.child_id as entity_id
                 FROM canon_dependencies d
                 JOIN canonical_chapters c ON c.id = d.parent_id AND d.parent_type = 'chapter'
                 WHERE c.epoch_id = :eid AND c.is_current = true
-                  AND d.child_type IN ('actor', 'event')
-                  AND (
-                    :theme_pattern = '%%'
-                    OR EXISTS (
-                        SELECT 1 FROM canonical_actors a
-                        WHERE a.id = d.child_id AND a.is_current = true
-                        AND (LOWER(a.canonical_name) LIKE ANY(string_to_array(:theme_pattern, '|'))
-                             OR LOWER(a.summary) LIKE ANY(string_to_array(:theme_pattern, '|')))
-                    )
-                    OR EXISTS (
-                        SELECT 1 FROM canonical_events e
-                        WHERE e.id = d.child_id AND e.is_current = true
-                        AND (LOWER(e.canonical_name) LIKE ANY(string_to_array(:theme_pattern, '|'))
-                             OR LOWER(e.summary) LIKE ANY(string_to_array(:theme_pattern, '|')))
-                    )
-                  )
-                LIMIT 200
+                  AND d.child_type IN ('actor', 'event', 'place')
+                LIMIT 500
             )
             SELECT DISTINCT ON (sr.id)
                 sr.id::text as source_id,
@@ -551,13 +533,10 @@ Design 5-15 thematic chapters that weave ALL these cultures and traditions toget
             WHERE sv.text_extracted IS NOT NULL
               AND LENGTH(sv.text_extracted) > 100
             ORDER BY sr.id, cl.weight DESC
-            LIMIT 500
+            LIMIT 800
         """)
 
-        rows = (await session.execute(q, {
-            "eid": str(epoch_id),
-            "theme_pattern": theme_pattern,
-        })).all()
+        rows = (await session.execute(q, {"eid": str(epoch_id)})).all()
 
         # Also get sources identified via CanonicalChapter titles
         chapter_q = text("""
