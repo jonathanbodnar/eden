@@ -222,25 +222,29 @@ Return ONLY valid JSON:
 }"""
 
 
-UNIFIED_MERGE_PROMPT = """You are writing an alternative bible — one unified ancient history. Tell the STORY of what happens, not a catalog of who does what.
+UNIFIED_MERGE_PROMPT = """You are writing one chapter of an alternative bible — a unified ancient history told as continuous story across multiple chapters.
 
-You receive PLOT BEATS (events in narrative order) and a CHARACTER LIST. Write a flowing story that moves through the plot beats naturally. Characters serve the story — do NOT describe each character's attributes separately.
+CRITICAL: Each chapter has a SPECIFIC TOPIC. Write ONLY about that topic. Do NOT retell events from earlier chapters. If prior chapters already told the creation of the void, the separation of sky and earth, or the battle with chaos — DO NOT TELL THOSE AGAIN. Start where the prior chapter left off.
+
+You receive:
+- CHAPTER TOPIC: what this specific chapter must be about
+- ALREADY TOLD: summary of what prior chapters covered (do NOT repeat any of this)
+- PLOT BEATS: events relevant to THIS chapter's topic
+- CHARACTER LIST: names to merge into archetypes
 
 ## STORY STRUCTURE
 
 Write like a myth: things HAPPEN. Cause leads to effect. There is tension, action, consequence.
 
-GOOD (a story):
-"Before the beginning, there is only water — dark, formless, endless. Then heat stirs in the deep. [[actor:The First Voice]] speaks, and the word cracks the darkness open. Light floods upward. He separates the waters above from the waters below, stretching the sky like a tent over the earth. But the deep resists. [[actor:The Mother of Chaos]] gathers her children, spawning eleven terrible monsters..."
+GOOD: "The Divine Craftsman kneels at the edge of the abyss. He scoops red clay from the riverbed and mixes it with the blood of the slain god. Seven male forms he shapes, and seven female. He lays them on the ground and waits..."
 
-BAD (an entity catalog):
-"[[actor:The First Voice]] is the creator deity. It speaks and creates light. It also creates the sky. [[actor:The Mother of Chaos]] is the primordial force. She spawns monsters. She gives the Tablet of Destinies to her champion..."
+BAD: "The Divine Craftsman is the creator deity. He shapes humanity from clay. He also creates rivers and plants." (This describes attributes, not story.)
 
-The BAD version describes entities. The GOOD version tells what happens.
+BAD: "Before the beginning, there is only water..." (This retells creation of the void — already told in Chapter 1.)
 
 ## ARCHETYPE NAMES
 
-For characters, create short archetype names (2-4 words). Use ONLY the archetype in the narrative. Put all culture-specific names in entity_mentions.also_known_as.
+Create short archetype names (2-4 words) for characters. Use ONLY the archetype in narrative text. Put all culture-specific names in entity_mentions.also_known_as.
 
 ## BANNED WORDS (instant failure)
 
@@ -261,7 +265,7 @@ Aim for 10-15 annotations. Only annotate characters who ACT in the story.
 
 ## OUTPUT — valid JSON only:
 {
-  "narrative_text": "The flowing story...",
+  "narrative_text": "The flowing story of THIS chapter's specific topic...",
   "entity_mentions": [
     {"name": "The Divine Craftsman", "type": "actor", "also_known_as": ["Enki", "Ea", "Khnum", "Ptah"], "role_in_chapter": "shapes humanity from clay"}
   ]
@@ -757,6 +761,7 @@ Extract ALL events in chronological order, with actors, actions, locations, obje
         outline: StoryOutline,
         epoch: CanonicalEpoch,
         prior_narrative: str | None = None,
+        prior_summaries: list[str] | None = None,
     ) -> StoryChapter:
         """Pass 3: Merge all event skeletons into one unified narrative."""
         from src.canon.database import async_session_factory
@@ -766,7 +771,9 @@ Extract ALL events in chronological order, with actors, actions, locations, obje
         epoch_id = epoch.id
 
         async with async_session_factory() as read_session:
-            prompt = await self._build_merge_prompt(read_session, outline, epoch, prior_narrative)
+            prompt = await self._build_merge_prompt(
+                read_session, outline, epoch, prior_narrative, prior_summaries
+            )
 
         result = await self._call_deepseek(prompt, system=UNIFIED_MERGE_PROMPT)
 
@@ -839,6 +846,7 @@ Extract ALL events in chronological order, with actors, actions, locations, obje
         outline: StoryOutline,
         epoch: CanonicalEpoch,
         prior_narrative: str | None,
+        prior_summaries: list[str] | None = None,
     ) -> str:
         """Build merge prompt with events PRE-SORTED into thematic sections.
 
@@ -876,12 +884,24 @@ Extract ALL events in chronological order, with actors, actions, locations, obje
             unique = skel.unique_details if isinstance(skel.unique_details, list) else []
             all_unique.extend(unique)
 
+        chapter_summary = outline.summary or outline.title
         parts = [
-            f"# CHAPTER: {outline.title}",
+            f"# CHAPTER TOPIC: {outline.title}",
             f"# EPOCH: {epoch.title}",
-            f"\nTell this as a STORY. Things happen. Cause leads to effect.",
+            f"\n## WHAT THIS CHAPTER IS SPECIFICALLY ABOUT:",
+            f"{chapter_summary}",
+            f"\nWrite ONLY about this topic. Do NOT retell earlier events.",
             "",
         ]
+
+        if prior_summaries:
+            parts.append("## ALREADY TOLD IN PRIOR CHAPTERS (do NOT repeat):")
+            for ps in prior_summaries:
+                parts.append(f"  - {ps}")
+            parts.append("")
+            parts.append("Start where the story left off. Characters already introduced")
+            parts.append("can be referenced without re-introducing them.")
+            parts.append("")
 
         # Collect ALL characters across all sections for a flat character list
         all_characters: dict[str, set[str]] = {}  # theme -> set of actor names
@@ -951,7 +971,9 @@ Extract ALL events in chronological order, with actors, actions, locations, obje
             parts.append("")
 
         if prior_narrative:
-            parts.append(f"## PRIOR CHAPTER (continue from here):\n...{prior_narrative[-800:]}")
+            parts.append(f"## END OF PRIOR CHAPTER (continue from this point):")
+            parts.append(f"...{prior_narrative[-600:]}")
+            parts.append("")
 
         return "\n".join(parts)
 
@@ -1160,6 +1182,7 @@ Extract ALL events in chronological order, with actors, actions, locations, obje
             "total_words": 0,
         }
         prior_narrative: str | None = None
+        prior_summaries: list[str] = []
 
         for epoch, outlines in epoch_outlines:
             if not outlines:
@@ -1183,9 +1206,13 @@ Extract ALL events in chronological order, with actors, actions, locations, obje
 
                 if 3 in pass_set:
                     story = await self.synthesize_unified_chapter(
-                        None, outline, epoch, prior_narrative
+                        None, outline, epoch, prior_narrative,
+                        prior_summaries=prior_summaries,
                     )
                     prior_narrative = story.narrative_text
+                    prior_summaries.append(
+                        f"Ch {outline.chapter_number} '{outline.title}': {outline.summary or outline.title}"
+                    )
                     stats["unified_chapters"] += 1
                     stats["total_words"] += story.word_count or 0
 
