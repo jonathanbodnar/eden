@@ -222,56 +222,46 @@ Return ONLY valid JSON:
 }"""
 
 
-UNIFIED_MERGE_PROMPT = """You are writing an alternative bible — one unified ancient history.
+UNIFIED_MERGE_PROMPT = """You are writing an alternative bible — one unified ancient history. Tell the STORY of what happens, not a catalog of who does what.
 
-You receive THEMATIC SECTIONS. Each section has a CAST (names for the same character) and DETAILS (what happens). Write 1-3 paragraphs per section fusing ALL details into ONE description.
+You receive PLOT BEATS (events in narrative order) and a CHARACTER LIST. Write a flowing story that moves through the plot beats naturally. Characters serve the story — do NOT describe each character's attributes separately.
 
-## THE KEY RULE — ARCHETYPE NAMES
+## STORY STRUCTURE
 
-Each section's CAST lists names from many traditions for the SAME being. Create a short, evocative ARCHETYPE NAME that captures their shared essence. Use ONLY the archetype name in the narrative — NEVER list the individual names.
+Write like a myth: things HAPPEN. Cause leads to effect. There is tension, action, consequence.
 
-EXAMPLE:
-Data: CAST: Tiamat, Nun, Ginnungagap, Tohu wa-bohu (all = primordial waters/void)
-You write: "[[actor:The Primordial Deep]] is a waste of water, formless and vast..."
-entity_mentions: {"name": "The Primordial Deep", "also_known_as": ["Tiamat", "Nun", "Ginnungagap", "Tohu wa-bohu"]}
+GOOD (a story):
+"Before the beginning, there is only water — dark, formless, endless. Then heat stirs in the deep. [[actor:The First Voice]] speaks, and the word cracks the darkness open. Light floods upward. He separates the waters above from the waters below, stretching the sky like a tent over the earth. But the deep resists. [[actor:The Mother of Chaos]] gathers her children, spawning eleven terrible monsters..."
 
-EXAMPLE:
-Data: CAST: Enki, Ea, Khnum, Ptah (all = divine craftsman/creator)
-You write: "[[actor:The Divine Craftsman]] kneels at the potter's wheel..."
-entity_mentions: {"name": "The Divine Craftsman", "also_known_as": ["Enki", "Ea", "Khnum", "Ptah"]}
+BAD (an entity catalog):
+"[[actor:The First Voice]] is the creator deity. It speaks and creates light. It also creates the sky. [[actor:The Mother of Chaos]] is the primordial force. She spawns monsters. She gives the Tablet of Destinies to her champion..."
 
-NEVER DO THIS:
-"[[actor:Enki]] (Ea, Khnum, Ptah) kneels..." — NO parenthetical names in narrative text.
-"Tiamat is the ocean. Nun is also a deep." — NO separate introductions.
+The BAD version describes entities. The GOOD version tells what happens.
 
-The narrative must read cleanly with ONLY archetype names. All individual names go in entity_mentions.also_known_as.
+## ARCHETYPE NAMES
 
-## ARCHETYPE NAMING GUIDELINES
-- Use the shared mythological ROLE: "The Sky Father", "The Primordial Deep", "The World Shaper"
-- If one name is clearly dominant/oldest and universally recognized, use it: "Marduk" not "The Champion"
-- Keep names concise (2-4 words max)
-- Make them evocative and specific, not generic
+For characters, create short archetype names (2-4 words). Use ONLY the archetype in the narrative. Put all culture-specific names in entity_mentions.also_known_as.
 
 ## BANNED WORDS (instant failure)
 
 Culture names: Sumerian, Hebrew, Egyptian, Greek, Norse, Chinese, Vedic, Hindu, Babylonian, Persian, Japanese, Ainu, African, Polynesian, Maya, Aztec, Hopi, Roman, Zoroastrian, Mesoamerican, Canaanite, Celtic
-Framing: "In Mesopotamia", "In the east", "According to", "One tradition", "In another", "Similarly", "Likewise", "Perhaps", "It is believed", "Some say", "Also known as"
+Framing: "According to", "One tradition", "In another", "Similarly", "Perhaps", "It is believed", "Some say"
 
 ## ENTITY ANNOTATION
 
 On FIRST mention only: [[actor:ArchetypeName]] or [[place:ArchetypeName]]
-After first mention: just use the archetype name without brackets.
-Aim for 12-20 annotations. Every annotated entity MUST appear in entity_mentions.
+After first mention: just the name, no brackets.
+Aim for 10-15 annotations. Only annotate characters who ACT in the story.
 
 ## STYLE
-- Present tense, direct, authoritative
-- Every sentence from source evidence
-- No invented atmosphere, no modern commentary
+- Present tense, direct, authoritative — like ancient scripture
+- Every sentence grounded in source material
+- No modern commentary, no philosophical asides, no analysis
 - Target: 1500-2500 words
 
 ## OUTPUT — valid JSON only:
 {
-  "narrative_text": "Full narrative using only archetype names...",
+  "narrative_text": "The flowing story...",
   "entity_mentions": [
     {"name": "The Divine Craftsman", "type": "actor", "also_known_as": ["Enki", "Ea", "Khnum", "Ptah"], "role_in_chapter": "shapes humanity from clay"}
   ]
@@ -884,61 +874,74 @@ Extract ALL events in chronological order, with actors, actions, locations, obje
         parts = [
             f"# CHAPTER: {outline.title}",
             f"# EPOCH: {epoch.title}",
+            f"\nTell this as a STORY. Things happen. Cause leads to effect.",
             "",
         ]
 
-        # Known equivalences — these are definitely the same character
-        if equivalences:
-            parts.append("## KNOWN SAME CHARACTER (merge into one archetype):")
-            for eq in equivalences:
-                all_names = [eq["primary_name"]] + eq["equivalents"][:8]
-                parts.append(f"  → {', '.join(all_names)}")
-            parts.append("")
+        # Collect ALL characters across all sections for a flat character list
+        all_characters: dict[str, set[str]] = {}  # theme -> set of actor names
+        all_plot_beats: list[str] = []
+        all_vivid: list[str] = []
+        global_actors: list[str] = []
+        seen_global: set[str] = set()
 
-        parts.append(f"## THE STORY — {len(buckets)} SECTIONS\n")
-        parts.append("For each section: invent an ARCHETYPE NAME for the cast, write 1-3 paragraphs")
-        parts.append("using ONLY the archetype name. Put all individual names in entity_mentions.also_known_as.\n")
-
-        for i, (theme_name, theme_events) in enumerate(buckets, 1):
+        for theme_name, theme_events in buckets:
             if not theme_events:
                 continue
 
-            all_actors: list[str] = []
-            all_actions: list[str] = []
-            all_details: list[str] = []
-            seen_actors: set[str] = set()
+            beat_actions: list[str] = []
+            beat_details: list[str] = []
             seen_actions: set[str] = set()
 
             for ev in theme_events:
                 for a in ev.get("actors", []):
                     a_clean = a.strip()
-                    if a_clean and a_clean.lower() not in seen_actors:
-                        all_actors.append(a_clean)
-                        seen_actors.add(a_clean.lower())
+                    if a_clean and a_clean.lower() not in seen_global:
+                        global_actors.append(a_clean)
+                        seen_global.add(a_clean.lower())
                 action = str(ev.get("action", "")).strip()
                 if action and action not in seen_actions:
-                    all_actions.append(action[:250])
+                    beat_actions.append(action[:250])
                     seen_actions.add(action)
                 detail = str(ev.get("source_detail", "")).strip()
                 if detail and detail != "None":
-                    all_details.append(detail[:250])
+                    beat_details.append(detail[:200])
 
-            parts.append(f"### SECTION {i}: {theme_name}")
-            if all_actors:
-                parts.append(f"  CAST (all = same character, create ONE archetype name):")
-                parts.append(f"    {', '.join(all_actors[:15])}")
-            parts.append(f"  WHAT HAPPENS:")
-            for action in all_actions[:8]:
-                parts.append(f"    • {action}")
-            if all_details:
-                parts.append(f"  VIVID DETAILS:")
-                for detail in all_details[:6]:
-                    parts.append(f"    • {detail}")
+            # Combine into a plot beat description
+            beat_text = f"[{theme_name}] "
+            beat_text += " ".join(beat_actions[:6])
+            if beat_details:
+                beat_text += " DETAILS: " + " | ".join(beat_details[:4])
+            all_plot_beats.append(beat_text)
+
+        for skel in skeletons:
+            unique = skel.unique_details if isinstance(skel.unique_details, list) else []
+            all_vivid.extend(unique)
+
+        # PLOT BEATS — what happens in order
+        parts.append("## PLOT BEATS (write the story following this sequence):\n")
+        for i, beat in enumerate(all_plot_beats, 1):
+            parts.append(f"  {i}. {beat}")
+        parts.append("")
+
+        # CHARACTER LIST — separate from plot
+        parts.append("## CHARACTERS (create archetype names, put individual names in entity_mentions):")
+        parts.append(f"  All names from source: {', '.join(global_actors[:30])}")
+        parts.append("  Group names that play the same ROLE into ONE archetype character.")
+        parts.append("  Use only archetype names in the narrative text.")
+        parts.append("")
+
+        # Known equivalences
+        if equivalences:
+            parts.append("## KNOWN SAME CHARACTER:")
+            for eq in equivalences:
+                all_names = [eq["primary_name"]] + eq["equivalents"][:8]
+                parts.append(f"  → {', '.join(all_names)}")
             parts.append("")
 
-        if all_unique:
-            parts.append("## UNIQUE DETAILS — weave into relevant sections:")
-            for ud in all_unique[:25]:
+        if all_vivid:
+            parts.append("## VIVID DETAILS (weave into the story):")
+            for ud in all_vivid[:20]:
                 parts.append(f"  • {ud}")
             parts.append("")
 
@@ -1016,15 +1019,23 @@ Extract ALL events in chronological order, with actors, actions, locations, obje
             events = skel.events_json if isinstance(skel.events_json, list) else []
 
             ANTI_KEYWORDS = [
+                # Historical/political
                 "garrison", "soldier", "army", "revolt", "military", "kingdom",
                 "dynasty", "emperor", "pharaoh", "inscription", "archaeolog",
                 "excavat", "museum", "script", "decipher", "merchant", "trade",
                 "tax", "census", "governor", "province", "colony", "treaty",
-                "ambassador", "alliance", "cook", "bullock", "butcher",
+                "ambassador", "alliance", "psammetichos", "meroitic", "ethiopi",
+                "privy member", "deserter", "6th century", "5th century",
+                "mid-sixth", "ninth century", "foreign stories", "foreign hero",
+                "legitimacy", "prestige", "rival groups",
+                # Philosophical/analytical (not narrative)
                 "penumbra", "umbra", "chuang", "hui tz", "lao tz",
                 "passions", "philosopher", "philosophy", "instability of purpose",
-                "qualification", "psammetichos", "meroitic", "ethiopi",
-                "privy member", "deserter", "resinous rain",
+                "qualification", "infinitesimal", "inseparable",
+                "how can it be known", "resinous rain",
+                # Non-mythological trades
+                "cook", "bullock", "butcher", "praying mantis",
+                "outpost", "standing watch", "relieved", "rotated",
             ]
 
             for ev in events[:15]:
