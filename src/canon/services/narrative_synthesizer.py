@@ -224,23 +224,33 @@ Return ONLY valid JSON:
 
 UNIFIED_MERGE_PROMPT = """You are writing an alternative bible — one unified ancient history.
 
-You receive THEMATIC SECTIONS. Each section gives you a CAST OF NAMES (all names for the same character) and COMBINED DETAILS (everything that happens in this moment). Write 1-3 paragraphs per section fusing ALL details into ONE description.
+You receive THEMATIC SECTIONS. Each section has a CAST (names for the same character) and DETAILS (what happens). Write 1-3 paragraphs per section fusing ALL details into ONE description.
 
-## THE KEY RULE
+## THE KEY RULE — ARCHETYPE NAMES
 
-Each section's CAST contains names from different cultures for the SAME being. Pick the oldest/most-specific name as primary. On FIRST mention:
+Each section's CAST lists names from many traditions for the SAME being. Create a short, evocative ARCHETYPE NAME that captures their shared essence. Use ONLY the archetype name in the narrative — NEVER list the individual names.
 
-  [[actor:Enki]] (Ea, Khnum, Ptah) kneels at the potter's wheel.
+EXAMPLE:
+Data: CAST: Tiamat, Nun, Ginnungagap, Tohu wa-bohu (all = primordial waters/void)
+You write: "[[actor:The Primordial Deep]] is a waste of water, formless and vast..."
+entity_mentions: {"name": "The Primordial Deep", "also_known_as": ["Tiamat", "Nun", "Ginnungagap", "Tohu wa-bohu"]}
 
-After that, use only "Enki". Each CAST = ONE character. Never introduce them separately. Never write about one name, then "also" or "another" for a different name from the same cast.
+EXAMPLE:
+Data: CAST: Enki, Ea, Khnum, Ptah (all = divine craftsman/creator)
+You write: "[[actor:The Divine Craftsman]] kneels at the potter's wheel..."
+entity_mentions: {"name": "The Divine Craftsman", "also_known_as": ["Enki", "Ea", "Khnum", "Ptah"]}
 
-EXAMPLE of what you MUST do:
-Data gives you: CAST: Tiamat, Nun, Ginnungagap (role: primordial waters)
-You write: "[[actor:Tiamat]] (Nun, Ginnungagap) is the primordial abyss — a salt-water ocean, vast and formless..."
+NEVER DO THIS:
+"[[actor:Enki]] (Ea, Khnum, Ptah) kneels..." — NO parenthetical names in narrative text.
+"Tiamat is the ocean. Nun is also a deep." — NO separate introductions.
 
-EXAMPLE of what FAILS:
-"Tiamat is the salt-water ocean. Nun is also a primordial deep. Ginnungagap is the great void."
-This treats them as separate. They are ONE.
+The narrative must read cleanly with ONLY archetype names. All individual names go in entity_mentions.also_known_as.
+
+## ARCHETYPE NAMING GUIDELINES
+- Use the shared mythological ROLE: "The Sky Father", "The Primordial Deep", "The World Shaper"
+- If one name is clearly dominant/oldest and universally recognized, use it: "Marduk" not "The Champion"
+- Keep names concise (2-4 words max)
+- Make them evocative and specific, not generic
 
 ## BANNED WORDS (instant failure)
 
@@ -249,9 +259,9 @@ Framing: "In Mesopotamia", "In the east", "According to", "One tradition", "In a
 
 ## ENTITY ANNOTATION
 
-On FIRST mention only: [[actor:PrimaryName]] (Alt1, Alt2)
-After first mention: just use PrimaryName without brackets.
-Types: actor, place. Aim for 15-25 total annotations.
+On FIRST mention only: [[actor:ArchetypeName]] or [[place:ArchetypeName]]
+After first mention: just use the archetype name without brackets.
+Aim for 12-20 annotations. Every annotated entity MUST appear in entity_mentions.
 
 ## STYLE
 - Present tense, direct, authoritative
@@ -261,9 +271,9 @@ Types: actor, place. Aim for 15-25 total annotations.
 
 ## OUTPUT — valid JSON only:
 {
-  "narrative_text": "Full narrative...",
+  "narrative_text": "Full narrative using only archetype names...",
   "entity_mentions": [
-    {"name": "Enki", "type": "actor", "also_known_as": ["Ea", "Khnum"], "role_in_chapter": "creator"}
+    {"name": "The Divine Craftsman", "type": "actor", "also_known_as": ["Enki", "Ea", "Khnum", "Ptah"], "role_in_chapter": "shapes humanity from clay"}
   ]
 }"""
 
@@ -877,21 +887,22 @@ Extract ALL events in chronological order, with actors, actions, locations, obje
             "",
         ]
 
-        # Entity merge map — these names are the SAME character
+        # Known equivalences — these are definitely the same character
         if equivalences:
-            parts.append("## SAME CHARACTER (use first name as primary, rest as alternates):")
+            parts.append("## KNOWN SAME CHARACTER (merge into one archetype):")
             for eq in equivalences:
                 all_names = [eq["primary_name"]] + eq["equivalents"][:8]
                 parts.append(f"  → {', '.join(all_names)}")
             parts.append("")
 
         parts.append(f"## THE STORY — {len(buckets)} SECTIONS\n")
+        parts.append("For each section: invent an ARCHETYPE NAME for the cast, write 1-3 paragraphs")
+        parts.append("using ONLY the archetype name. Put all individual names in entity_mentions.also_known_as.\n")
 
         for i, (theme_name, theme_events) in enumerate(buckets, 1):
             if not theme_events:
                 continue
 
-            # Collect ALL actor names and ALL details for this section
             all_actors: list[str] = []
             all_actions: list[str] = []
             all_details: list[str] = []
@@ -914,9 +925,8 @@ Extract ALL events in chronological order, with actors, actions, locations, obje
 
             parts.append(f"### SECTION {i}: {theme_name}")
             if all_actors:
-                parts.append(f"  CAST: {', '.join(all_actors[:15])}")
-                parts.append(f"  (These are all names for characters in this moment. Group names")
-                parts.append(f"   that play the same role as ONE character with alternates.)")
+                parts.append(f"  CAST (all = same character, create ONE archetype name):")
+                parts.append(f"    {', '.join(all_actors[:15])}")
             parts.append(f"  WHAT HAPPENS:")
             for action in all_actions[:8]:
                 parts.append(f"    • {action}")
