@@ -640,6 +640,11 @@ Design 5-15 thematic chapters that weave ALL these cultures and traditions toget
             "trade route", "commerce", "economy", "currency",
             "isbn", "doi:", "journal", "university press",
             "bibliography", "footnote", "endnote",
+            # Philosophical treatises (not narrative mythology)
+            "tao te ching", "chuang tz", "lao tz", "wu wei",
+            "non-action", "non-being", "ten thousand things",
+            "the sage", "the wise man", "the master said",
+            "confucius", "analects", "mencius",
         ]
 
         score = 0.0
@@ -1028,21 +1033,30 @@ Extract ALL events in chronological order, with actors, actions, locations, obje
                 "privy member", "deserter", "6th century", "5th century",
                 "mid-sixth", "ninth century", "foreign stories", "foreign hero",
                 "legitimacy", "prestige", "rival groups",
-                # Philosophical/analytical (not narrative)
+                # Taoist/philosophical (not creation narrative)
                 "penumbra", "umbra", "chuang", "hui tz", "lao tz",
+                "tao te", "non-being", "non-action", "wu wei",
+                "being and non-being", "difficult and easy",
                 "passions", "philosopher", "philosophy", "instability of purpose",
                 "qualification", "infinitesimal", "inseparable",
                 "how can it be known", "resinous rain",
-                # Non-mythological trades
+                "inward standard", "improper treatment",
+                "adaptation outwardly", "clay is fired to make a vessel",
+                "vessel's use depends", "hub's hole",
+                "fall, be obliterated", "lie prostrate",
+                # Non-mythological trades/animals
                 "cook", "bullock", "butcher", "praying mantis",
                 "outpost", "standing watch", "relieved", "rotated",
+                "tiger", "horses, lest",
             ]
 
             for ev in events[:15]:
                 ev_text = (
                     str(ev.get("event", "")) + " " +
                     str(ev.get("action", "")) + " " +
-                    str(ev.get("outcome", ""))
+                    str(ev.get("outcome", "")) + " " +
+                    str(ev.get("source_detail", "")) + " " +
+                    " ".join(str(a) for a in ev.get("actors", []))
                 ).lower()
 
                 # Skip obviously non-mythological events
