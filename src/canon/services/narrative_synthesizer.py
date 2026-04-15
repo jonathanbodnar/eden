@@ -224,55 +224,67 @@ Return ONLY valid JSON:
 
 UNIFIED_MERGE_PROMPT = """You are writing one chapter of an alternative bible — a unified ancient history told as continuous story across multiple chapters.
 
-CRITICAL RULES:
-1. Each chapter has a SPECIFIC TOPIC. Write ONLY about that topic.
-2. Do NOT retell events from earlier chapters. Start where the story left off.
-3. REUSE established character names from prior chapters. If a character already appeared as "The Divine Craftsman" in a previous chapter, call them "The Divine Craftsman" again — NOT a new name.
+## THE THREE UNBREAKABLE RULES
 
-You receive:
-- CHAPTER TOPIC: what this specific chapter must be about
-- ALREADY TOLD: summary of what prior chapters covered (do NOT repeat)
-- ESTABLISHED CAST: characters already named in prior chapters — YOU MUST reuse these exact names
-- PLOT BEATS: events relevant to THIS chapter's topic
-- NEW NAMES: source names not yet assigned to an archetype
+1. NEVER use a culture-specific deity/place name in the narrative text. ALWAYS use the archetype name.
+   WRONG: "Enki kneels and mixes clay" or "Ra emerges from the egg" or "Tiamat fashions monsters"
+   RIGHT: "The Divine Craftsman kneels and mixes clay" or "The Sun God emerges from the egg"
+   WRONG: "He says: 'I am Khepera at dawn, Ra at noon'" — NO culture-specific names even in speech
+   RIGHT: "He declares three forms: the beetle at dawn, the blazing disk at noon, the aged one at dusk"
+
+2. The OLDEST traditions (Sumerian/Babylonian cuneiform tablets) form the BACKBONE of the story.
+   Other traditions ENRICH and ADD DETAIL to this backbone. The Sumerian version is the skeleton;
+   Egyptian, Vedic, Norse, etc. provide flesh. If Sumerian says "man was made to till the ground and
+   serve the gods," that is the primary narrative. Other traditions add color (clay + blood, breath
+   of life, corn and water) but do not replace the oldest account.
+
+3. Each chapter has a SPECIFIC TOPIC. Write ONLY about that topic. Do NOT retell prior chapters.
+
+## ARCHETYPE NAMES
+
+Every character and significant place must have an archetype name. NEVER use raw tradition-specific names.
+
+Good archetype names: "The Primordial Deep", "The Divine Craftsman", "The Mother of All Living"
+Bad: "Enki", "Tiamat", "Ra", "Nu", "Erech", "Nippur" (these are culture-specific — BANNED in text)
+
+Put ALL culture-specific names ONLY in entity_mentions.also_known_as.
+
+If ESTABLISHED CAST is provided, reuse those exact archetype names. Only create new ones for genuinely new characters.
 
 ## STORY STRUCTURE
 
-Write like a myth: things HAPPEN. Cause leads to effect. Tension, action, consequence.
+Write like scripture: things HAPPEN. Cause leads to effect. Include the WHY — motivation matters.
+GOOD: "The gods grow weary of tilling the earth themselves. They need servants. The Divine Craftsman kneels at the riverbed, scoops red clay, and mixes it with the blood of a slain god..."
+BAD: "The Divine Craftsman creates humanity from clay." (No motivation, no vivid detail)
 
-GOOD: "The Divine Craftsman kneels at the edge of the abyss. He scoops red clay from the riverbed and mixes it with the blood of the slain god. Seven male forms he shapes, and seven female..."
-
-BAD: "The Divine Craftsman is the creator deity. He shapes humanity." (Describes attributes, not story.)
-BAD: "Before the beginning, there is only water..." (Retells Ch 1.)
-BAD: Listing creatures: "the Viper, the Snake, the Dog, the Scorpion-man, the Fish-man..." (This is a catalog, not story. Instead: "From her body crawl eleven monsters, terrible in form — serpents with venom for blood, scorpion-men with stinging tails, horned beasts that shake the earth.")
-
-## CHARACTER CONSISTENCY (most important rule)
-
-If ESTABLISHED CAST lists "The Divine Craftsman = Enki, Ea, Marduk", you MUST use "The Divine Craftsman" when that character acts in this chapter. Do NOT invent "The Clay Shaper" or "The God of Wisdom" for the same character.
-
-Only create NEW archetype names for characters who have NOT appeared before.
+Do NOT list catalogs of creatures or names. Weave details into flowing narrative.
 
 ## BANNED WORDS (instant failure)
 
-Culture names: Sumerian, Hebrew, Egyptian, Greek, Norse, Chinese, Vedic, Hindu, Babylonian, Persian, Japanese, Ainu, African, Polynesian, Maya, Aztec, Hopi, Roman, Zoroastrian, Mesoamerican, Canaanite, Celtic
-Framing: "According to", "One tradition", "In another", "Similarly", "Perhaps", "It is believed", "Some say"
+Culture names in narrative text: Sumerian, Hebrew, Egyptian, Greek, Norse, Chinese, Vedic, Hindu,
+Babylonian, Persian, Japanese, Ainu, African, Polynesian, Maya, Aztec, Hopi, Roman, Zoroastrian,
+Mesoamerican, Canaanite, Celtic, Enki, Marduk, Ra, Khepera, Tum, Tiamat, Apsu, Nu, Shu, Tefnut,
+Geb, Nut, Isis, Brahma, Vishnu, Odin, Thor
+Framing: "According to", "One tradition", "In another", "Similarly", "It is believed", "Some say"
 
 ## ENTITY ANNOTATION
 
-On FIRST mention in THIS chapter only: [[actor:Name]] or [[place:Name]]
-After first mention: just the name, no brackets.
-Aim for 10-15 annotations. Only annotate characters who ACT in the story.
+On FIRST mention in THIS chapter: [[actor:ArchetypeName]] or [[place:ArchetypeName]]
+After first: just the archetype name, no brackets. Aim for 10-15 annotations.
+
+WRONG: [[actor:Tiamat]] or [[actor:Nu]] or [[place:Erech]]
+RIGHT: [[actor:The Mother of Chaos]] or [[actor:The Great Father]] or [[place:The First City]]
 
 ## STYLE
-- Present tense, direct, authoritative — like ancient scripture
-- Ground every sentence in source material
-- When sources say WHY something happens (e.g. "man was made to serve the gods and till the ground"), include the WHY — motivation matters more than description
+- Present tense, direct, authoritative
+- Ground every sentence in source material; prioritize cuneiform/oldest sources
+- Include motivations from sources (WHY things happen, not just what)
 - No modern commentary, no philosophical asides
 - Target: 1500-2500 words
 
 ## OUTPUT — valid JSON only:
 {
-  "narrative_text": "The flowing story...",
+  "narrative_text": "Story using ONLY archetype names, never culture-specific names...",
   "entity_mentions": [
     {"name": "The Divine Craftsman", "type": "actor", "also_known_as": ["Enki", "Ea", "Khnum", "Ptah"], "role_in_chapter": "shapes humanity from clay to serve the gods"}
   ]
@@ -923,20 +935,17 @@ Extract ALL events in chronological order, with actors, actions, locations, obje
             parts.append("archetype for characters who have genuinely never appeared before.")
             parts.append("")
 
-        # Collect ALL characters across all sections for a flat character list
-        all_characters: dict[str, set[str]] = {}  # theme -> set of actor names
-        all_plot_beats: list[str] = []
-        all_vivid: list[str] = []
+        # Separate events by priority: oldest traditions form backbone
+        primary_beats: list[str] = []   # Sumerian/Mesopotamian (age_rank <= 2)
+        secondary_beats: list[str] = [] # Egyptian, Hittite, Canaanite (age_rank 3-5)
+        enrichment_beats: list[str] = [] # All other traditions
         global_actors: list[str] = []
         seen_global: set[str] = set()
+        all_vivid: list[str] = []
 
         for theme_name, theme_events in buckets:
             if not theme_events:
                 continue
-
-            beat_actions: list[str] = []
-            beat_details: list[str] = []
-            seen_actions: set[str] = set()
 
             for ev in theme_events:
                 for a in ev.get("actors", []):
@@ -944,30 +953,46 @@ Extract ALL events in chronological order, with actors, actions, locations, obje
                     if a_clean and a_clean.lower() not in seen_global:
                         global_actors.append(a_clean)
                         seen_global.add(a_clean.lower())
-                action = str(ev.get("action", "")).strip()
-                if action and action not in seen_actions:
-                    beat_actions.append(action[:250])
-                    seen_actions.add(action)
-                detail = str(ev.get("source_detail", "")).strip()
-                if detail and detail != "None":
-                    beat_details.append(detail[:200])
 
-            # Combine into a plot beat description
-            beat_text = f"[{theme_name}] "
-            beat_text += " ".join(beat_actions[:6])
-            if beat_details:
-                beat_text += " DETAILS: " + " | ".join(beat_details[:4])
-            all_plot_beats.append(beat_text)
+                action = str(ev.get("action", "")).strip()[:250]
+                detail = str(ev.get("source_detail", "")).strip()[:200]
+                if not action:
+                    continue
+                beat_line = f"[{theme_name}] {action}"
+                if detail and detail != "None":
+                    beat_line += f" — {detail}"
+
+                age_rank = ev.get("_age_rank", 99)
+                if age_rank <= 2:
+                    primary_beats.append(beat_line)
+                elif age_rank <= 5:
+                    secondary_beats.append(beat_line)
+                else:
+                    enrichment_beats.append(beat_line)
 
         for skel in skeletons:
             unique = skel.unique_details if isinstance(skel.unique_details, list) else []
             all_vivid.extend(unique)
 
-        # PLOT BEATS — what happens in order
-        parts.append("## PLOT BEATS (write the story following this sequence):\n")
-        for i, beat in enumerate(all_plot_beats, 1):
+        # PRIMARY SOURCE: cuneiform tablets (backbone of the story)
+        parts.append("## PRIMARY SOURCE — OLDEST TRADITIONS (this is the backbone of the story):\n")
+        for i, beat in enumerate(primary_beats[:12], 1):
             parts.append(f"  {i}. {beat}")
         parts.append("")
+
+        # SECONDARY: ancient traditions that enrich
+        if secondary_beats:
+            parts.append("## SECONDARY SOURCES (enrich the backbone with these details):\n")
+            for beat in secondary_beats[:8]:
+                parts.append(f"  • {beat}")
+            parts.append("")
+
+        # ENRICHMENT: other traditions adding color
+        if enrichment_beats:
+            parts.append("## ENRICHMENT (weave these details into the story):\n")
+            for beat in enrichment_beats[:8]:
+                parts.append(f"  • {beat}")
+            parts.append("")
 
         # CHARACTER LIST — separate established from new
         # Filter out actors already in established cast
