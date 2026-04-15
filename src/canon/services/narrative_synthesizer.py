@@ -224,27 +224,33 @@ Return ONLY valid JSON:
 
 UNIFIED_MERGE_PROMPT = """You are writing one chapter of an alternative bible — a unified ancient history told as continuous story across multiple chapters.
 
-CRITICAL: Each chapter has a SPECIFIC TOPIC. Write ONLY about that topic. Do NOT retell events from earlier chapters. If prior chapters already told the creation of the void, the separation of sky and earth, or the battle with chaos — DO NOT TELL THOSE AGAIN. Start where the prior chapter left off.
+CRITICAL RULES:
+1. Each chapter has a SPECIFIC TOPIC. Write ONLY about that topic.
+2. Do NOT retell events from earlier chapters. Start where the story left off.
+3. REUSE established character names from prior chapters. If a character already appeared as "The Divine Craftsman" in a previous chapter, call them "The Divine Craftsman" again — NOT a new name.
 
 You receive:
 - CHAPTER TOPIC: what this specific chapter must be about
-- ALREADY TOLD: summary of what prior chapters covered (do NOT repeat any of this)
+- ALREADY TOLD: summary of what prior chapters covered (do NOT repeat)
+- ESTABLISHED CAST: characters already named in prior chapters — YOU MUST reuse these exact names
 - PLOT BEATS: events relevant to THIS chapter's topic
-- CHARACTER LIST: names to merge into archetypes
+- NEW NAMES: source names not yet assigned to an archetype
 
 ## STORY STRUCTURE
 
-Write like a myth: things HAPPEN. Cause leads to effect. There is tension, action, consequence.
+Write like a myth: things HAPPEN. Cause leads to effect. Tension, action, consequence.
 
-GOOD: "The Divine Craftsman kneels at the edge of the abyss. He scoops red clay from the riverbed and mixes it with the blood of the slain god. Seven male forms he shapes, and seven female. He lays them on the ground and waits..."
+GOOD: "The Divine Craftsman kneels at the edge of the abyss. He scoops red clay from the riverbed and mixes it with the blood of the slain god. Seven male forms he shapes, and seven female..."
 
-BAD: "The Divine Craftsman is the creator deity. He shapes humanity from clay. He also creates rivers and plants." (This describes attributes, not story.)
+BAD: "The Divine Craftsman is the creator deity. He shapes humanity." (Describes attributes, not story.)
+BAD: "Before the beginning, there is only water..." (Retells Ch 1.)
+BAD: Listing creatures: "the Viper, the Snake, the Dog, the Scorpion-man, the Fish-man..." (This is a catalog, not story. Instead: "From her body crawl eleven monsters, terrible in form — serpents with venom for blood, scorpion-men with stinging tails, horned beasts that shake the earth.")
 
-BAD: "Before the beginning, there is only water..." (This retells creation of the void — already told in Chapter 1.)
+## CHARACTER CONSISTENCY (most important rule)
 
-## ARCHETYPE NAMES
+If ESTABLISHED CAST lists "The Divine Craftsman = Enki, Ea, Marduk", you MUST use "The Divine Craftsman" when that character acts in this chapter. Do NOT invent "The Clay Shaper" or "The God of Wisdom" for the same character.
 
-Create short archetype names (2-4 words) for characters. Use ONLY the archetype in narrative text. Put all culture-specific names in entity_mentions.also_known_as.
+Only create NEW archetype names for characters who have NOT appeared before.
 
 ## BANNED WORDS (instant failure)
 
@@ -253,21 +259,22 @@ Framing: "According to", "One tradition", "In another", "Similarly", "Perhaps", 
 
 ## ENTITY ANNOTATION
 
-On FIRST mention only: [[actor:ArchetypeName]] or [[place:ArchetypeName]]
+On FIRST mention in THIS chapter only: [[actor:Name]] or [[place:Name]]
 After first mention: just the name, no brackets.
 Aim for 10-15 annotations. Only annotate characters who ACT in the story.
 
 ## STYLE
 - Present tense, direct, authoritative — like ancient scripture
-- Every sentence grounded in source material
-- No modern commentary, no philosophical asides, no analysis
+- Ground every sentence in source material
+- When sources say WHY something happens (e.g. "man was made to serve the gods and till the ground"), include the WHY — motivation matters more than description
+- No modern commentary, no philosophical asides
 - Target: 1500-2500 words
 
 ## OUTPUT — valid JSON only:
 {
-  "narrative_text": "The flowing story of THIS chapter's specific topic...",
+  "narrative_text": "The flowing story...",
   "entity_mentions": [
-    {"name": "The Divine Craftsman", "type": "actor", "also_known_as": ["Enki", "Ea", "Khnum", "Ptah"], "role_in_chapter": "shapes humanity from clay"}
+    {"name": "The Divine Craftsman", "type": "actor", "also_known_as": ["Enki", "Ea", "Khnum", "Ptah"], "role_in_chapter": "shapes humanity from clay to serve the gods"}
   ]
 }"""
 
@@ -762,6 +769,7 @@ Extract ALL events in chronological order, with actors, actions, locations, obje
         epoch: CanonicalEpoch,
         prior_narrative: str | None = None,
         prior_summaries: list[str] | None = None,
+        established_cast: dict[str, list[str]] | None = None,
     ) -> StoryChapter:
         """Pass 3: Merge all event skeletons into one unified narrative."""
         from src.canon.database import async_session_factory
@@ -772,7 +780,8 @@ Extract ALL events in chronological order, with actors, actions, locations, obje
 
         async with async_session_factory() as read_session:
             prompt = await self._build_merge_prompt(
-                read_session, outline, epoch, prior_narrative, prior_summaries
+                read_session, outline, epoch, prior_narrative,
+                prior_summaries, established_cast,
             )
 
         result = await self._call_deepseek(prompt, system=UNIFIED_MERGE_PROMPT)
@@ -847,6 +856,7 @@ Extract ALL events in chronological order, with actors, actions, locations, obje
         epoch: CanonicalEpoch,
         prior_narrative: str | None,
         prior_summaries: list[str] | None = None,
+        established_cast: dict[str, list[str]] | None = None,
     ) -> str:
         """Build merge prompt with events PRE-SORTED into thematic sections.
 
@@ -903,6 +913,16 @@ Extract ALL events in chronological order, with actors, actions, locations, obje
             parts.append("can be referenced without re-introducing them.")
             parts.append("")
 
+        if established_cast:
+            parts.append("## ESTABLISHED CAST (reuse these EXACT names — do NOT rename):")
+            for arch_name, aka_list in established_cast.items():
+                parts.append(f"  • {arch_name} = {', '.join(aka_list[:8])}")
+            parts.append("")
+            parts.append("If any source name in the plot beats matches an established character,")
+            parts.append("use that character's established archetype name. Only create a NEW")
+            parts.append("archetype for characters who have genuinely never appeared before.")
+            parts.append("")
+
         # Collect ALL characters across all sections for a flat character list
         all_characters: dict[str, set[str]] = {}  # theme -> set of actor names
         all_plot_beats: list[str] = []
@@ -949,12 +969,25 @@ Extract ALL events in chronological order, with actors, actions, locations, obje
             parts.append(f"  {i}. {beat}")
         parts.append("")
 
-        # CHARACTER LIST — separate from plot
-        parts.append("## CHARACTERS (create archetype names, put individual names in entity_mentions):")
-        parts.append(f"  All names from source: {', '.join(global_actors[:30])}")
-        parts.append("  Group names that play the same ROLE into ONE archetype character.")
-        parts.append("  Use only archetype names in the narrative text.")
-        parts.append("")
+        # CHARACTER LIST — separate established from new
+        # Filter out actors already in established cast
+        established_names_lower: set[str] = set()
+        if established_cast:
+            for aka_list in established_cast.values():
+                for aka in aka_list:
+                    established_names_lower.add(aka.lower())
+
+        new_actors = [a for a in global_actors if a.lower() not in established_names_lower]
+        if new_actors:
+            parts.append("## NEW CHARACTERS (not yet in established cast — create archetype names):")
+            parts.append(f"  {', '.join(new_actors[:20])}")
+            parts.append("  Group names that play the same ROLE into ONE archetype.")
+            parts.append("")
+        if not established_cast:
+            parts.append("## ALL CHARACTERS (create archetype names, put individual names in entity_mentions):")
+            parts.append(f"  {', '.join(global_actors[:30])}")
+            parts.append("  Group names that play the same ROLE into ONE archetype.")
+            parts.append("")
 
         # Known equivalences
         if equivalences:
@@ -1183,6 +1216,8 @@ Extract ALL events in chronological order, with actors, actions, locations, obje
         }
         prior_narrative: str | None = None
         prior_summaries: list[str] = []
+        # Running cast: archetype_name -> list of also_known_as names
+        established_cast: dict[str, list[str]] = {}
 
         for epoch, outlines in epoch_outlines:
             if not outlines:
@@ -1208,11 +1243,26 @@ Extract ALL events in chronological order, with actors, actions, locations, obje
                     story = await self.synthesize_unified_chapter(
                         None, outline, epoch, prior_narrative,
                         prior_summaries=prior_summaries,
+                        established_cast=established_cast,
                     )
                     prior_narrative = story.narrative_text
                     prior_summaries.append(
                         f"Ch {outline.chapter_number} '{outline.title}': {outline.summary or outline.title}"
                     )
+                    # Update established cast from this chapter's entity mentions
+                    mentions = story.entity_mentions_json or []
+                    if isinstance(mentions, list):
+                        for m in mentions:
+                            name = m.get("name", "")
+                            aka = m.get("also_known_as", [])
+                            if name and aka:
+                                if name in established_cast:
+                                    existing = set(established_cast[name])
+                                    existing.update(aka)
+                                    established_cast[name] = list(existing)
+                                else:
+                                    established_cast[name] = list(aka)
+                    logger.info("Established cast now has %d archetypes", len(established_cast))
                     stats["unified_chapters"] += 1
                     stats["total_words"] += story.word_count or 0
 
