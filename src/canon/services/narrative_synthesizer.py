@@ -222,52 +222,59 @@ Return ONLY valid JSON:
 }"""
 
 
-UNIFIED_MERGE_PROMPT = """You are writing a unified ancient world history — one continuous story reconstructed from every surviving tradition on Earth.
+UNIFIED_MERGE_PROMPT = """You are writing a unified ancient world history — one continuous story as if it were an alternative bible.
 
-Below you will receive STRUCTURED EVENT DATA from multiple cultures, already extracted and organized. Your job is to MERGE these into ONE seamless narrative.
+Below you will receive EVENT CLUSTERS — groups of events from multiple cultures that describe THE SAME MOMENT in this story. Your job is to merge each cluster into ONE rich paragraph that fuses all the details together.
 
-## THE ABSOLUTE RULE — NO CULTURE NAMES IN THE NARRATIVE
+## THE ABSOLUTE RULE — ONE STORY, ONE WORLD
 
-The narrative must read as if only ONE civilization existed. The reader must NEVER encounter the name of any culture, tradition, region, or source text.
+Write as if only ONE ancient civilization existed and these events happened ONCE.
 
-BANNED in narrative text: Any culture name (Sumerian, Hebrew, Egyptian, Greek, etc.), any geographic framing ("In Mesopotamia"), any source attribution ("According to", "The X tradition"), any comparison ("In one tradition", "In another").
+BANNED WORDS AND PHRASES — if ANY of these appear in your output, you have FAILED:
+- Any culture/people name: Sumerian, Hebrew, Egyptian, Greek, Norse, Chinese, Vedic, Hindu, Mesoamerican, Zoroastrian, Roman, Ainu, Japanese, African, Babylonian, Persian, Celtic, Polynesian
+- Any geographic framing: "In Mesopotamia", "In the east", "In the north"
+- Any attribution: "According to", "One tradition says", "In another account"
+- Any comparison: "Similarly", "Likewise", "In parallel", "Another version"
+- Any hedging: "Perhaps", "It is believed", "Some say"
 
-The ONLY exception: on first mention of a merged entity, list name variants in a SHORT parenthetical: "(Enki, Khnum, Prometheus)". No culture attributions in the parenthetical.
+The ONLY exception: on FIRST mention of a merged entity, parenthetical name variants: "(Enki, Khnum, Ptah)". No culture labels in the parenthetical.
 
-## THE DIAMOND RULE
+## THE DIAMOND RULE — EVERY EVENT HAPPENED ONCE
 
-Every event happened ONCE. Different cultures saw different facets. Describe the whole diamond, not its faces.
+Each event cluster below groups together the SAME EVENT as remembered by different peoples. These are NOT alternatives — they are FACETS of ONE event.
 
-WRONG: "A god is slain. In another account a cosmic being offers itself."
-RIGHT: "A god is slain in the divine assembly. His blood mixes with clay. At the same moment, the cosmic being offers its body — limbs becoming social orders, breath becoming wind."
+WRONG (sequential/separate):
+"A god shapes humans from clay. The creator also breathes life into dust. A craftsman molds figures on a wheel."
 
-All details coexist in ONE description. No detail attributed to any source.
+RIGHT (fused into one moment):
+"The divine craftsman (Enki, Khnum, Ptah) kneels at the potter's wheel. He shapes clay mixed with divine blood, seven male forms and seven female. He breathes into the nostrils of each. The womb-goddesses assist, pinching the clay into final form."
 
-## EVENT MERGING STRATEGY
+ALL details from ALL cultures coexist in ONE description. The paragraph grows RICHER with each culture's contribution — it does not restart or retell.
 
-The event skeletons below are grouped by culture, oldest first. Events with similar themes across cultures describe THE SAME EVENT. Merge them:
-1. Identify matching events across cultures (same theme, similar actors/actions)
-2. Use the OLDEST culture's version as the backbone
-3. LAYER IN unique details from other cultures — they ADD richness, never contradict
-4. Every unique_detail MUST appear somewhere in the merged narrative — these are the precious culture-specific details that make the narrative rich
+## STRUCTURE
+
+The event clusters are ALREADY in chronological order. Write ONE or TWO paragraphs per cluster. The narrative should flow naturally from cluster to cluster — this is a continuous story, not a list.
+
+Target: 1500-3000 words total. Every unique detail listed in the clusters MUST appear somewhere.
 
 ## WRITING RULES:
-- Direct, authoritative tone — a historian recounting events
-- Present tense for vividness
-- Every sentence traceable to source evidence
-- No invented atmosphere or modern analysis
-- No hedging ("perhaps", "it is believed")
+- Direct, authoritative tone — a historian recounting events that happened
+- Present tense throughout
+- Every sentence grounded in source evidence (no invented atmosphere)
+- No modern analysis or commentary
+- Vivid source details are your best material — USE THEM
 
 ## ENTITY ANNOTATION:
-On FIRST mention, wrap with: [[type:Archetype Name]]
-Types: actor, event, place. Use archetype names, not culture-specific.
-After annotation, list cultural names in a SHORT parenthetical.
+On FIRST mention of an important entity, wrap with: [[type:Archetype Name]]
+Types: actor, event, place. Use descriptive archetype names, not culture-specific names.
+After the annotation, add a SHORT parenthetical with the culture-specific name variants.
+Example: [[actor:The Divine Craftsman]] (Enki, Khnum, Ptah) kneels at the wheel...
 Aim for 15-30 annotations per chapter.
 
 ## OUTPUT FORMAT:
 Return ONLY valid JSON:
 {
-  "narrative_text": "The full narrative (1500-3000 words) with [[type:Name]] annotations",
+  "narrative_text": "The full unified narrative (1500-3000 words)...",
   "key_claims": [
     {"claim": "brief claim", "source_ids": [], "score": 0.0-1.0, "cultures": ["culture1"]}
   ],
@@ -768,17 +775,21 @@ Extract ALL events in chronological order, with actors, actions, locations, obje
         epoch: CanonicalEpoch,
         prior_narrative: str | None,
     ) -> str:
-        """Build the merge prompt from event skeletons + entity equivalences."""
+        """Build the merge prompt with events PRE-CLUSTERED by theme across cultures.
+
+        Instead of presenting events grouped by culture (which leads DeepSeek to
+        write culture-by-culture), we cluster similar events from different cultures
+        together so DeepSeek sees "here are 8 cultures' versions of the same event —
+        fuse them into one paragraph."
+        """
         outline_id = outline.id
 
-        # Get all event skeletons for this chapter, ordered by culture age
         skeletons = list((await session.execute(
             select(CultureEventSkeleton).where(
                 CultureEventSkeleton.story_outline_id == outline_id
             )
         )).scalars().all())
 
-        # Get culture labels
         narr_labels: dict[str, str] = {}
         narr_rows = (await session.execute(
             select(CultureNarrative.culture_key, CultureNarrative.culture_label).where(
@@ -788,7 +799,6 @@ Extract ALL events in chronological order, with actors, actions, locations, obje
         for ck, cl in narr_rows:
             narr_labels[ck] = cl
 
-        # Sort skeletons by age order
         skeletons.sort(key=lambda s: CULTURE_AGE_ORDER.get(s.culture_key, 99))
 
         parts = [
@@ -796,22 +806,23 @@ Extract ALL events in chronological order, with actors, actions, locations, obje
             f"# EPOCH: {epoch.title}",
             f"# THEMES: {', '.join(outline.themes or [])}",
             f"# SUMMARY: {outline.summary}",
-            f"\nThis chapter draws from {len(skeletons)} cultural traditions (oldest listed first).",
+            f"\nThis chapter draws from {len(skeletons)} cultural traditions.",
             "",
         ]
 
-        # Add entity merge map
+        # Entity merge map
         equivalences = await self._gather_equivalences(session)
         if equivalences:
             parts.append("## ENTITY MERGE MAP")
-            parts.append("These entities are THE SAME being across cultures. Use a DESCRIPTIVE ARCHETYPE NAME.")
-            parts.append("On first mention ONLY, list names in a SHORT parenthetical: (Name1, Name2, Name3).\n")
+            parts.append("These entities are THE SAME being. Use a DESCRIPTIVE ARCHETYPE NAME.")
+            parts.append("On first mention, add parenthetical name variants.\n")
             for eq in equivalences:
                 all_names = [eq["primary_name"]] + eq["equivalents"][:8]
                 parts.append(f"  SAME ENTITY: {', '.join(all_names)}")
             parts.append("")
 
-        # Add event skeletons per culture
+        # Collect ALL events from all cultures, tagged with culture
+        all_events: list[dict] = []
         all_unique_details: list[str] = []
 
         for skel in skeletons:
@@ -820,41 +831,115 @@ Extract ALL events in chronological order, with actors, actions, locations, obje
             events = skel.events_json if isinstance(skel.events_json, list) else []
             unique = skel.unique_details if isinstance(skel.unique_details, list) else []
 
-            parts.append(f"## {label.upper()} (age rank: {age_rank}, {len(events)} events)")
-
             for ev in events:
+                all_events.append({
+                    **ev,
+                    "_culture": label,
+                    "_age_rank": age_rank,
+                })
+
+            for ud in unique:
+                all_unique_details.append(ud)
+
+        # Build thematic clusters by grouping events with similar labels
+        # Use a simple approach: normalize event labels and group overlapping ones
+        clusters = self._cluster_events(all_events)
+
+        parts.append(f"## EVENT CLUSTERS ({len(clusters)} clusters)")
+        parts.append("Each cluster groups the SAME EVENT as seen by multiple cultures.")
+        parts.append("Write 1-2 paragraphs per cluster, FUSING all details into ONE description.")
+        parts.append("Clusters are in chronological order — your narrative should follow this order.\n")
+
+        for i, cluster in enumerate(clusters, 1):
+            culture_count = len(set(e["_culture"] for e in cluster["events"]))
+            parts.append(f"### CLUSTER {i}: {cluster['label']} ({culture_count} cultures)")
+
+            for ev in cluster["events"]:
                 actors_str = ", ".join(ev.get("actors", []))
-                parts.append(f"  [{ev.get('seq', '?')}] {ev.get('event', '')}")
-                parts.append(f"      Actors: {actors_str}")
-                parts.append(f"      Action: {ev.get('action', '')}")
+                parts.append(f"  [{ev['_culture']}] {ev.get('event', '')}")
+                parts.append(f"    Actors: {actors_str}")
+                parts.append(f"    Action: {ev.get('action', '')}")
                 if ev.get("location"):
-                    parts.append(f"      Location: {ev['location']}")
+                    parts.append(f"    Location: {ev['location']}")
                 if ev.get("objects"):
-                    parts.append(f"      Objects: {', '.join(ev['objects'])}")
-                parts.append(f"      Outcome: {ev.get('outcome', '')}")
+                    objs = ev["objects"] if isinstance(ev["objects"], list) else [ev["objects"]]
+                    parts.append(f"    Objects: {', '.join(str(o) for o in objs)}")
+                parts.append(f"    Outcome: {ev.get('outcome', '')}")
                 if ev.get("source_detail"):
-                    parts.append(f"      Vivid detail: {ev['source_detail'][:200]}")
-                parts.append("")
+                    parts.append(f"    Vivid detail: {str(ev['source_detail'])[:200]}")
+            parts.append("")
 
-            if unique:
-                parts.append(f"  UNIQUE to {label}:")
-                for ud in unique:
-                    parts.append(f"    - {ud}")
-                    all_unique_details.append(f"[{label}] {ud}")
-                parts.append("")
-
-        # Highlight ALL unique details in one place
         if all_unique_details:
-            parts.append("## ALL UNIQUE DETAILS (must ALL appear in the merged narrative)")
-            parts.append("Every detail below is precious — it comes from a specific culture and MUST be woven into the unified story:\n")
+            parts.append("## UNIQUE DETAILS — MUST ALL APPEAR IN THE NARRATIVE")
+            parts.append("These are precious culture-specific details. Weave EVERY one into the story:\n")
             for ud in all_unique_details:
                 parts.append(f"  - {ud}")
             parts.append("")
 
         if prior_narrative:
-            parts.append(f"## PRIOR CHAPTER (continue seamlessly from here):\n...{prior_narrative[-1500:]}")
+            parts.append(f"## PRIOR CHAPTER (continue seamlessly):\n...{prior_narrative[-1500:]}")
 
         return "\n".join(parts)
+
+    def _cluster_events(self, all_events: list[dict]) -> list[dict]:
+        """Group events from different cultures into thematic clusters.
+
+        Uses keyword overlap in event labels to identify events that describe
+        the same moment. Events that don't match any cluster get their own.
+        """
+        # Normalize event labels for matching
+        def _normalize(label: str) -> set[str]:
+            stop = {"the", "of", "and", "a", "an", "is", "are", "from", "in", "to", "by", "with", "as"}
+            words = re.sub(r'[^a-z\s]', '', label.lower()).split()
+            return {w for w in words if w not in stop and len(w) > 2}
+
+        clusters: list[dict] = []
+        assigned = set()
+
+        # Sort events by sequence within each culture, then interleave
+        # First pass: identify cluster seeds from the oldest culture
+        for ev in all_events:
+            ev_id = id(ev)
+            if ev_id in assigned:
+                continue
+
+            tokens = _normalize(ev.get("event", ""))
+            if not tokens:
+                clusters.append({"label": ev.get("event", "Unknown"), "events": [ev]})
+                assigned.add(ev_id)
+                continue
+
+            cluster_events = [ev]
+            assigned.add(ev_id)
+
+            # Find matching events from other cultures
+            for other in all_events:
+                other_id = id(other)
+                if other_id in assigned:
+                    continue
+                if other["_culture"] == ev["_culture"]:
+                    continue
+
+                other_tokens = _normalize(other.get("event", ""))
+                overlap = tokens & other_tokens
+                # Match if ≥2 meaningful words overlap, or if key action words match
+                if len(overlap) >= 2 or (len(tokens) <= 3 and len(overlap) >= 1 and any(
+                    w in overlap for w in ("creation", "primordial", "chaos", "void", "waters",
+                                           "separation", "light", "humanity", "clay", "flood",
+                                           "garden", "serpent", "tree", "fire", "naming",
+                                           "death", "birth", "world", "gods", "heaven", "earth")
+                )):
+                    cluster_events.append(other)
+                    assigned.add(other_id)
+
+            # Sort cluster events by age rank (oldest first)
+            cluster_events.sort(key=lambda e: e.get("_age_rank", 99))
+            clusters.append({
+                "label": cluster_events[0].get("event", "Unknown"),
+                "events": cluster_events,
+            })
+
+        return clusters
 
     # -----------------------------------------------------------------------
     # Full pipeline orchestrator
