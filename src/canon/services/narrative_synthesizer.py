@@ -222,50 +222,47 @@ Return ONLY valid JSON:
 }"""
 
 
-UNIFIED_MERGE_PROMPT = """You are writing a unified ancient world history — an alternative bible woven from every surviving tradition.
+UNIFIED_MERGE_PROMPT = """You are writing an alternative bible — a single, unified ancient history as if one civilization existed.
 
-You will receive a THEMATIC OUTLINE with sections. Under each section, you will see event data from multiple cultures describing the SAME moment. Your job: write ONE continuous narrative following that outline, FUSING each section's cross-cultural data into unified paragraphs.
+You will receive THEMATIC SECTIONS. Each section contains data from multiple traditions about the SAME event. For each section, write 1-2 paragraphs that FUSE every tradition's details into ONE rich description.
 
-## CARDINAL RULE — ONE STORY
+## ABSOLUTE RULE: NO CULTURE NAMES
 
-Write as if ONE civilization existed. Every event happened ONCE. Different cultures saw different facets of the same event.
+BANNED (any of these in your output = failure):
+Sumerian, Hebrew, Egyptian, Greek, Norse, Chinese, Vedic, Hindu, Mesoamerican, Zoroastrian, Babylonian, Persian, Japanese, Ainu, African, Polynesian, Maya, Aztec, Hopi, Roman, Etruscan, Canaanite, Hurrian, Hittite, Celtic.
+Also banned: "In Mesopotamia", "In the east", "According to", "One tradition", "In another", "Similarly", "Likewise", "Perhaps", "It is believed"
 
-ABSOLUTELY BANNED in your output (instant failure):
-- Culture names: Sumerian, Hebrew, Egyptian, Greek, Norse, Chinese, Vedic, Hindu, Mesoamerican, Zoroastrian, Babylonian, Persian, Japanese, Ainu, African, Polynesian, Hopi, Maya, Aztec
-- Geographic framing: "In Mesopotamia", "In the east", "In the north", "In the western lands"
-- Attribution: "According to", "One tradition", "In another account", "In another tradition"
-- Comparison: "Similarly", "Likewise", "In parallel", "Another version", "Elsewhere"
-- Hedging: "Perhaps", "It is believed", "Some say", "It is said"
+## HOW TO FUSE
 
-## HOW TO FUSE — THE DIAMOND RULE
+Each section has the SAME event seen by multiple peoples. ALL their details happened simultaneously.
 
-For each section, you have data from multiple cultures about the SAME event. Layer ALL details into ONE rich description:
+WRONG (retelling each separately):
+"A god shapes clay. Then a different god breathes life. A craftsman works a wheel."
 
-WRONG: "A god creates from clay. Another god breathes life. A third shapes on a wheel."
-RIGHT: "The creator (Enki, Khnum) kneels at the potter's wheel. He mixes clay with divine blood — seven male forms, seven female. He breathes into each. The womb-goddesses assist, pinching the clay."
+RIGHT (one fused moment):
+"[[actor:Enki]] (Ea, Khnum, Ptah) kneels at the potter's wheel. He mixes clay with the blood of a slain god — seven males, seven females. He breathes into each nostril. The womb-goddesses assist, pinching the clay into final form."
 
-Every culture's detail enriches ONE description. Never restart, never retell, never separate.
+One paragraph. All details coexist. No restarts. Every tradition's vivid details enrich the SAME moment.
 
 ## ENTITY ANNOTATION
 
-Use these exact canonical names from the database when annotating entities. On FIRST mention, wrap: [[actor:ExactCanonicalName]]
-After annotation, add parenthetical with alternate names: [[actor:Enki]] (Ea, Nudimmud)
+On FIRST mention of a named being/place, annotate with the canonical name from the list below:
+  [[actor:CanonicalName]] (AlternateName1, AlternateName2)
+  [[place:CanonicalName]] (AlternateName1)
 
-Types: actor, event, place.
-Aim for 15-25 annotations.
+Use the CANONICAL ENTITY NAMES provided in the data. Aim for 15-25 annotations.
 
-## WRITING STYLE
-- Direct, authoritative — a historian recounting what happened
-- Present tense
-- Every sentence from source evidence, no invented atmosphere
-- No modern commentary or analysis
-- Target: 1500-2500 words
+## STYLE
+- Present tense, direct, authoritative
+- Every sentence from source evidence
+- No invented atmosphere, no modern commentary
+- Target: 1500-2500 words total
 
-## OUTPUT — return ONLY valid JSON:
+## OUTPUT — valid JSON only:
 {
-  "narrative_text": "The full unified narrative with [[type:Name]] annotations...",
+  "narrative_text": "Full narrative with [[type:Name]] annotations...",
   "entity_mentions": [
-    {"name": "Enki", "type": "actor", "also_known_as": ["Ea", "Nudimmud"], "role_in_chapter": "creator of humanity"}
+    {"name": "Enki", "type": "actor", "also_known_as": ["Ea", "Nudimmud"], "role_in_chapter": "shapes humanity from clay"}
   ]
 }"""
 
@@ -822,11 +819,11 @@ Extract ALL events in chronological order, with actors, actions, locations, obje
         epoch: CanonicalEpoch,
         prior_narrative: str | None,
     ) -> str:
-        """Build merge prompt with a THEMATIC OUTLINE that forces cross-cultural fusion.
+        """Build merge prompt with events PRE-SORTED into thematic sections.
 
-        Instead of clustering by keyword (which fails), we define broad thematic
-        sections and dump ALL cultures' events into each section. DeepSeek writes
-        one fused narrative per section.
+        The key insight: if you show data grouped by culture, the model writes
+        culture-by-culture. Instead, we assign every event to a thematic bucket
+        and show: "Section 1: The Void — here's what 8 cultures say about it."
         """
         outline_id = outline.id
 
@@ -847,20 +844,19 @@ Extract ALL events in chronological order, with actors, actions, locations, obje
 
         skeletons.sort(key=lambda s: CULTURE_AGE_ORDER.get(s.culture_key, 99))
 
-        # Gather canonical actor names from this epoch for entity annotation
         actor_names = await self._get_epoch_actor_names(session, epoch.id)
 
         parts = [
             f"# CHAPTER: {outline.title}",
             f"# EPOCH: {epoch.title}",
-            f"# THEMES: {', '.join(outline.themes or [])}",
-            f"\nThis chapter draws from {len(skeletons)} traditions. Fuse them into ONE story.",
+            f"\nYou will write ONE unified story. The data below is organized by THEME, not by culture.",
+            "Under each theme, you see what multiple traditions remember about THAT SAME moment.",
+            "Write 1-2 paragraphs per theme, FUSING all cultures' details into one description.",
             "",
         ]
 
-        # Canonical entity names for annotation
         if actor_names:
-            parts.append("## CANONICAL ENTITY NAMES (use these exact names in [[actor:Name]] annotations)")
+            parts.append("## ENTITY NAMES for [[actor:Name]] annotations:")
             for name, aka in actor_names[:40]:
                 if aka:
                     parts.append(f"  {name} (also: {aka})")
@@ -868,67 +864,153 @@ Extract ALL events in chronological order, with actors, actions, locations, obje
                     parts.append(f"  {name}")
             parts.append("")
 
-        # Entity merge map
         equivalences = await self._gather_equivalences(session)
         if equivalences:
-            parts.append("## ENTITY MERGE MAP — these are THE SAME being")
+            parts.append("## SAME BEING across traditions:")
             for eq in equivalences:
                 all_names = [eq["primary_name"]] + eq["equivalents"][:8]
-                parts.append(f"  SAME: {', '.join(all_names)}")
+                parts.append(f"  {', '.join(all_names)}")
             parts.append("")
 
-        # Collect all events per culture into a flat structure
-        culture_events: dict[str, list[dict]] = {}
+        # Assign every event to a thematic bucket
+        buckets = self._assign_events_to_themes(skeletons, narr_labels)
         all_unique: list[str] = []
-
         for skel in skeletons:
-            label = narr_labels.get(skel.culture_key, skel.culture_key)
-            events = skel.events_json if isinstance(skel.events_json, list) else []
             unique = skel.unique_details if isinstance(skel.unique_details, list) else []
-            culture_events[label] = events
             all_unique.extend(unique)
 
-        # Build the thematic outline with ALL cultures' data under each section
-        parts.append("## NARRATIVE OUTLINE")
-        parts.append("Write your narrative following these sections IN ORDER.")
-        parts.append("Under each section, you will see what EACH culture contributes.")
-        parts.append("FUSE all contributions into ONE flowing description per section.\n")
+        parts.append(f"## THE STORY — {len(buckets)} SECTIONS (write in this order)\n")
 
-        # Condense all events into a compact per-culture summary under each section
-        # Instead of pre-clustering, just present ALL data compactly and let DeepSeek
-        # figure out the natural thematic flow
-        for label, events in culture_events.items():
-            parts.append(f"### {label}")
-            for ev in events[:12]:
-                actors = ", ".join(ev.get("actors", [])[:4])
-                action = ev.get("action", "")[:150]
-                detail = str(ev.get("source_detail", ""))[:150]
-                parts.append(f"  • {ev.get('event', '')} — Actors: {actors}")
-                parts.append(f"    {action}")
-                if detail:
-                    parts.append(f"    Detail: {detail}")
+        for i, (theme_name, theme_events) in enumerate(buckets, 1):
+            if not theme_events:
+                continue
+            n_cultures = len(set(e["_culture"] for e in theme_events))
+            parts.append(f"### SECTION {i}: {theme_name} ({n_cultures} traditions)")
+            parts.append(f"Write 1-2 paragraphs fusing these into ONE moment:\n")
+
+            for ev in theme_events:
+                actors = ", ".join(ev.get("actors", [])[:5])
+                action = str(ev.get("action", ""))[:200]
+                detail = str(ev.get("source_detail", ""))[:200]
+                parts.append(f"  [{ev['_culture']}] {ev.get('event', '')}")
+                if actors:
+                    parts.append(f"    Who: {actors}")
+                parts.append(f"    What: {action}")
+                if detail and detail != "None":
+                    parts.append(f"    Vivid detail: {detail}")
             parts.append("")
 
         if all_unique:
-            parts.append("## UNIQUE DETAILS — weave ALL into the narrative:")
-            for ud in all_unique[:30]:
+            parts.append("## UNIQUE DETAILS — weave into relevant sections above:")
+            for ud in all_unique[:25]:
                 parts.append(f"  • {ud}")
             parts.append("")
 
-        parts.append("## INSTRUCTIONS FOR STRUCTURE")
-        parts.append("Do NOT write one culture then the next. Instead:")
-        parts.append("1. Start with the primordial state — fuse ALL cultures' void/chaos/waters descriptions")
-        parts.append("2. The first creator stirs — merge ALL first-creator events into one moment")
-        parts.append("3. Separation of sky and earth — fuse ALL sky/earth separation events")
-        parts.append("4. Creation of elements, celestial bodies, time")
-        parts.append("5. Generation of gods/divine beings")
-        parts.append("6. Any remaining unique events")
-        parts.append("Every paragraph should contain details from MULTIPLE cultures, seamlessly fused.")
-
         if prior_narrative:
-            parts.append(f"\n## PRIOR CHAPTER (continue from here):\n...{prior_narrative[-1000:]}")
+            parts.append(f"## PRIOR CHAPTER (continue from here):\n...{prior_narrative[-800:]}")
 
         return "\n".join(parts)
+
+    @staticmethod
+    def _assign_events_to_themes(
+        skeletons: list, narr_labels: dict[str, str]
+    ) -> list[tuple[str, list[dict]]]:
+        """Assign events from all cultures into universal thematic buckets.
+
+        Returns: [(theme_name, [tagged_events])] in narrative order.
+        """
+        # Universal creation narrative themes — these work across virtually all traditions
+        THEME_KEYWORDS: list[tuple[str, list[str]]] = [
+            ("The Primordial Void", [
+                "void", "chaos", "nothing", "primordial", "before", "beginning",
+                "darkness", "silence", "waters", "deep", "abyss", "ocean", "sea",
+                "formless", "emptiness", "swamp", "egg", "unformed",
+            ]),
+            ("The First Creator Stirs", [
+                "creator", "first being", "self-existent", "emerges", "stirs",
+                "awakens", "omniscient", "contemplat", "desire", "will",
+                "thought", "word", "speaks", "utters", "declares",
+            ]),
+            ("Separation of Sky and Earth", [
+                "separation", "sky", "heaven", "earth", "lifts", "raises",
+                "vault", "firmament", "above", "below", "dome", "canopy",
+                "pillar", "uplifter", "splits", "divides",
+            ]),
+            ("Creation of Celestial Order", [
+                "sun", "moon", "stars", "light", "day", "night", "time",
+                "seasons", "years", "dawn", "dusk", "celestial", "planets",
+                "constellation", "measure", "calendar",
+            ]),
+            ("The Birth of Gods and Powers", [
+                "born", "begets", "generates", "offspring", "children",
+                "gods", "divine", "titans", "giants", "powers",
+                "archangel", "spirits", "sacred beings", "deities",
+            ]),
+            ("Shaping the World", [
+                "land", "mountain", "river", "island", "world tree",
+                "continent", "shape", "form", "fashion", "build",
+                "body", "flesh", "bones", "blood", "skull",
+                "spear", "stir", "churn",
+            ]),
+            ("Creation of Humanity", [
+                "human", "man", "woman", "people", "clay", "mud",
+                "breath", "blood", "rib", "dust", "maize", "corn",
+                "wood", "tree trunk", "labor", "toil", "servant",
+            ]),
+            ("The Cosmic Struggle", [
+                "battle", "fight", "slay", "kill", "castrat", "sickle",
+                "serpent", "monster", "dragon", "rebel", "overthrow",
+                "vengeance", "punishment", "flood", "destroy",
+            ]),
+            ("Prophecy and Fate", [
+                "prophecy", "fate", "doom", "end", "ragnar", "eschat",
+                "rebirth", "renewal", "cycle", "return", "survivors",
+                "future", "destiny",
+            ]),
+        ]
+
+        # Build buckets
+        theme_buckets: list[tuple[str, list[dict]]] = [(name, []) for name, _ in THEME_KEYWORDS]
+        overflow: list[dict] = []
+
+        for skel in skeletons:
+            label = narr_labels.get(skel.culture_key, skel.culture_key)
+            age_rank = CULTURE_AGE_ORDER.get(skel.culture_key, 99)
+            events = skel.events_json if isinstance(skel.events_json, list) else []
+
+            for ev in events[:15]:
+                ev_text = (
+                    str(ev.get("event", "")) + " " +
+                    str(ev.get("action", "")) + " " +
+                    str(ev.get("outcome", ""))
+                ).lower()
+
+                tagged = {**ev, "_culture": label, "_age_rank": age_rank}
+
+                best_score = 0
+                best_idx = -1
+                for idx, (_, keywords) in enumerate(THEME_KEYWORDS):
+                    score = sum(1 for kw in keywords if kw in ev_text)
+                    if score > best_score:
+                        best_score = score
+                        best_idx = idx
+
+                if best_score >= 1 and best_idx >= 0:
+                    theme_buckets[best_idx][1].append(tagged)
+                else:
+                    overflow.append(tagged)
+
+        # Sort events within each bucket by age rank (oldest first)
+        for _, events in theme_buckets:
+            events.sort(key=lambda e: e.get("_age_rank", 99))
+
+        # Add overflow to a catch-all bucket if non-empty
+        if overflow:
+            overflow.sort(key=lambda e: e.get("_age_rank", 99))
+            theme_buckets.append(("Other Notable Events", overflow))
+
+        # Remove empty buckets
+        return [(name, evs) for name, evs in theme_buckets if evs]
 
     async def _get_epoch_actor_names(
         self, session: AsyncSession, epoch_id: uuid.UUID
@@ -1200,6 +1282,7 @@ Extract ALL events in chronological order, with actors, actions, locations, obje
                 except Exception:
                     pass
 
+            # Fuzzy match: partial name match
             if not canonical_id:
                 try:
                     search_name = name.strip()
@@ -1214,6 +1297,26 @@ Extract ALL events in chronological order, with actors, actions, locations, obje
                         canonical_id = str(row)
                 except Exception:
                     pass
+
+            # Check entity_equivalences — the name might be an equivalent,
+            # not the primary canonical name
+            if not canonical_id and entity_type == "actor":
+                for try_name in names_to_try:
+                    if canonical_id:
+                        break
+                    try:
+                        eq_row = (await session.execute(text("""
+                            SELECT ee.primary_entity_id
+                            FROM entity_equivalences ee
+                            JOIN canonical_actors ca ON ca.id = ee.equivalent_entity_id
+                            WHERE LOWER(ca.canonical_name) = :n
+                              AND ee.primary_entity_type = 'actor'
+                            LIMIT 1
+                        """), {"n": try_name.lower()})).scalar_one_or_none()
+                        if eq_row:
+                            canonical_id = str(eq_row)
+                    except Exception:
+                        pass
 
             resolved.append({**m, "canonical_id": canonical_id})
         return resolved
