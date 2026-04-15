@@ -1225,7 +1225,7 @@ Extract ALL events in chronological order, with actors, actions, locations, obje
                 {"role": "user", "content": prompt},
             ],
             "temperature": 0.4,
-            "max_tokens": 16384,
+            "max_tokens": 8192,
         }
         headers = {
             "Authorization": f"Bearer {settings.deepseek_api_key}",
