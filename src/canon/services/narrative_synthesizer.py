@@ -766,13 +766,28 @@ Extract ALL events in chronological order, with actors, actions, locations, obje
 
         narrative = result.get("narrative_text", "")
         entity_mentions = result.get("entity_mentions", [])
+        logger.info("  DeepSeek returned %d entity_mentions in JSON, narrative=%d chars",
+                     len(entity_mentions), len(narrative))
 
-        # Also extract entities from [[type:Name]] annotations in the narrative text
         annotation_mentions = self._extract_annotations(narrative)
+        logger.info("  Extracted %d annotations from [[type:Name]] in narrative text", len(annotation_mentions))
+
         all_mentions = entity_mentions + annotation_mentions
+        # Deduplicate by name+type
+        seen_keys = set()
+        deduped: list[dict] = []
+        for m in all_mentions:
+            key = (m.get("name", "").lower(), m.get("type", ""))
+            if key not in seen_keys:
+                seen_keys.add(key)
+                deduped.append(m)
+        all_mentions = deduped
+        logger.info("  Total unique mentions to resolve: %d", len(all_mentions))
 
         async with async_session_factory() as write_session:
             resolved_mentions = await self._resolve_entity_mentions(write_session, all_mentions)
+            linked = sum(1 for m in resolved_mentions if m.get("canonical_id"))
+            logger.info("  Resolved: %d/%d linked to canonical IDs", linked, len(resolved_mentions))
 
             existing_q = select(StoryChapter).where(
                 StoryChapter.story_outline_id == outline_id
