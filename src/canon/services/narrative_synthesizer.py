@@ -222,67 +222,50 @@ Return ONLY valid JSON:
 }"""
 
 
-UNIFIED_MERGE_PROMPT = """You are writing a unified ancient world history — one continuous story as if it were an alternative bible.
+UNIFIED_MERGE_PROMPT = """You are writing a unified ancient world history — an alternative bible woven from every surviving tradition.
 
-Below you will receive EVENT CLUSTERS — groups of events from multiple cultures that describe THE SAME MOMENT in this story. Your job is to merge each cluster into ONE rich paragraph that fuses all the details together.
+You will receive a THEMATIC OUTLINE with sections. Under each section, you will see event data from multiple cultures describing the SAME moment. Your job: write ONE continuous narrative following that outline, FUSING each section's cross-cultural data into unified paragraphs.
 
-## THE ABSOLUTE RULE — ONE STORY, ONE WORLD
+## CARDINAL RULE — ONE STORY
 
-Write as if only ONE ancient civilization existed and these events happened ONCE.
+Write as if ONE civilization existed. Every event happened ONCE. Different cultures saw different facets of the same event.
 
-BANNED WORDS AND PHRASES — if ANY of these appear in your output, you have FAILED:
-- Any culture/people name: Sumerian, Hebrew, Egyptian, Greek, Norse, Chinese, Vedic, Hindu, Mesoamerican, Zoroastrian, Roman, Ainu, Japanese, African, Babylonian, Persian, Celtic, Polynesian
-- Any geographic framing: "In Mesopotamia", "In the east", "In the north"
-- Any attribution: "According to", "One tradition says", "In another account"
-- Any comparison: "Similarly", "Likewise", "In parallel", "Another version"
-- Any hedging: "Perhaps", "It is believed", "Some say"
+ABSOLUTELY BANNED in your output (instant failure):
+- Culture names: Sumerian, Hebrew, Egyptian, Greek, Norse, Chinese, Vedic, Hindu, Mesoamerican, Zoroastrian, Babylonian, Persian, Japanese, Ainu, African, Polynesian, Hopi, Maya, Aztec
+- Geographic framing: "In Mesopotamia", "In the east", "In the north", "In the western lands"
+- Attribution: "According to", "One tradition", "In another account", "In another tradition"
+- Comparison: "Similarly", "Likewise", "In parallel", "Another version", "Elsewhere"
+- Hedging: "Perhaps", "It is believed", "Some say", "It is said"
 
-The ONLY exception: on FIRST mention of a merged entity, parenthetical name variants: "(Enki, Khnum, Ptah)". No culture labels in the parenthetical.
+## HOW TO FUSE — THE DIAMOND RULE
 
-## THE DIAMOND RULE — EVERY EVENT HAPPENED ONCE
+For each section, you have data from multiple cultures about the SAME event. Layer ALL details into ONE rich description:
 
-Each event cluster below groups together the SAME EVENT as remembered by different peoples. These are NOT alternatives — they are FACETS of ONE event.
+WRONG: "A god creates from clay. Another god breathes life. A third shapes on a wheel."
+RIGHT: "The creator (Enki, Khnum) kneels at the potter's wheel. He mixes clay with divine blood — seven male forms, seven female. He breathes into each. The womb-goddesses assist, pinching the clay."
 
-WRONG (sequential/separate):
-"A god shapes humans from clay. The creator also breathes life into dust. A craftsman molds figures on a wheel."
+Every culture's detail enriches ONE description. Never restart, never retell, never separate.
 
-RIGHT (fused into one moment):
-"The divine craftsman (Enki, Khnum, Ptah) kneels at the potter's wheel. He shapes clay mixed with divine blood, seven male forms and seven female. He breathes into the nostrils of each. The womb-goddesses assist, pinching the clay into final form."
+## ENTITY ANNOTATION
 
-ALL details from ALL cultures coexist in ONE description. The paragraph grows RICHER with each culture's contribution — it does not restart or retell.
+Use these exact canonical names from the database when annotating entities. On FIRST mention, wrap: [[actor:ExactCanonicalName]]
+After annotation, add parenthetical with alternate names: [[actor:Enki]] (Ea, Nudimmud)
 
-## STRUCTURE
+Types: actor, event, place.
+Aim for 15-25 annotations.
 
-The event clusters are ALREADY in chronological order. Write ONE or TWO paragraphs per cluster. The narrative should flow naturally from cluster to cluster — this is a continuous story, not a list.
+## WRITING STYLE
+- Direct, authoritative — a historian recounting what happened
+- Present tense
+- Every sentence from source evidence, no invented atmosphere
+- No modern commentary or analysis
+- Target: 1500-2500 words
 
-Target: 1500-3000 words total. Every unique detail listed in the clusters MUST appear somewhere.
-
-## WRITING RULES:
-- Direct, authoritative tone — a historian recounting events that happened
-- Present tense throughout
-- Every sentence grounded in source evidence (no invented atmosphere)
-- No modern analysis or commentary
-- Vivid source details are your best material — USE THEM
-
-## ENTITY ANNOTATION:
-On FIRST mention of an important entity, wrap with: [[type:Archetype Name]]
-Types: actor, event, place. Use descriptive archetype names, not culture-specific names.
-After the annotation, add a SHORT parenthetical with the culture-specific name variants.
-Example: [[actor:The Divine Craftsman]] (Enki, Khnum, Ptah) kneels at the wheel...
-Aim for 15-30 annotations per chapter.
-
-## OUTPUT FORMAT:
-Return ONLY valid JSON:
+## OUTPUT — return ONLY valid JSON:
 {
-  "narrative_text": "The full unified narrative (1500-3000 words)...",
-  "key_claims": [
-    {"claim": "brief claim", "source_ids": [], "score": 0.0-1.0, "cultures": ["culture1"]}
-  ],
-  "image_prompts": [
-    {"description": "visual scene", "period": "time", "mood": "tone", "reference_artifacts": ["artifact"]}
-  ],
+  "narrative_text": "The full unified narrative with [[type:Name]] annotations...",
   "entity_mentions": [
-    {"name": "The Divine Craftsman", "type": "actor", "also_known_as": ["Enki", "Khnum"], "cultures": ["Sumerian", "Egyptian"], "role_in_chapter": "brief role"}
+    {"name": "Enki", "type": "actor", "also_known_as": ["Ea", "Nudimmud"], "role_in_chapter": "creator of humanity"}
   ]
 }"""
 
@@ -785,12 +768,14 @@ Extract ALL events in chronological order, with actors, actions, locations, obje
         result = await self._call_deepseek(prompt, system=UNIFIED_MERGE_PROMPT)
 
         narrative = result.get("narrative_text", "")
-        claims = result.get("key_claims", [])
-        image_prompts = result.get("image_prompts", [])
         entity_mentions = result.get("entity_mentions", [])
 
+        # Also extract entities from [[type:Name]] annotations in the narrative text
+        annotation_mentions = self._extract_annotations(narrative)
+        all_mentions = entity_mentions + annotation_mentions
+
         async with async_session_factory() as write_session:
-            resolved_mentions = await self._resolve_entity_mentions(write_session, entity_mentions)
+            resolved_mentions = await self._resolve_entity_mentions(write_session, all_mentions)
 
             existing_q = select(StoryChapter).where(
                 StoryChapter.story_outline_id == outline_id
@@ -799,8 +784,8 @@ Extract ALL events in chronological order, with actors, actions, locations, obje
 
             if existing:
                 existing.narrative_text = narrative
-                existing.claims_json = claims
-                existing.image_prompts_json = image_prompts
+                existing.claims_json = result.get("key_claims", [])
+                existing.image_prompts_json = result.get("image_prompts", [])
                 existing.entity_mentions_json = resolved_mentions
                 existing.word_count = len(narrative.split())
                 existing.synthesis_version += 1
@@ -819,8 +804,8 @@ Extract ALL events in chronological order, with actors, actions, locations, obje
                 chapter_id=None,
                 epoch_id=epoch_id,
                 narrative_text=narrative,
-                claims_json=claims,
-                image_prompts_json=image_prompts,
+                claims_json=result.get("key_claims", []),
+                image_prompts_json=result.get("image_prompts", []),
                 entity_mentions_json=resolved_mentions,
                 synthesis_version=1,
                 word_count=len(narrative.split()),
@@ -837,12 +822,11 @@ Extract ALL events in chronological order, with actors, actions, locations, obje
         epoch: CanonicalEpoch,
         prior_narrative: str | None,
     ) -> str:
-        """Build the merge prompt with events PRE-CLUSTERED by theme across cultures.
+        """Build merge prompt with a THEMATIC OUTLINE that forces cross-cultural fusion.
 
-        Instead of presenting events grouped by culture (which leads DeepSeek to
-        write culture-by-culture), we cluster similar events from different cultures
-        together so DeepSeek sees "here are 8 cultures' versions of the same event —
-        fuse them into one paragraph."
+        Instead of clustering by keyword (which fails), we define broad thematic
+        sections and dump ALL cultures' events into each section. DeepSeek writes
+        one fused narrative per section.
         """
         outline_id = outline.id
 
@@ -863,145 +847,121 @@ Extract ALL events in chronological order, with actors, actions, locations, obje
 
         skeletons.sort(key=lambda s: CULTURE_AGE_ORDER.get(s.culture_key, 99))
 
+        # Gather canonical actor names from this epoch for entity annotation
+        actor_names = await self._get_epoch_actor_names(session, epoch.id)
+
         parts = [
             f"# CHAPTER: {outline.title}",
             f"# EPOCH: {epoch.title}",
             f"# THEMES: {', '.join(outline.themes or [])}",
-            f"# SUMMARY: {outline.summary}",
-            f"\nThis chapter draws from {len(skeletons)} cultural traditions.",
+            f"\nThis chapter draws from {len(skeletons)} traditions. Fuse them into ONE story.",
             "",
         ]
+
+        # Canonical entity names for annotation
+        if actor_names:
+            parts.append("## CANONICAL ENTITY NAMES (use these exact names in [[actor:Name]] annotations)")
+            for name, aka in actor_names[:40]:
+                if aka:
+                    parts.append(f"  {name} (also: {aka})")
+                else:
+                    parts.append(f"  {name}")
+            parts.append("")
 
         # Entity merge map
         equivalences = await self._gather_equivalences(session)
         if equivalences:
-            parts.append("## ENTITY MERGE MAP")
-            parts.append("These entities are THE SAME being. Use a DESCRIPTIVE ARCHETYPE NAME.")
-            parts.append("On first mention, add parenthetical name variants.\n")
+            parts.append("## ENTITY MERGE MAP — these are THE SAME being")
             for eq in equivalences:
                 all_names = [eq["primary_name"]] + eq["equivalents"][:8]
-                parts.append(f"  SAME ENTITY: {', '.join(all_names)}")
+                parts.append(f"  SAME: {', '.join(all_names)}")
             parts.append("")
 
-        # Collect ALL events from all cultures, tagged with culture
-        all_events: list[dict] = []
-        all_unique_details: list[str] = []
+        # Collect all events per culture into a flat structure
+        culture_events: dict[str, list[dict]] = {}
+        all_unique: list[str] = []
 
         for skel in skeletons:
             label = narr_labels.get(skel.culture_key, skel.culture_key)
-            age_rank = CULTURE_AGE_ORDER.get(skel.culture_key, 99)
             events = skel.events_json if isinstance(skel.events_json, list) else []
             unique = skel.unique_details if isinstance(skel.unique_details, list) else []
+            culture_events[label] = events
+            all_unique.extend(unique)
 
-            for ev in events:
-                all_events.append({
-                    **ev,
-                    "_culture": label,
-                    "_age_rank": age_rank,
-                })
+        # Build the thematic outline with ALL cultures' data under each section
+        parts.append("## NARRATIVE OUTLINE")
+        parts.append("Write your narrative following these sections IN ORDER.")
+        parts.append("Under each section, you will see what EACH culture contributes.")
+        parts.append("FUSE all contributions into ONE flowing description per section.\n")
 
-            for ud in unique:
-                all_unique_details.append(ud)
-
-        # Build thematic clusters by grouping events with similar labels
-        # Use a simple approach: normalize event labels and group overlapping ones
-        clusters = self._cluster_events(all_events)
-
-        parts.append(f"## EVENT CLUSTERS ({len(clusters)} clusters)")
-        parts.append("Each cluster groups the SAME EVENT as seen by multiple cultures.")
-        parts.append("Write 1-2 paragraphs per cluster, FUSING all details into ONE description.")
-        parts.append("Clusters are in chronological order — your narrative should follow this order.\n")
-
-        for i, cluster in enumerate(clusters, 1):
-            culture_count = len(set(e["_culture"] for e in cluster["events"]))
-            parts.append(f"### CLUSTER {i}: {cluster['label']} ({culture_count} cultures)")
-
-            for ev in cluster["events"]:
-                actors_str = ", ".join(ev.get("actors", []))
-                parts.append(f"  [{ev['_culture']}] {ev.get('event', '')}")
-                parts.append(f"    Actors: {actors_str}")
-                parts.append(f"    Action: {ev.get('action', '')}")
-                if ev.get("location"):
-                    parts.append(f"    Location: {ev['location']}")
-                if ev.get("objects"):
-                    objs = ev["objects"] if isinstance(ev["objects"], list) else [ev["objects"]]
-                    parts.append(f"    Objects: {', '.join(str(o) for o in objs)}")
-                parts.append(f"    Outcome: {ev.get('outcome', '')}")
-                if ev.get("source_detail"):
-                    parts.append(f"    Vivid detail: {str(ev['source_detail'])[:200]}")
+        # Condense all events into a compact per-culture summary under each section
+        # Instead of pre-clustering, just present ALL data compactly and let DeepSeek
+        # figure out the natural thematic flow
+        for label, events in culture_events.items():
+            parts.append(f"### {label}")
+            for ev in events[:12]:
+                actors = ", ".join(ev.get("actors", [])[:4])
+                action = ev.get("action", "")[:150]
+                detail = str(ev.get("source_detail", ""))[:150]
+                parts.append(f"  • {ev.get('event', '')} — Actors: {actors}")
+                parts.append(f"    {action}")
+                if detail:
+                    parts.append(f"    Detail: {detail}")
             parts.append("")
 
-        if all_unique_details:
-            parts.append("## UNIQUE DETAILS — MUST ALL APPEAR IN THE NARRATIVE")
-            parts.append("These are precious culture-specific details. Weave EVERY one into the story:\n")
-            for ud in all_unique_details:
-                parts.append(f"  - {ud}")
+        if all_unique:
+            parts.append("## UNIQUE DETAILS — weave ALL into the narrative:")
+            for ud in all_unique[:30]:
+                parts.append(f"  • {ud}")
             parts.append("")
+
+        parts.append("## INSTRUCTIONS FOR STRUCTURE")
+        parts.append("Do NOT write one culture then the next. Instead:")
+        parts.append("1. Start with the primordial state — fuse ALL cultures' void/chaos/waters descriptions")
+        parts.append("2. The first creator stirs — merge ALL first-creator events into one moment")
+        parts.append("3. Separation of sky and earth — fuse ALL sky/earth separation events")
+        parts.append("4. Creation of elements, celestial bodies, time")
+        parts.append("5. Generation of gods/divine beings")
+        parts.append("6. Any remaining unique events")
+        parts.append("Every paragraph should contain details from MULTIPLE cultures, seamlessly fused.")
 
         if prior_narrative:
-            parts.append(f"## PRIOR CHAPTER (continue seamlessly):\n...{prior_narrative[-1500:]}")
+            parts.append(f"\n## PRIOR CHAPTER (continue from here):\n...{prior_narrative[-1000:]}")
 
         return "\n".join(parts)
 
-    def _cluster_events(self, all_events: list[dict]) -> list[dict]:
-        """Group events from different cultures into thematic clusters.
-
-        Uses keyword overlap in event labels to identify events that describe
-        the same moment. Events that don't match any cluster get their own.
-        """
-        # Normalize event labels for matching
-        def _normalize(label: str) -> set[str]:
-            stop = {"the", "of", "and", "a", "an", "is", "are", "from", "in", "to", "by", "with", "as"}
-            words = re.sub(r'[^a-z\s]', '', label.lower()).split()
-            return {w for w in words if w not in stop and len(w) > 2}
-
-        clusters: list[dict] = []
-        assigned = set()
-
-        # Sort events by sequence within each culture, then interleave
-        # First pass: identify cluster seeds from the oldest culture
-        for ev in all_events:
-            ev_id = id(ev)
-            if ev_id in assigned:
-                continue
-
-            tokens = _normalize(ev.get("event", ""))
-            if not tokens:
-                clusters.append({"label": ev.get("event", "Unknown"), "events": [ev]})
-                assigned.add(ev_id)
-                continue
-
-            cluster_events = [ev]
-            assigned.add(ev_id)
-
-            # Find matching events from other cultures
-            for other in all_events:
-                other_id = id(other)
-                if other_id in assigned:
-                    continue
-                if other["_culture"] == ev["_culture"]:
-                    continue
-
-                other_tokens = _normalize(other.get("event", ""))
-                overlap = tokens & other_tokens
-                # Match if ≥2 meaningful words overlap, or if key action words match
-                if len(overlap) >= 2 or (len(tokens) <= 3 and len(overlap) >= 1 and any(
-                    w in overlap for w in ("creation", "primordial", "chaos", "void", "waters",
-                                           "separation", "light", "humanity", "clay", "flood",
-                                           "garden", "serpent", "tree", "fire", "naming",
-                                           "death", "birth", "world", "gods", "heaven", "earth")
-                )):
-                    cluster_events.append(other)
-                    assigned.add(other_id)
-
-            # Sort cluster events by age rank (oldest first)
-            cluster_events.sort(key=lambda e: e.get("_age_rank", 99))
-            clusters.append({
-                "label": cluster_events[0].get("event", "Unknown"),
-                "events": cluster_events,
-            })
-
-        return clusters
+    async def _get_epoch_actor_names(
+        self, session: AsyncSession, epoch_id: uuid.UUID
+    ) -> list[tuple[str, str]]:
+        """Get canonical actor names + aliases for this epoch for entity annotation."""
+        try:
+            rows = (await session.execute(text("""
+                SELECT DISTINCT a.canonical_name,
+                    COALESCE(
+                        (SELECT string_agg(DISTINCT eq_name, ', ')
+                         FROM (
+                             SELECT COALESCE(
+                                 (SELECT canonical_name FROM canonical_actors WHERE id = ee.equivalent_entity_id),
+                                 ''
+                             ) as eq_name
+                             FROM entity_equivalences ee
+                             WHERE ee.primary_entity_id = a.id
+                             LIMIT 5
+                         ) sub
+                         WHERE eq_name != ''
+                        ), ''
+                    ) as also_known_as
+                FROM canonical_actors a
+                JOIN canon_dependencies d ON d.child_type = 'actor' AND d.child_id = a.id
+                JOIN canonical_chapters c ON c.id = d.parent_id AND d.parent_type = 'chapter'
+                WHERE c.epoch_id = :eid AND c.is_current = true AND a.is_current = true
+                ORDER BY a.canonical_name
+                LIMIT 50
+            """), {"eid": str(epoch_id)})).all()
+            return [(r[0], r[1]) for r in rows]
+        except Exception:
+            logger.warning("Failed to get epoch actor names", exc_info=True)
+            return []
 
     # -----------------------------------------------------------------------
     # Full pipeline orchestrator
@@ -1174,6 +1134,31 @@ Extract ALL events in chronological order, with actors, actions, locations, obje
     # -----------------------------------------------------------------------
     # Shared helpers
     # -----------------------------------------------------------------------
+
+    @staticmethod
+    def _extract_annotations(narrative: str) -> list[dict]:
+        """Extract entity mentions from [[type:Name]] annotations in narrative text."""
+        mentions = []
+        seen = set()
+        for match in re.finditer(r'\[\[(actor|event|place):([^\]]+)\]\]', narrative):
+            etype, name = match.group(1), match.group(2).strip()
+            if name.lower() in seen:
+                continue
+            seen.add(name.lower())
+
+            # Check for parenthetical aliases right after: [[actor:Enki]] (Ea, Nudimmud)
+            after = narrative[match.end():match.end() + 100]
+            aka_match = re.match(r'\s*\(([^)]+)\)', after)
+            also_known_as = []
+            if aka_match:
+                also_known_as = [a.strip() for a in aka_match.group(1).split(",") if a.strip()]
+
+            mentions.append({
+                "name": name,
+                "type": etype,
+                "also_known_as": also_known_as,
+            })
+        return mentions
 
     async def _resolve_entity_mentions(
         self, session: AsyncSession, mentions: list[dict]
