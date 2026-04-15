@@ -1,6 +1,15 @@
+import logging
+import sys
+
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    stream=sys.stdout,
+)
 
 from src.canon.api.routes import (
     actors, admin, changes, chapters, chat, epochs, events, motifs,
