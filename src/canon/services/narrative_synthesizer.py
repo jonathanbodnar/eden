@@ -1225,12 +1225,14 @@ Extract ALL events in chronological order, with actors, actions, locations, obje
                 {"role": "user", "content": prompt},
             ],
             "temperature": 0.4,
-            "max_tokens": 8192,
+            "max_tokens": 16384,
         }
         headers = {
             "Authorization": f"Bearer {settings.deepseek_api_key}",
             "Content-Type": "application/json",
         }
+
+        empty = {"narrative_text": "", "key_claims": [], "image_prompts": [], "chapters": [], "events": [], "actors": [], "places": [], "unique_details": []}
 
         try:
             async with httpx.AsyncClient(timeout=300.0) as client:
@@ -1242,15 +1244,43 @@ Extract ALL events in chronological order, with actors, actions, locations, obje
 
             raw = data["choices"][0]["message"]["content"]
             raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
+
+            # Strip markdown code fences if present
+            raw = re.sub(r"^```(?:json)?\s*\n?", "", raw)
+            raw = re.sub(r"\n?```\s*$", "", raw)
+
+            # Try parsing the full response as JSON
             json_match = re.search(r"\{.*\}", raw, re.DOTALL)
             if json_match:
                 try:
                     return json.loads(json_match.group())
                 except json.JSONDecodeError:
-                    logger.warning("Invalid JSON in DeepSeek response, trying to salvage")
-            return {"narrative_text": raw[:5000], "key_claims": [], "image_prompts": [], "chapters": []}
+                    pass
+
+                # JSON parse failed — try fixing common issues
+                json_str = json_match.group()
+                # Fix unescaped newlines inside string values
+                fixed = re.sub(r'(?<=": ")(.*?)(?="[,\}])', lambda m: m.group().replace('\n', '\\n'), json_str, flags=re.DOTALL)
+                try:
+                    return json.loads(fixed)
+                except json.JSONDecodeError:
+                    pass
+
+                # Last resort: extract narrative_text field directly with regex
+                narr_match = re.search(r'"narrative_text"\s*:\s*"((?:[^"\\]|\\.)*)(?:"|$)', json_str, re.DOTALL)
+                if narr_match:
+                    narr_text = narr_match.group(1)
+                    narr_text = narr_text.replace("\\n", "\n").replace('\\"', '"').replace("\\\\", "\\")
+                    logger.warning("Extracted narrative_text via regex fallback (%d chars)", len(narr_text))
+                    return {**empty, "narrative_text": narr_text}
+
+            logger.warning("No valid JSON found in DeepSeek response (%d chars raw)", len(raw))
+            # If the raw text doesn't look like JSON, it might be a plain narrative
+            if not raw.startswith("{"):
+                return {**empty, "narrative_text": raw}
+            return empty
         except RuntimeError:
             raise
         except Exception:
             logger.exception("DeepSeek call failed")
-            return {"narrative_text": "", "key_claims": [], "image_prompts": [], "chapters": []}
+            return empty
