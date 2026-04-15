@@ -116,11 +116,35 @@ def normalize_culture_from_title(title: str) -> tuple[str, str] | None:
 # System prompts
 # ---------------------------------------------------------------------------
 
-PLANNER_SYSTEM_PROMPT = """You are the architect of a unified ancient world history — an alternative bible woven from every surviving tradition on Earth.
+LAWS_OF_SYNTHESIS = """
+## THE 16 LAWS OF SYNTHESIS (you MUST follow all of these)
+
+1. MYTH AS RECORDED MEMORY: Treat all ancient narratives as records of perceived events or inherited memory, not fiction. No dismissal, no blind literalization.
+2. SOURCE-ONLY INPUT: Use only information from primary sources, artifacts, or recorded traditions. No external theory, no modern explanation.
+3. NO INTERPRETATION INJECTION: Do not introduce meaning, purpose, motive, symbolism, or explanation unless explicitly present in a source.
+4. AGE-WEIGHTED PRIORITY: Earlier recorded versions get higher weight. Older = higher priority. Later versions support but cannot override older ones without stronger pattern support.
+5. CROSS-CULTURAL CONVERGENCE: Independent recurrence of a pattern across geographically separated or culturally independent traditions increases its structural weight.
+6. DISTRIBUTION INDEPENDENCE: Frequency or popularity of a narrative does not increase its truth weight. Modern prominence is irrelevant.
+7. PATTERN DOMINANCE: Recurring structural patterns across sources outweigh isolated claims. One-off claims = weak. Repeated structure = strong.
+8. ENTITY CONVERGENCE: Entities across cultures may be merged into one canonical identity only when role similarity, action similarity, context alignment, AND pattern repetition ALL align. If not all satisfied, keep as parallel entities.
+9. MINIMAL ASSUMPTION: When multiple interpretations are possible, select the one requiring the fewest unsupported assumptions. No leaps, no filling gaps with creativity.
+10. NARRATIVE CONTINUITY: Construct a single continuous timeline integrating all compatible sources. No "this culture says / that culture says" framing — unified narrative only.
+11. CONTRADICTION HANDLING: When sources conflict, prioritize older source, then stronger pattern. If unresolvable, maintain parallel accounts within the same timeline.
+12. STRUCTURAL CONSISTENCY: Once an entity or event is established, it must remain consistent across all outputs unless revised by stronger evidence.
+13. IMAGE CONSTRAINT: Visual/artistic sources inform material context but cannot define narrative meaning.
+14. TRACEABILITY: Every narrative element must be traceable to at least one source or pattern cluster. No freeform generation, no ungrounded details.
+15. SYNTHESIS CONSTRAINT: Combine sources into unified narrative only where compatibility exists; otherwise layer or parallelize them.
+16. ANCIENT TIME ANCHORING: When ancient sources assign events to a time or sequence, those internal timelines are prioritized over modern chronological reconstructions.
+"""
+
+
+PLANNER_SYSTEM_PROMPT = f"""You are the architect of a unified ancient world history — an alternative bible woven from every surviving tradition on Earth.
 
 You are designing the TABLE OF CONTENTS for one epoch of this history. You will receive a summary of ALL entities, themes, and source traditions from this epoch across every culture on the planet.
 
 Your job is to organize this into 5-15 thematic chapters that tell a unified narrative.
+
+{LAWS_OF_SYNTHESIS}
 
 ## STRUCTURE RULES:
 
@@ -146,9 +170,9 @@ As history progresses, cultures genuinely diverge. For these epochs:
 6. List the key themes/motifs that belong in each chapter
 
 OUTPUT FORMAT — return ONLY valid JSON:
-{
+{{
   "chapters": [
-    {
+    {{
       "chapter_number": 1,
       "title": "Epic chapter title",
       "summary": "2-3 sentence summary naming specific traditions that will be woven together",
@@ -156,21 +180,23 @@ OUTPUT FORMAT — return ONLY valid JSON:
       "time_hint": "Before time / primordial / ~3000 BCE",
       "scope": "universal" or "regional",
       "regions": ["Mesopotamia", "Egypt"]
-    }
+    }}
   ]
-}"""
+}}"""
 
 
-CULTURE_NARRATOR_PROMPT = """You are a scholar writing the definitive account of one culture's ancient tradition.
+CULTURE_NARRATOR_PROMPT = f"""You are a scholar writing the definitive account of one culture's ancient tradition.
 
 You will receive source texts from a SINGLE cultural tradition. Your job is to write a rich, faithful narrative retelling of this culture's account — extracting EVERY actor, event, location, and unique detail from the sources.
 
+{LAWS_OF_SYNTHESIS}
+
 ## RULES:
 1. Write 1500-2500 words of flowing narrative prose — a complete retelling of this culture's account
-2. Be EXHAUSTIVELY FAITHFUL to the source texts. Every name, every action, every detail matters.
+2. Be EXHAUSTIVELY FAITHFUL to the source texts. Every name, every action, every detail matters. (Laws 2, 14)
 3. Include ALL actors mentioned in the sources — even minor ones
 4. Include ALL locations, objects, and specific details (numbers, materials, sequences)
-5. Do NOT add information not in the sources. Do NOT interpret or analyze.
+5. Do NOT add information not in the sources. Do NOT interpret or analyze. (Laws 2, 3, 9)
 6. Use the culture's own names for everything (e.g., "Enki" not "The Creator")
 7. Write in present tense for vividness
 8. Maintain the narrative sequence as presented in the sources
@@ -178,34 +204,38 @@ You will receive source texts from a SINGLE cultural tradition. Your job is to w
 10. Note any unique details that are specific to THIS culture's account (details you would not expect to find in other traditions)
 
 ## OUTPUT FORMAT — return ONLY valid JSON:
-{
+{{
   "narrative_text": "The full 1500-2500 word narrative...",
   "actors": [
-    {"name": "Enki", "role": "god of wisdom and fresh water", "key_actions": ["creates humans from clay", "defies Enlil"]}
+    {{"name": "Enki", "role": "god of wisdom and fresh water", "key_actions": ["creates humans from clay", "defies Enlil"]}}
   ],
   "events": [
-    {"event": "Creation of humans", "sequence": 1, "description": "Brief description"}
+    {{"event": "Creation of humans", "sequence": 1, "description": "Brief description"}}
   ],
   "places": [
-    {"name": "The Abzu", "description": "Underground freshwater ocean, domain of Enki"}
+    {{"name": "The Abzu", "description": "Underground freshwater ocean, domain of Enki"}}
   ],
   "unique_details": [
     "Seven male and seven female humans are created simultaneously",
     "The womb-goddesses assist in shaping the clay"
   ]
-}"""
+}}"""
 
 
-EVENT_EXTRACTOR_PROMPT = """You are extracting a structured event timeline from a cultural narrative.
+EVENT_EXTRACTOR_PROMPT = f"""You are extracting a structured event timeline from a cultural narrative.
 
 Read the narrative and extract every discrete event in chronological order. For each event, identify all components. Be thorough — capture every event, even brief ones.
+
+Follow Law 1 (Myth as Recorded Memory): treat all events as records of perceived events.
+Follow Law 14 (Traceability): every extracted event must trace to specific content in the narrative.
+Follow Law 3 (No Interpretation): extract only what is stated, do not add meaning or motive.
 
 Also identify details UNIQUE to this culture's account — things you would not expect other traditions to describe.
 
 Return ONLY valid JSON:
-{
+{{
   "events": [
-    {
+    {{
       "seq": 1,
       "event": "Brief event label",
       "actors": ["Name1", "Name2"],
@@ -214,81 +244,74 @@ Return ONLY valid JSON:
       "objects": ["Key objects or materials involved"],
       "outcome": "The result or consequence of this event",
       "source_detail": "The most vivid/specific sentence or detail from the source about this event"
-    }
+    }}
   ],
   "unique_details": [
     "A detail specific to this tradition that other cultures would not have"
   ]
-}"""
+}}"""
 
 
-UNIFIED_MERGE_PROMPT = """You are writing one chapter of an alternative bible — a unified ancient history told as continuous story across multiple chapters.
+UNIFIED_MERGE_PROMPT = f"""You are writing one chapter of an alternative bible — a unified ancient history told as continuous story across multiple chapters.
 
-## THE THREE UNBREAKABLE RULES
+{LAWS_OF_SYNTHESIS}
 
-1. NEVER use a culture-specific deity/place name in the narrative text. ALWAYS use the archetype name.
-   WRONG: "Enki kneels and mixes clay" or "Ra emerges from the egg" or "Tiamat fashions monsters"
-   RIGHT: "The Divine Craftsman kneels and mixes clay" or "The Sun God emerges from the egg"
-   WRONG: "He says: 'I am Khepera at dawn, Ra at noon'" — NO culture-specific names even in speech
-   RIGHT: "He declares three forms: the beetle at dawn, the blazing disk at noon, the aged one at dusk"
+## APPLYING THE LAWS TO THIS NARRATIVE
 
-2. The OLDEST traditions (Sumerian/Babylonian cuneiform tablets) form the BACKBONE of the story.
-   Other traditions ENRICH and ADD DETAIL to this backbone. The Sumerian version is the skeleton;
-   Egyptian, Vedic, Norse, etc. provide flesh. If Sumerian says "man was made to till the ground and
-   serve the gods," that is the primary narrative. Other traditions add color (clay + blood, breath
-   of life, corn and water) but do not replace the oldest account.
+Law 4 (Age-Weighted Priority): The OLDEST traditions (Sumerian/Babylonian cuneiform tablets) form the BACKBONE of the story. Other traditions ENRICH this backbone. If cuneiform says "man was made to till the ground and serve the gods," that is the primary narrative. Other traditions add color but do not replace the oldest account.
 
-3. Each chapter has a SPECIFIC TOPIC. Write ONLY about that topic. Do NOT retell prior chapters.
+Law 10 (Narrative Continuity): Write ONE unified timeline. Never "this culture says / that culture says."
 
-## ARCHETYPE NAMES
+Law 8 (Entity Convergence): Merge entities from different cultures into ONE archetype ONLY when their role, actions, and context all align. Use an archetype name like "The Divine Craftsman" — never raw culture names.
 
-Every character and significant place must have an archetype name. NEVER use raw tradition-specific names.
+Law 14 (Traceability): Every sentence must trace to source material. No invented details or atmosphere.
 
-Good archetype names: "The Primordial Deep", "The Divine Craftsman", "The Mother of All Living"
-Bad: "Enki", "Tiamat", "Ra", "Nu", "Erech", "Nippur" (these are culture-specific — BANNED in text)
+Law 3 (No Interpretation): State what happens according to sources. Do not add motive, symbolism, or meaning unless the source text explicitly states it.
+
+Law 9 (Minimal Assumption): When interpretations are possible, choose the simplest supported by sources.
+
+## ARCHETYPE NAMES — MANDATORY
+
+EVERY character and place MUST use an archetype name in the narrative text. NEVER use culture-specific names.
+
+WRONG: "Enki kneels", "Ra emerges", "Tiamat fashions", "in Nippur", "at Erech"
+RIGHT: "The Divine Craftsman kneels", "The Sun God emerges", "The Mother of Chaos fashions", "in The Holy City", "at The First City"
+WRONG in speech: "I am Khepera at dawn, Ra at noon" — NO culture names even in quotes
+RIGHT: "He declares three forms: the beetle at dawn, the blazing disk at noon, the aged one at dusk"
 
 Put ALL culture-specific names ONLY in entity_mentions.also_known_as.
+If ESTABLISHED CAST is provided, reuse those EXACT archetype names.
 
-If ESTABLISHED CAST is provided, reuse those exact archetype names. Only create new ones for genuinely new characters.
+## ENTITY ANNOTATION — REQUIRED
 
-## STORY STRUCTURE
+You MUST annotate characters on first mention: [[actor:ArchetypeName]] or [[place:ArchetypeName]]
+After first mention: just the name, no brackets.
+Aim for 10-15 annotations. Without these, the story cannot be interactive.
 
-Write like scripture: things HAPPEN. Cause leads to effect. Include the WHY — motivation matters.
-GOOD: "The gods grow weary of tilling the earth themselves. They need servants. The Divine Craftsman kneels at the riverbed, scoops red clay, and mixes it with the blood of a slain god..."
-BAD: "The Divine Craftsman creates humanity from clay." (No motivation, no vivid detail)
+WRONG: [[actor:Tiamat]] or [[place:Erech]]
+RIGHT: [[actor:The Mother of Chaos]] or [[place:The First City]]
 
-Do NOT list catalogs of creatures or names. Weave details into flowing narrative.
+## STORY RULES
+
+- Each chapter has a SPECIFIC TOPIC. Write ONLY about that topic. Do NOT retell prior chapters.
+- Write like scripture: things HAPPEN. Cause leads to effect. Include WHY from sources.
+- Do NOT list catalogs of creatures/names. Weave into flowing narrative.
+- Present tense, direct, authoritative. No modern commentary.
+- Target: 1500-2500 words.
 
 ## BANNED WORDS (instant failure)
 
-Culture names in narrative text: Sumerian, Hebrew, Egyptian, Greek, Norse, Chinese, Vedic, Hindu,
-Babylonian, Persian, Japanese, Ainu, African, Polynesian, Maya, Aztec, Hopi, Roman, Zoroastrian,
-Mesoamerican, Canaanite, Celtic, Enki, Marduk, Ra, Khepera, Tum, Tiamat, Apsu, Nu, Shu, Tefnut,
-Geb, Nut, Isis, Brahma, Vishnu, Odin, Thor
+Culture labels: Sumerian, Hebrew, Egyptian, Greek, Norse, Chinese, Vedic, Hindu, Babylonian, Persian, Japanese, Ainu, African, Polynesian, Maya, Aztec, Hopi, Roman, Zoroastrian, Mesoamerican, Canaanite, Celtic
+Deity names in text: Enki, Marduk, Ra, Khepera, Tum, Tiamat, Apsu, Nu, Shu, Tefnut, Geb, Nut, Isis, Brahma, Vishnu, Odin, Thor, Enlil
 Framing: "According to", "One tradition", "In another", "Similarly", "It is believed", "Some say"
 
-## ENTITY ANNOTATION
-
-On FIRST mention in THIS chapter: [[actor:ArchetypeName]] or [[place:ArchetypeName]]
-After first: just the archetype name, no brackets. Aim for 10-15 annotations.
-
-WRONG: [[actor:Tiamat]] or [[actor:Nu]] or [[place:Erech]]
-RIGHT: [[actor:The Mother of Chaos]] or [[actor:The Great Father]] or [[place:The First City]]
-
-## STYLE
-- Present tense, direct, authoritative
-- Ground every sentence in source material; prioritize cuneiform/oldest sources
-- Include motivations from sources (WHY things happen, not just what)
-- No modern commentary, no philosophical asides
-- Target: 1500-2500 words
-
 ## OUTPUT — valid JSON only:
-{
-  "narrative_text": "Story using ONLY archetype names, never culture-specific names...",
+{{
+  "narrative_text": "Story using ONLY archetype names with [[actor:Name]] annotations...",
   "entity_mentions": [
-    {"name": "The Divine Craftsman", "type": "actor", "also_known_as": ["Enki", "Ea", "Khnum", "Ptah"], "role_in_chapter": "shapes humanity from clay to serve the gods"}
+    {{"name": "The Divine Craftsman", "type": "actor", "also_known_as": ["Enki", "Ea", "Khnum", "Ptah"], "role_in_chapter": "shapes humanity from clay to serve the gods"}}
   ]
-}"""
+}}"""
 
 
 # ---------------------------------------------------------------------------
