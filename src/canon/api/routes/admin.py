@@ -216,21 +216,42 @@ async def run_narrative(
     skip_existing: bool = True,
     session: AsyncSession = Depends(get_session),
 ):
-    """Phase 2: Generate unified cross-cultural narrative for each planned chapter.
-
-    Requires story_outlines to exist (run /admin/plan-narrative first).
-    Each chapter is committed individually for live frontend progress.
-
-    Args:
-        epoch_orders: comma-separated epoch_order values (e.g. "0,1,2,3"), omit for all
-        skip_existing: skip chapters that already have a narrative (default True)
-    """
+    """Legacy endpoint — now runs the full 3-pass pipeline."""
     orders = [int(x.strip()) for x in epoch_orders.split(",")] if epoch_orders else None
     svc = NarrativeSynthesizer()
-    result = await svc.run_full_synthesis(
+    result = await svc.run_full_pipeline(
         session,
         epoch_orders=orders,
         skip_existing=skip_existing,
+        passes="1,2,3",
+    )
+    return result
+
+
+@router.post("/run-narrative-pipeline")
+async def run_narrative_pipeline(
+    epoch_orders: str | None = None,
+    skip_existing: bool = True,
+    passes: str = "1,2,3",
+    session: AsyncSession = Depends(get_session),
+):
+    """Three-pass narrative pipeline with per-pass control.
+
+    Args:
+        epoch_orders: comma-separated epoch_order values (e.g. "0,1,2,3"), omit for all
+        skip_existing: skip cultures/chapters that already have output (default True)
+        passes: comma-separated pass numbers to run (e.g. "1", "1,2", "1,2,3")
+            Pass 1: Generate per-culture narratives
+            Pass 2: Extract event skeletons
+            Pass 3: Merge into unified narrative
+    """
+    orders = [int(x.strip()) for x in epoch_orders.split(",")] if epoch_orders else None
+    svc = NarrativeSynthesizer()
+    result = await svc.run_full_pipeline(
+        session,
+        epoch_orders=orders,
+        skip_existing=skip_existing,
+        passes=passes,
     )
     return result
 

@@ -576,45 +576,40 @@ async def get_culture_variants(
     q: str | None = None,
     session: AsyncSession = Depends(get_session),
 ):
-    """Return the list of available cultures for a chapter (fast, names only).
+    """Return the list of cultures that have generated narratives for this chapter."""
+    from src.canon.models.culture_narrative import CultureNarrative
 
-    Details (source texts + entities) are loaded lazily via the
-    /culture-detail endpoint below.
-    """
     sc = await session.get(StoryChapter, _uuid.UUID(story_chapter_id))
     if not sc:
         raise HTTPException(404, "Story chapter not found")
 
-    import re as _re
-    ch_q = select(CanonicalChapter.id, CanonicalChapter.title).where(
-        CanonicalChapter.epoch_id == sc.epoch_id,
-        CanonicalChapter.is_current.is_(True),
-    )
-    ch_rows = (await session.execute(ch_q)).all()
+    narr_q = select(
+        CultureNarrative.culture_key,
+        CultureNarrative.culture_label,
+        CultureNarrative.word_count,
+        CultureNarrative.source_count,
+    ).where(
+        CultureNarrative.story_outline_id == sc.story_outline_id,
+    ).order_by(CultureNarrative.culture_key)
 
-    culture_pattern = _re.compile(r':\s*(.+?)(?:\s+Tradition)?$')
-    cultures: dict[str, int] = {}
-    for _ch_id, title in ch_rows:
-        match = culture_pattern.search(title)
-        if not match:
-            continue
-        cname = match.group(1).strip()
-        if cname.lower() == "overview":
-            continue
-        # Strip trailing " Tradition" that may remain
-        cname = _re.sub(r'\s+Tradition$', '', cname).strip()
-        if not cname or len(cname) < 2 or cname.startswith('<'):
-            continue
-        cultures[cname] = cultures.get(cname, 0) + 1
+    rows = (await session.execute(narr_q)).all()
 
-    if q:
-        q_lower = q.lower()
-        cultures = {k: v for k, v in cultures.items() if q_lower in k.lower()}
+    results = []
+    for culture_key, culture_label, word_count, source_count in rows:
+        if q and q.lower() not in culture_label.lower():
+            continue
+        results.append({
+            "culture": culture_label,
+            "culture_key": culture_key,
+            "source_count": source_count or 0,
+            "word_count": word_count or 0,
+            "source_texts": [],
+            "actors": [],
+            "events": [],
+            "places": [],
+        })
 
-    return [
-        {"culture": name, "source_count": count, "source_texts": [], "actors": [], "events": [], "places": []}
-        for name, count in sorted(cultures.items())
-    ]
+    return results
 
 
 @router.get("/chapters/{story_chapter_id}/culture-detail")
@@ -623,126 +618,84 @@ async def get_culture_detail(
     culture: str,
     session: AsyncSession = Depends(get_session),
 ):
-    """Lazy-load source texts + entities for a specific culture within a chapter."""
+    """Load a culture's generated narrative + source texts for the right panel."""
+    from src.canon.models.culture_narrative import CultureNarrative
+
     sc = await session.get(StoryChapter, _uuid.UUID(story_chapter_id))
     if not sc:
         raise HTTPException(404, "Story chapter not found")
 
-    import re as _re
-    ch_q = select(CanonicalChapter).where(
-        CanonicalChapter.epoch_id == sc.epoch_id,
-        CanonicalChapter.is_current.is_(True),
-    )
-    all_chs = (await session.execute(ch_q)).scalars().all()
+    # Try matching by culture_key first, then by culture_label
+    culture_lower = culture.lower().strip()
+    narr = (await session.execute(
+        select(CultureNarrative).where(
+            CultureNarrative.story_outline_id == sc.story_outline_id,
+            func.lower(CultureNarrative.culture_key) == culture_lower,
+        ).limit(1)
+    )).scalar_one_or_none()
 
-    culture_lower = culture.lower()
-    matching_chs = [
-        ch for ch in all_chs
-        if culture_lower in ch.title.lower()
-    ][:8]
+    if not narr:
+        narr = (await session.execute(
+            select(CultureNarrative).where(
+                CultureNarrative.story_outline_id == sc.story_outline_id,
+                func.lower(CultureNarrative.culture_label) == culture_lower,
+            ).limit(1)
+        )).scalar_one_or_none()
 
-    if not matching_chs:
-        return {"culture": culture, "source_texts": [], "actors": [], "events": [], "places": []}
+    if not narr:
+        # Fuzzy match on label
+        narr = (await session.execute(
+            select(CultureNarrative).where(
+                CultureNarrative.story_outline_id == sc.story_outline_id,
+                CultureNarrative.culture_label.ilike(f"%{culture}%"),
+            ).limit(1)
+        )).scalar_one_or_none()
 
-    ch_ids_sql = ",".join(f"'{ch.id}'" for ch in matching_chs)
-    culture_key = culture.split("/")[0].strip().replace("'", "")
+    if not narr:
+        return {
+            "culture": culture,
+            "narrative_text": None,
+            "source_count": 0,
+            "source_texts": [],
+            "actors": [],
+            "events": [],
+            "places": [],
+        }
 
-    # Two-pronged source search:
-    # 1. Chapter-entity-source join filtered by culture match on source record
-    # 2. Direct culture search with creation keyword relevance (for English texts)
-    # Union both to get the best results.
-    src_q = text(f"""
-        (
-            SELECT DISTINCT ON (sr.id) sr.canonical_title, sr.culture,
-                LEFT(sv.text_extracted, 1500), cl.weight
-            FROM canon_dependencies d
-            JOIN canon_support_links cl ON cl.canonical_id = d.child_id
-            JOIN source_records sr ON sr.id = cl.archive_object_id
-            JOIN source_versions sv ON sv.source_record_id = sr.id
-            WHERE d.parent_type = 'chapter' AND d.parent_id IN ({ch_ids_sql})
-              AND d.child_type IN ('actor', 'event')
-              AND sr.culture ILIKE :culture_pattern
-              AND sv.text_extracted IS NOT NULL
-              AND LENGTH(sv.text_extracted) > 150
-            ORDER BY sr.id, cl.weight DESC
-            LIMIT 8
-        )
-        UNION ALL
-        (
-            SELECT sr.canonical_title, sr.culture,
-                LEFT(sv.text_extracted, 1500), 0.5 as weight
-            FROM source_records sr
-            JOIN source_versions sv ON sv.source_record_id = sr.id
-            WHERE sr.culture ILIKE :culture_pattern
-              AND sv.text_extracted IS NOT NULL
-              AND LENGTH(sv.text_extracted) > 200
-              AND (
-                LOWER(sr.canonical_title) LIKE '%%genesis%%'
-                OR LOWER(sr.canonical_title) LIKE '%%creation%%'
-                OR LOWER(sr.canonical_title) LIKE '%%origin%%'
-                OR LOWER(sr.canonical_title) LIKE '%%cosmogon%%'
-                OR LOWER(sr.canonical_title) LIKE '%%beginning%%'
-              )
-            LIMIT 4
-        )
-        LIMIT 8
-    """)
-
-    ent_q = text(f"""
-        SELECT DISTINCT ON (d.child_id)
-            d.child_id::text, d.child_type,
-            COALESCE(
-                (SELECT canonical_name FROM canonical_actors WHERE id = d.child_id),
-                (SELECT canonical_name FROM canonical_events WHERE id = d.child_id),
-                (SELECT canonical_name FROM canonical_places WHERE id = d.child_id)
-            ),
-            COALESCE(
-                (SELECT LEFT(summary, 200) FROM canonical_actors WHERE id = d.child_id),
-                (SELECT LEFT(summary, 200) FROM canonical_events WHERE id = d.child_id),
-                (SELECT LEFT(summary, 200) FROM canonical_places WHERE id = d.child_id)
-            )
-        FROM canon_dependencies d
-        WHERE d.parent_type = 'chapter' AND d.parent_id IN ({ch_ids_sql})
-          AND d.child_type IN ('actor', 'event', 'place')
-        ORDER BY d.child_id
-        LIMIT 20
-    """)
-
-    try:
-        src_rows = (await session.execute(
-            src_q, {"culture_pattern": f"%{culture_key}%"}
-        )).all()
-        ent_rows = (await session.execute(ent_q)).all()
-    except Exception:
-        logger.exception("Failed to get culture detail for %s", culture)
-        return {"culture": culture, "source_texts": [], "actors": [], "events": [], "places": []}
-
-    source_texts = [
-        {"title": r[0] or "Unknown", "culture": r[1], "text": r[2] or "", "weight": float(r[3] or 0)}
-        for r in src_rows if r[2] and len(r[2].strip()) > 100
-    ]
-    source_texts.sort(key=lambda x: x["weight"], reverse=True)
-
-    actors = [
-        {"id": r[0], "name": r[2] or "Unknown", "type": r[1], "summary": r[3] or ""}
-        for r in ent_rows if r[1] == "actor" and r[2]
-    ]
-    events = [
-        {"id": r[0], "name": r[2] or "Unknown", "type": r[1], "summary": r[3] or ""}
-        for r in ent_rows if r[1] == "event" and r[2]
-    ]
-    places = [
-        {"id": r[0], "name": r[2] or "Unknown", "type": r[1], "summary": r[3] or ""}
-        for r in ent_rows if r[1] == "place" and r[2]
-    ]
+    # Load source texts from source_ids
+    source_texts = []
+    source_ids = narr.source_ids or []
+    if source_ids:
+        ids_list = ",".join(f"'{sid}'" for sid in source_ids[:15])
+        try:
+            src_q = text(f"""
+                SELECT sr.canonical_title, sr.culture,
+                    LEFT(sv.text_extracted, 1500), 1.0 as weight
+                FROM source_records sr
+                JOIN source_versions sv ON sv.source_record_id = sr.id
+                WHERE sr.id IN ({ids_list})
+                  AND sv.text_extracted IS NOT NULL
+                  AND LENGTH(sv.text_extracted) > 100
+                LIMIT 10
+            """)
+            src_rows = (await session.execute(src_q)).all()
+            source_texts = [
+                {"title": r[0] or "Unknown", "culture": r[1], "text": r[2] or "", "weight": float(r[3])}
+                for r in src_rows
+            ]
+        except Exception:
+            logger.exception("Failed to load source texts for culture %s", culture)
 
     return {
-        "culture": culture,
-        "source_count": len(source_texts),
-        "source_texts": source_texts[:6],
-        "actors": actors[:10],
-        "events": events[:10],
-        "places": places[:5],
+        "culture": narr.culture_label,
+        "culture_key": narr.culture_key,
+        "narrative_text": narr.narrative_text,
+        "source_count": narr.source_count or 0,
+        "word_count": narr.word_count or 0,
+        "source_texts": source_texts,
+        "actors": narr.actors_json or [],
+        "events": narr.events_json or [],
+        "places": narr.places_json or [],
     }
 
 

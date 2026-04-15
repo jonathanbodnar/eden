@@ -219,6 +219,14 @@ function EntityBreakdownView({ data, onBack, archetypeName }: { data: EntityMerg
 }
 
 function CultureEntitiesView({ culture }: { culture: CultureVariant }) {
+  const cultureAny = culture as any
+  const actors = cultureAny.actors || []
+  const events = cultureAny.events || []
+  const places = cultureAny.places || []
+  const sourceTexts = culture.source_texts || []
+  const sourceCount = cultureAny.source_count || sourceTexts.length
+  const wordCount = cultureAny.word_count || 0
+
   return (
     <>
       <div style={{ padding: '16px', borderBottom: '1px solid var(--border)' }}>
@@ -226,26 +234,26 @@ function CultureEntitiesView({ culture }: { culture: CultureVariant }) {
           fontSize: 11, textTransform: 'uppercase', letterSpacing: 1.5,
           color: 'var(--gold)', marginBottom: 4,
         }}>
-          {culture.culture} &mdash; Source Texts
+          {culture.culture} &mdash; Evidence
         </div>
         <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-          {culture.source_texts.length} text{culture.source_texts.length !== 1 ? 's' : ''}
-          {culture.actors.length > 0 && ` \u00B7 ${culture.actors.length} figures`}
-          {culture.events.length > 0 && ` \u00B7 ${culture.events.length} events`}
+          {sourceCount} source{sourceCount !== 1 ? 's' : ''}
+          {wordCount > 0 && ` · ${wordCount.toLocaleString()} words`}
+          {actors.length > 0 && ` · ${actors.length} figures`}
         </div>
       </div>
 
       <div style={{ flex: 1, overflow: 'auto', padding: '12px 16px' }}>
         {/* Source Texts — the actual writings used */}
-        {culture.source_texts.length > 0 && (
+        {sourceTexts.length > 0 && (
           <div style={{ marginBottom: 20 }}>
             <div style={{
               fontSize: 11, textTransform: 'uppercase', letterSpacing: 1,
               color: 'var(--text-muted)', marginBottom: 8,
             }}>
-              Original Writings ({culture.source_texts.length})
+              Source Texts Used ({sourceTexts.length})
             </div>
-            {culture.source_texts.map((src, i) => (
+            {sourceTexts.map((src, i) => (
               <details key={i} open={i === 0} style={{
                 marginBottom: 8,
                 background: 'var(--bg-tertiary)',
@@ -270,34 +278,48 @@ function CultureEntitiesView({ culture }: { culture: CultureVariant }) {
                   fontFamily: "'Georgia', 'Times New Roman', serif",
                   fontStyle: 'italic',
                 }}>
-                  {src.text.slice(0, 600)}
-                  {src.text.length > 600 && '...'}
+                  {src.text.slice(0, 800)}
+                  {src.text.length > 800 && '...'}
                 </div>
               </details>
             ))}
           </div>
         )}
 
-        {/* Entity breakdowns */}
-        {culture.actors.length > 0 && (
+        {/* Key figures */}
+        {actors.length > 0 && (
           <div style={{ marginBottom: 20 }}>
             <div style={{
               fontSize: 11, textTransform: 'uppercase', letterSpacing: 1,
               color: 'var(--gold)', marginBottom: 8,
             }}>
-              Key Figures ({culture.actors.length})
+              Key Figures ({actors.length})
             </div>
-            {culture.actors.map(a => (
-              <div key={a.id} style={{
+            {actors.map((a: any, i: number) => (
+              <div key={a.id || a.name || i} style={{
                 padding: '8px 10px', background: 'var(--bg-tertiary)',
                 borderRadius: 6, marginBottom: 6,
               }}>
                 <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>
                   {a.name}
                 </div>
-                {a.summary && (
+                {(a.role || a.summary) && (
                   <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5, marginTop: 2 }}>
-                    {a.summary.slice(0, 200)}
+                    {(a.role || a.summary || '').slice(0, 200)}
+                  </div>
+                )}
+                {a.key_actions && a.key_actions.length > 0 && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
+                    {a.key_actions.slice(0, 4).map((action: string, j: number) => (
+                      <span key={j} style={{
+                        fontSize: 10, padding: '2px 6px',
+                        background: 'rgba(212,168,83,0.08)',
+                        border: '1px solid rgba(212,168,83,0.2)',
+                        borderRadius: 8, color: 'var(--gold)',
+                      }}>
+                        {action}
+                      </span>
+                    ))}
                   </div>
                 )}
               </div>
@@ -305,25 +327,26 @@ function CultureEntitiesView({ culture }: { culture: CultureVariant }) {
           </div>
         )}
 
-        {culture.events.length > 0 && (
+        {/* Key events */}
+        {events.length > 0 && (
           <div style={{ marginBottom: 20 }}>
             <div style={{
               fontSize: 11, textTransform: 'uppercase', letterSpacing: 1,
               color: '#7eb8da', marginBottom: 8,
             }}>
-              Key Events ({culture.events.length})
+              Key Events ({events.length})
             </div>
-            {culture.events.map(e => (
-              <div key={e.id} style={{
+            {events.map((e: any, i: number) => (
+              <div key={e.id || e.event || i} style={{
                 padding: '8px 10px', background: 'var(--bg-tertiary)',
                 borderRadius: 6, marginBottom: 6,
               }}>
                 <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>
-                  {e.name}
+                  {e.name || e.event || 'Event'}
                 </div>
-                {e.summary && (
+                {(e.description || e.summary) && (
                   <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5, marginTop: 2 }}>
-                    {e.summary.slice(0, 200)}
+                    {(e.description || e.summary || '').slice(0, 200)}
                   </div>
                 )}
               </div>
@@ -331,25 +354,26 @@ function CultureEntitiesView({ culture }: { culture: CultureVariant }) {
           </div>
         )}
 
-        {culture.places.length > 0 && (
+        {/* Key places */}
+        {places.length > 0 && (
           <div style={{ marginBottom: 20 }}>
             <div style={{
               fontSize: 11, textTransform: 'uppercase', letterSpacing: 1,
               color: '#a8d5a2', marginBottom: 8,
             }}>
-              Key Places ({culture.places.length})
+              Key Places ({places.length})
             </div>
-            {culture.places.map(p => (
-              <div key={p.id} style={{
+            {places.map((p: any, i: number) => (
+              <div key={p.id || p.name || i} style={{
                 padding: '8px 10px', background: 'var(--bg-tertiary)',
                 borderRadius: 6, marginBottom: 6,
               }}>
                 <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>
                   {p.name}
                 </div>
-                {p.summary && (
+                {(p.description || p.summary) && (
                   <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5, marginTop: 2 }}>
-                    {p.summary.slice(0, 200)}
+                    {(p.description || p.summary || '').slice(0, 200)}
                   </div>
                 )}
               </div>

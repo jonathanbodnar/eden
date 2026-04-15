@@ -433,15 +433,15 @@ export default function NarrativeReader({ chapters, activeChapterId, onChapterIn
               {cultureDetail.culture} Tradition &mdash; {ch.chapter_title}
             </div>
 
-            {/* Figures/entities from this culture relevant to the chapter */}
-            {cultureDetail.actors.length > 0 && (
+            {/* Key figures chips */}
+            {cultureDetail.actors && cultureDetail.actors.length > 0 && (
               <div style={{ marginBottom: 20 }}>
                 <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8 }}>
                   Key figures in this tradition:
                 </div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 16 }}>
-                  {cultureDetail.actors.slice(0, 12).map(a => (
-                    <span key={a.id} style={{
+                  {cultureDetail.actors.slice(0, 12).map((a: any, i: number) => (
+                    <span key={a.id || a.name || i} style={{
                       padding: '3px 10px',
                       background: 'rgba(212, 168, 83, 0.1)',
                       border: '1px solid rgba(212, 168, 83, 0.25)',
@@ -456,8 +456,21 @@ export default function NarrativeReader({ chapters, activeChapterId, onChapterIn
               </div>
             )}
 
-            {/* Narrative-style rendering of source texts in the center */}
-            {cultureDetail.source_texts.length > 0 ? (
+            {/* Generated per-culture narrative */}
+            {(cultureDetail as any).narrative_text ? (
+              <div style={{
+                fontSize: 16,
+                lineHeight: 1.85,
+                color: 'var(--text-primary)',
+                fontFamily: "'Georgia', 'Times New Roman', serif",
+              }}>
+                {(cultureDetail as any).narrative_text.split('\n\n').map((para: string, pIdx: number) => (
+                  <p key={pIdx} style={{ marginBottom: 20, textIndent: pIdx > 0 ? 24 : 0 }}>
+                    {para}
+                  </p>
+                ))}
+              </div>
+            ) : cultureDetail.source_texts && cultureDetail.source_texts.length > 0 ? (
               <div style={{
                 fontSize: 16,
                 lineHeight: 1.85,
@@ -488,7 +501,7 @@ export default function NarrativeReader({ chapters, activeChapterId, onChapterIn
                 textAlign: 'center',
                 fontSize: 14,
               }}>
-                No source texts found for this culture on this chapter.
+                No narrative available for this tradition on this chapter.
               </div>
             )}
           </div>

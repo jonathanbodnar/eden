@@ -36,6 +36,7 @@ from src.canon.models.chat_session import ChatSession, ChatMessage
 from src.canon.models.answer_packet import AnswerPacket, AnswerPacketSource, AnswerPacketContext
 from src.canon.models.story_outline import StoryOutline
 from src.canon.models.story_chapter import StoryChapter
+from src.canon.models.culture_narrative import CultureNarrative, CultureEventSkeleton
 
 try:
     from src.canon.models.video_script import VideoScript
@@ -91,4 +92,6 @@ __all__ = [
     "VideoOutput",
     "StoryOutline",
     "StoryChapter",
+    "CultureNarrative",
+    "CultureEventSkeleton",
 ]
