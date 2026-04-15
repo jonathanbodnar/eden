@@ -592,10 +592,20 @@ Design 5-15 thematic chapters that weave ALL these cultures and traditions toget
                     "seen_ids": set(),
                 }
 
-        # Sort each culture's sources by weight, keep top 15
+        # Filter sources by content relevance to mythological/narrative themes
+        # This removes archaeological, linguistic, and purely historical sources
+        # that have no creation/mythological content
         result = []
         for culture_key, grp in culture_groups.items():
-            sources = sorted(grp["sources"], key=lambda s: s["weight"], reverse=True)[:15]
+            scored_sources = []
+            for src in grp["sources"]:
+                relevance = self._score_source_relevance(src.get("title", ""), src.get("excerpt", ""))
+                if relevance > 0:
+                    scored_sources.append({**src, "_relevance": relevance})
+
+            # Sort by relevance * weight, keep top 15
+            scored_sources.sort(key=lambda s: s["_relevance"] * s["weight"], reverse=True)
+            sources = scored_sources[:15]
             if not sources:
                 continue
             result.append((culture_key, grp["label"], sources))
@@ -608,6 +618,58 @@ Design 5-15 thematic chapters that weave ALL these cultures and traditions toget
             logger.info("  %s: %d sources", cl, len(srcs))
 
         return result
+
+    @staticmethod
+    def _score_source_relevance(title: str, excerpt: str) -> float:
+        """Score how relevant a source is to mythological/narrative content.
+
+        Returns 0 for purely archaeological/linguistic/historical sources,
+        higher scores for sources with creation/mythological content.
+        """
+        combined = (title + " " + excerpt[:2000]).lower()
+
+        # Strong mythological signals — these are what we want
+        myth_keywords = [
+            "creation", "creator", "created", "beginning", "origin",
+            "god ", "gods", "goddess", "deity", "divine", "heaven",
+            "earth", "waters", "void", "chaos", "primordial", "cosmos",
+            "flood", "deluge", "garden", "paradise", "serpent", "tree",
+            "mankind", "humanity", "human", "mortal", "clay", "breath",
+            "spirit", "soul", "sacred", "holy", "temple", "ritual",
+            "myth", "legend", "epic", "hymn", "prayer", "psalm",
+            "genesis", "cosmogon", "theogon",
+            "first man", "first woman", "ancestor",
+            "sky father", "earth mother", "sun god", "moon god",
+            "underworld", "afterlife", "death", "rebirth",
+            "sacrifice", "offering", "worship",
+            "prophet", "revelation", "scripture", "testament",
+            "thou", "thee", "hath", "saith", "begat", "begot",
+            "enuma elish", "gilgamesh", "rig veda", "popol vuh",
+            "edda", "theogony", "avesta", "torah", "bible",
+            "book of the dead", "pyramid text", "coffin text",
+        ]
+
+        # Negative signals — archaeological, linguistic, historical analysis
+        anti_keywords = [
+            "script", "inscription", "deciphered", "alphabet", "glyph",
+            "excavation", "archaeological", "pottery", "ceramic",
+            "stratigraphy", "radiocarbon", "dating", "carbon-14",
+            "museum", "collection", "artifact number", "catalogue",
+            "linguistics", "phonology", "syntax", "grammar",
+            "trade route", "commerce", "economy", "currency",
+            "isbn", "doi:", "journal", "university press",
+            "bibliography", "footnote", "endnote",
+        ]
+
+        score = 0.0
+        for kw in myth_keywords:
+            if kw in combined:
+                score += 1.0
+        for kw in anti_keywords:
+            if kw in combined:
+                score -= 2.0
+
+        return max(score, 0.0)
 
     # -----------------------------------------------------------------------
     # Pass 2: Extract event skeletons from culture narratives
