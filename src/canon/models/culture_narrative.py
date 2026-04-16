@@ -26,6 +26,11 @@ class CultureNarrative(Base):
     events_json: Mapped[dict | list | None] = mapped_column(JSONB, nullable=True)
     places_json: Mapped[dict | list | None] = mapped_column(JSONB, nullable=True)
     source_ids: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    # V2 additions — Stage 1 of the deterministic-merge pipeline outputs both
+    # a readable prose history (shown in the culture dropdown) and a strictly
+    # structured fact sheet used by Stage 2 to distil atomic events.
+    prose_history: Mapped[str | None] = mapped_column(Text, nullable=True)
+    fact_sheet: Mapped[dict | list | None] = mapped_column(JSONB, nullable=True)
     source_count: Mapped[int] = mapped_column(Integer, server_default="0")
     word_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     generation_version: Mapped[int] = mapped_column(Integer, server_default="1")

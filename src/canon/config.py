@@ -20,6 +20,11 @@ class Settings(BaseSettings):
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_model: str = "deepseek-reasoner"
 
+    # OpenAI — used by the V2 narrative pipeline for action embeddings
+    openai_api_key: str = ""
+    embedding_model: str = "text-embedding-3-small"
+    embedding_dimensions: int = 1536
+
     ollama_base_url: str = ""
     ollama_model: str = "qwen3:14b"
 

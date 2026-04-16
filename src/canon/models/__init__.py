@@ -37,6 +37,11 @@ from src.canon.models.answer_packet import AnswerPacket, AnswerPacketSource, Ans
 from src.canon.models.story_outline import StoryOutline
 from src.canon.models.story_chapter import StoryChapter
 from src.canon.models.culture_narrative import CultureNarrative, CultureEventSkeleton
+from src.canon.models.narrative_v2 import (
+    ArchetypeRegistry,
+    CultureAtomicEvent,
+    EventCluster,
+)
 
 try:
     from src.canon.models.video_script import VideoScript
@@ -94,4 +99,7 @@ __all__ = [
     "StoryChapter",
     "CultureNarrative",
     "CultureEventSkeleton",
+    "ArchetypeRegistry",
+    "CultureAtomicEvent",
+    "EventCluster",
 ]

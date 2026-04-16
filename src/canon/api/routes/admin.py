@@ -31,6 +31,7 @@ from src.canon.services.narration_builder import NarrationBuilderService
 from src.canon.services.scoring_service import ScoringService
 from src.canon.services.evidence_bundle_builder import EvidenceBundleBuilder
 from src.canon.services.narrative_synthesizer import NarrativeSynthesizer
+from src.canon.services.narrative_v2 import NarrativePipelineV2
 from src.canon.services.source_record_synth import SourceRecordSynthService
 from src.canon.services.world_packet_builder import WorldPacketBuilderService
 
@@ -268,6 +269,57 @@ async def run_narrative_pipeline(
         "epoch_orders": orders,
         "passes": passes,
         "message": "Pipeline running in background. Check /admin/narrative-pipeline-status for progress.",
+    }
+
+
+@router.post("/run-narrative-v2")
+async def run_narrative_v2(
+    epoch_orders: str | None = None,
+    wipe: bool = False,
+    max_cultures: int | None = None,
+    session: AsyncSession = Depends(get_session),
+):
+    """V2 narrative pipeline — deterministic merge architecture.
+
+    Runs in background, returns immediately. See docs/NARRATIVE_PIPELINE_V2.plan.md.
+
+    Args:
+        epoch_orders: comma-separated epoch_order values (e.g. "0,1,2"), omit for all
+        wipe: if True, delete all culture_narratives / story_chapters / clusters
+              for the targeted epochs before regenerating
+        max_cultures: cap cultures per chapter (None = all)
+    """
+    import asyncio
+
+    orders = (
+        [int(x.strip()) for x in epoch_orders.split(",")] if epoch_orders else None
+    )
+
+    async def _run() -> None:
+        try:
+            # Create a fresh session for the background task; get_session() depends
+            # on request lifecycle which ends when this handler returns.
+            from src.canon.database import async_session_factory
+
+            async with async_session_factory() as bg_session:
+                svc = NarrativePipelineV2()
+                result = await svc.run(
+                    bg_session,
+                    epoch_orders=orders,
+                    wipe=wipe,
+                    max_cultures=max_cultures,
+                )
+                logger.info("V2 pipeline complete: %s", result)
+        except Exception:
+            logger.exception("V2 pipeline failed")
+
+    asyncio.create_task(_run())
+    return {
+        "status": "started",
+        "epoch_orders": orders,
+        "wipe": wipe,
+        "max_cultures": max_cultures,
+        "message": "V2 pipeline running in background. Monitor logs for progress.",
     }
 
 

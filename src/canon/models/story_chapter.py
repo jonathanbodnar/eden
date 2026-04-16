@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import ForeignKey, Integer, Text
+from sqlalchemy import ARRAY, ForeignKey, Integer, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -27,3 +27,7 @@ class StoryChapter(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     entity_mentions_json: Mapped[dict | list | None] = mapped_column(JSONB, nullable=True)
     synthesis_version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     word_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # V2 pipeline metadata
+    pipeline_version: Mapped[str] = mapped_column(Text, nullable=False, server_default="v1")
+    cluster_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    archetypes_used: Mapped[list[str] | None] = mapped_column(ARRAY(Text), nullable=True)
