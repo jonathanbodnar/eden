@@ -162,14 +162,18 @@ def insert_annotations(
 ) -> str:
     """Wrap every occurrence of each archetype name in [[actor:Name]].
 
+    Matches are case-insensitive and tolerate a leading "The " being present
+    OR absent in the text. Each match is replaced with the canonical annotation
+    using the archetype's registered name.
+
     The frontend highlights archetype mentions (yellow) only when they are
-    wrapped. We wrap ALL occurrences (not just the first) so readers can click
-    any mention in the text. Guards against nesting existing wraps.
+    wrapped — so wrap ALL occurrences (not just the first). Guards against
+    nesting existing wraps.
     """
     text = narrative
 
-    # Sort archetypes by name length desc so "The Primordial Void" is processed
-    # before any archetype named "Void" (if such a thing existed).
+    # Process longer archetype names first so "The Primordial Void" is matched
+    # before "Void" (if any existed as its own archetype).
     ordered = sorted(
         archetypes, key=lambda a: len(a.archetype_name or ""), reverse=True
     )
@@ -183,20 +187,30 @@ def insert_annotations(
 
         # Strip any pre-existing wraps for THIS archetype first (they may have
         # come from Stage 4 itself or from earlier idempotent runs) so we can
-        # re-wrap uniformly.
+        # re-wrap uniformly. Case-insensitive so we catch variant casings too.
         existing_pattern = re.compile(
-            r"\[\[(?:actor|place):" + re.escape(name) + r"\]\]"
+            r"\[\[(?:actor|place):" + re.escape(name) + r"\]\]",
+            re.IGNORECASE,
         )
         text = existing_pattern.sub(name, text)
 
-        # Now wrap every bare occurrence. Use negative lookbehind/lookahead to
-        # avoid wrapping names that happen to sit inside another annotation's
-        # body (e.g. if archetype A's name contains archetype B's name as a
-        # substring — unlikely but possible after ordering).
-        # Lookbehind `(?<![:\[])` prevents matching after "[[actor:" or "[[".
-        # Lookahead `(?!\]\])` prevents matching before "]]".
+        # Build the match body: accept the name with or without leading "The ".
+        # E.g. archetype "The Sky Lifter" should match "The Sky Lifter",
+        # "the Sky Lifter", AND "Sky Lifter" (all collapsed to the canonical
+        # annotation).
+        tokens = name.split()
+        if tokens and tokens[0].lower() == "the":
+            body = " ".join(tokens[1:])
+            body_pattern = rf"(?:[Tt]he\s+)?{re.escape(body)}"
+        else:
+            body_pattern = re.escape(name)
+
+        # Negative lookbehind `(?<![:\[])` prevents matching inside an existing
+        # `[[actor:...]]` body. Negative lookahead `(?!\]\])` prevents matching
+        # right before `]]`.
         pattern = re.compile(
-            r"(?<![:\[])\b" + re.escape(name) + r"\b(?!\]\])"
+            r"(?<![:\[])\b" + body_pattern + r"\b(?!\]\])",
+            re.IGNORECASE,
         )
         text = pattern.sub(annotation, text)
 

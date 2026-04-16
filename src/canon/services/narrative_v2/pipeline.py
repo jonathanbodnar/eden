@@ -39,6 +39,7 @@ from src.canon.services.narrative_v2.stage2_atomic_events import (
 )
 from src.canon.services.narrative_v2.stage3_cluster import (
     AtomicEventRow,
+    Cluster,
     cluster_events,
     cluster_to_row,
 )
@@ -110,7 +111,7 @@ class NarrativePipelineV2:
 
         for epoch_id, epoch_order, epoch_title in epoch_records:
             logger.info(
-                "V2 pipeline: processing epoch %d — %s",
+                "V2 pipeline: processing epoch %d — %s (global-archetype mode)",
                 epoch_order,
                 epoch_title,
             )
@@ -142,34 +143,89 @@ class NarrativePipelineV2:
 
                 equivalences = await gather_actor_equivalences(s_init)
 
-                # Detach outline objects so they're usable after session closes
                 outline_records = [
-                    (o.id, o.chapter_number, o.title, o.summary or "") for o in outlines
+                    (o.id, o.chapter_number, o.title, o.summary or "")
+                    for o in outlines
                 ]
 
-            prior_summaries: list[str] = []
-
-            for outline_id, chapter_number, outline_title, outline_summary in outline_records:
+            # -------------------------------------------------------------
+            # PHASE A — Extract atomic events for every chapter × culture.
+            # This produces per-chapter atomic events but no clusters yet.
+            # -------------------------------------------------------------
+            logger.info(
+                "  PHASE A: extracting atomic events for %d chapters × %d cultures",
+                len(outline_records),
+                len(source_groups),
+            )
+            for outline_id, chapter_number, outline_title, _ in outline_records:
                 logger.info(
-                    "  Chapter %d: %s",
+                    "    Chapter %d: %s — stage 1+2",
                     chapter_number,
                     outline_title,
                 )
-                # Each chapter opens its own session; long-lived sessions die
-                # during the multi-minute parallel LLM gather.
                 async with async_session_factory() as chapter_session:
-                    # Re-load the StoryOutline ORM object in this session
                     outline_obj = (
                         await chapter_session.execute(
                             select(StoryOutline).where(StoryOutline.id == outline_id)
                         )
                     ).scalar_one()
-                    result = await self._run_chapter(
+                    await self._run_phase_a(
+                        outline=outline_obj,
+                        source_groups=source_groups,
+                    )
+
+            # -------------------------------------------------------------
+            # PHASE B — Cluster globally across all chapters and mint
+            # archetypes ONCE for the whole epoch. Consistent archetypes
+            # across chapters = consistent narrative.
+            # -------------------------------------------------------------
+            logger.info(
+                "  PHASE B: global clustering + archetype minting across "
+                "%d chapters",
+                len(outline_records),
+            )
+            async with async_session_factory() as global_session:
+                global_cluster_map = await self._run_phase_b_global(
+                    session=global_session,
+                    epoch_id=epoch_id,
+                    outline_records=outline_records,
+                    equivalences=equivalences,
+                )
+
+            # -------------------------------------------------------------
+            # PHASE C — Render each chapter using the globally-consistent
+            # archetypes. Post-process. Persist StoryChapter.
+            # -------------------------------------------------------------
+            logger.info(
+                "  PHASE C: rendering %d chapters with consistent archetypes",
+                len(outline_records),
+            )
+            prior_summaries: list[str] = []
+            for outline_id, chapter_number, outline_title, outline_summary in outline_records:
+                logger.info(
+                    "    Chapter %d: %s — rendering",
+                    chapter_number,
+                    outline_title,
+                )
+                chapter_cluster_rows = global_cluster_map.get(outline_id, [])
+                if not chapter_cluster_rows:
+                    logger.warning(
+                        "      Chapter %d has no clusters — skipping render",
+                        chapter_number,
+                    )
+                    continue
+
+                async with async_session_factory() as chapter_session:
+                    outline_obj = (
+                        await chapter_session.execute(
+                            select(StoryOutline).where(StoryOutline.id == outline_id)
+                        )
+                    ).scalar_one()
+                    result = await self._run_phase_c_render(
                         session=chapter_session,
                         epoch_id=epoch_id,
                         outline=outline_obj,
-                        source_groups=source_groups,
-                        equivalences=equivalences,
+                        cluster_rows=chapter_cluster_rows,
                         prior_summaries=prior_summaries,
                     )
                 total_chapters += 1
@@ -185,23 +241,17 @@ class NarrativePipelineV2:
         }
 
     # ------------------------------------------------------------------
-    # Per-chapter
+    # PHASE A: per-chapter Stage 1 + 2 (fact sheet + atomic events)
     # ------------------------------------------------------------------
 
-    async def _run_chapter(
+    async def _run_phase_a(
         self,
         *,
-        session: AsyncSession,
-        epoch_id: uuid.UUID,
         outline: StoryOutline,
         source_groups: list,
-        equivalences: dict[str, set[str]],
-        prior_summaries: list[str],
-    ) -> dict[str, Any]:
-        """Run all five stages for one chapter."""
-
-        # ------------- Stage 1 + 2: per-culture (parallel LLM calls) -------------
-        atomic_events_for_chapter: list[AtomicEventRow] = []
+    ) -> None:
+        """Run Stage 1 + Stage 2 for a single chapter, for each culture, in
+        parallel. Persists culture narratives and atomic events."""
 
         sem = asyncio.Semaphore(CULTURE_CONCURRENCY)
 
@@ -329,7 +379,7 @@ class NarrativePipelineV2:
                 return True
 
         logger.info(
-            "  Stage 1+2: parallel processing of %d cultures (concurrency=%d)",
+            "      Stage 1+2: parallel processing of %d cultures (concurrency=%d)",
             len(source_groups),
             CULTURE_CONCURRENCY,
         )
@@ -340,45 +390,46 @@ class NarrativePipelineV2:
             ]
         )
 
-        # Open a fresh session for Stage 3-5 — the parent `session` may have
-        # idled long enough during gather() that asyncpg dropped the conn.
-        try:
-            await session.close()
-        except Exception:
-            pass
+    # ------------------------------------------------------------------
+    # PHASE B: global clustering + archetype minting across all chapters
+    # ------------------------------------------------------------------
 
-        async with async_session_factory() as session:
-            return await self._run_chapter_post_gather(
-                session=session,
-                epoch_id=epoch_id,
-                outline=outline,
-                equivalences=equivalences,
-                prior_summaries=prior_summaries,
-                atomic_events_for_chapter=atomic_events_for_chapter,
-            )
-
-    async def _run_chapter_post_gather(
+    async def _run_phase_b_global(
         self,
         *,
         session: AsyncSession,
         epoch_id: uuid.UUID,
-        outline: StoryOutline,
+        outline_records: list,
         equivalences: dict[str, set[str]],
-        prior_summaries: list[str],
-        atomic_events_for_chapter: list[AtomicEventRow],
-    ) -> dict[str, Any]:
-        """Stage 3-5 of a chapter, run with a fresh session post-gather."""
+    ) -> dict[uuid.UUID, list[dict[str, Any]]]:
+        """Cluster ALL atomic events across every chapter in the epoch, then
+        mint/resolve archetypes ONCE. Returns a mapping of outline_id →
+        list of cluster_rows (ordered by chapter chronology) that each chapter
+        should render with.
 
+        This means:
+          - A cluster whose events come from multiple chapters appears in ALL
+            those chapters' cluster_rows with the SAME archetype_registry_id.
+          - Across chapters, e.g. Marduk always resolves to "The Champion".
+        """
+
+        outline_ids = [rec[0] for rec in outline_records]
+        outline_id_to_number = {rec[0]: rec[1] for rec in outline_records}
+
+        # Load every atomic event for every chapter in this epoch
         atomic_rows = (
             await session.execute(
                 select(CultureAtomicEvent).where(
-                    CultureAtomicEvent.story_outline_id == outline.id
+                    CultureAtomicEvent.story_outline_id.in_(outline_ids)
                 )
             )
         ).scalars().all()
 
+        event_id_to_outline: dict[uuid.UUID, uuid.UUID] = {}
+        atomic_events: list[AtomicEventRow] = []
         for r in atomic_rows:
-            atomic_events_for_chapter.append(
+            event_id_to_outline[r.id] = r.story_outline_id
+            atomic_events.append(
                 AtomicEventRow(
                     id=r.id,
                     culture_key=r.culture_key,
@@ -393,85 +444,141 @@ class NarrativePipelineV2:
                     outcome_keywords=list(r.outcome_keywords or []),
                     quoted_phrase=r.quoted_phrase,
                     source_ref=r.source_ref,
-                    action_embedding=list(r.action_embedding) if r.action_embedding else None,
+                    action_embedding=(
+                        list(r.action_embedding) if r.action_embedding else None
+                    ),
                 )
             )
 
-        # ------------- Stage 3: cluster -------------
-        clusters = cluster_events(atomic_events_for_chapter, equivalences=equivalences)
         logger.info(
-            "  Stage 3: %d clusters (from %d atomic events)",
-            len(clusters),
-            len(atomic_events_for_chapter),
+            "    Phase B: clustering %d atomic events globally",
+            len(atomic_events),
+        )
+        clusters = cluster_events(atomic_events, equivalences=equivalences)
+        logger.info(
+            "    Phase B: produced %d global clusters", len(clusters)
         )
 
-        # Wipe prior clusters for this outline
+        # Wipe prior cluster rows for all chapters in scope so we can
+        # repopulate cleanly.
         await session.execute(
-            delete(EventCluster).where(EventCluster.story_outline_id == outline.id)
+            delete(EventCluster).where(
+                EventCluster.story_outline_id.in_(outline_ids)
+            )
         )
         await session.flush()
 
-        cluster_rows: list[dict[str, Any]] = []
+        # For each global cluster, resolve the archetype ONCE, then emit a
+        # per-chapter cluster_row (same archetype_registry_id) for every
+        # chapter whose events participated.
+        chapter_to_rows: dict[uuid.UUID, list[dict[str, Any]]] = {
+            oid: [] for oid in outline_ids
+        }
+        chapter_next_seq: dict[uuid.UUID, int] = {oid: 1 for oid in outline_ids}
         skipped_non_actor = 0
-        next_seq = 1
-        for cluster in clusters:
-            cluster_row = cluster_to_row(cluster, seq=next_seq)
 
-            # Stage 3B: resolve archetype (returns None for non-actor clusters)
+        for cluster in clusters:
+            # Resolve the archetype ONCE for the global cluster.
+            canonical_row = cluster_to_row(cluster, seq=0)
+
             archetype = await resolve_archetype(
                 session=session,
-                cluster_row=cluster_row,
+                cluster_row=canonical_row,
                 epoch_id=epoch_id,
-                chapter_id=None,  # Will be updated after StoryChapter insert
+                chapter_id=None,
                 entity_type="actor",
             )
             if archetype is None:
                 skipped_non_actor += 1
                 continue
 
-            cluster_row["seq"] = next_seq
-            next_seq += 1
-            cluster_row["primary_archetype_name"] = archetype.archetype_name
-            cluster_row["archetype_registry_id"] = archetype.id
+            # Determine which chapters this cluster touches.
+            participating_outlines: set[uuid.UUID] = set()
+            for ev in cluster.members:
+                oid = event_id_to_outline.get(ev.id)
+                if oid is not None:
+                    participating_outlines.add(oid)
 
-            db_row = EventCluster(
-                story_outline_id=outline.id,
-                cluster_key=cluster_row["cluster_key"],
-                seq=cluster_row["seq"],
-                primary_archetype_name=cluster_row["primary_archetype_name"],
-                archetype_registry_id=cluster_row["archetype_registry_id"],
-                contributing_event_ids=cluster_row["contributing_event_ids"],
-                contributing_cultures=cluster_row["contributing_cultures"],
-                canonical_verb=cluster_row["canonical_verb"],
-                canonical_outcome=cluster_row["canonical_outcome"],
-                verb_family=cluster_row["verb_family"],
-                materials=cluster_row["materials"],
-                vivid_details=cluster_row["vivid_details"],
-                source_quotes=cluster_row["source_quotes"],
-                age_rank_of_oldest=cluster_row["age_rank_of_oldest"],
-                retention_score=cluster_row["retention_score"],
-            )
-            session.add(db_row)
-            cluster_rows.append(cluster_row)
+            for outline_id in participating_outlines:
+                seq = chapter_next_seq[outline_id]
+                chapter_next_seq[outline_id] = seq + 1
+
+                chapter_members = [
+                    ev
+                    for ev in cluster.members
+                    if event_id_to_outline.get(ev.id) == outline_id
+                ]
+                if not chapter_members:
+                    continue
+
+                chapter_cluster = Cluster(
+                    cluster_key=f"{cluster.cluster_key}::ch{outline_id}",
+                    verb_family=cluster.verb_family,
+                    members=chapter_members,
+                )
+                chapter_row = cluster_to_row(chapter_cluster, seq=seq)
+                chapter_row["primary_archetype_name"] = archetype.archetype_name
+                chapter_row["archetype_registry_id"] = archetype.id
+
+                db_row = EventCluster(
+                    story_outline_id=outline_id,
+                    cluster_key=chapter_row["cluster_key"],
+                    seq=chapter_row["seq"],
+                    primary_archetype_name=chapter_row["primary_archetype_name"],
+                    archetype_registry_id=chapter_row["archetype_registry_id"],
+                    contributing_event_ids=chapter_row["contributing_event_ids"],
+                    contributing_cultures=chapter_row["contributing_cultures"],
+                    canonical_verb=chapter_row["canonical_verb"],
+                    canonical_outcome=chapter_row["canonical_outcome"],
+                    verb_family=chapter_row["verb_family"],
+                    materials=chapter_row["materials"],
+                    vivid_details=chapter_row["vivid_details"],
+                    source_quotes=chapter_row["source_quotes"],
+                    age_rank_of_oldest=chapter_row["age_rank_of_oldest"],
+                    retention_score=chapter_row["retention_score"],
+                )
+                session.add(db_row)
+                chapter_to_rows[outline_id].append(chapter_row)
 
         await session.flush()
         await session.commit()
 
         if skipped_non_actor:
             logger.info(
-                "  Stage 3B: skipped %d non-actor clusters (places/absence)",
-                skipped_non_actor,
+                "    Phase B: skipped %d non-actor clusters", skipped_non_actor
             )
+        for oid, rows in chapter_to_rows.items():
+            logger.info(
+                "    Chapter %d: %d clusters assigned",
+                outline_id_to_number.get(oid, -1),
+                len(rows),
+            )
+
+        return chapter_to_rows
+
+    # ------------------------------------------------------------------
+    # PHASE C: per-chapter rendering + post-processing
+    # ------------------------------------------------------------------
+
+    async def _run_phase_c_render(
+        self,
+        *,
+        session: AsyncSession,
+        epoch_id: uuid.UUID,
+        outline: StoryOutline,
+        cluster_rows: list[dict[str, Any]],
+        prior_summaries: list[str],
+    ) -> dict[str, Any]:
+        """Render one chapter using pre-resolved archetype cluster rows."""
 
         if not cluster_rows:
             logger.warning(
-                "Chapter %s produced zero clusters — skipping narrative render",
+                "      Chapter %s produced zero clusters — skipping render",
                 outline.title,
             )
             return {"cluster_count": 0}
 
-        # ------------- Stage 4: render -------------
-        # Build ClusterForRendering inputs; look up archetype role descriptions
+        # Stage 4 input: look up archetype role descriptions
         arch_name_to_role: dict[str, str | None] = {}
         arch_rows = (
             await session.execute(
