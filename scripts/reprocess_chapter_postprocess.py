@@ -23,6 +23,7 @@ from src.canon.services.narrative_v2.stage4_render import render_chapter  # unus
 from src.canon.services.narrative_v2.stage5_post_process import (
     insert_annotations,
     load_archetypes_by_name,
+    normalize_duplicate_archetype_phrases,
     scrub_leaked_names,
     validate,
 )
@@ -62,6 +63,7 @@ async def _reprocess_one(session, outline_id, chapter_id):
     raw = re.sub(r"\[\[(?:actor|place):([^\]]+)\]\]", r"\1", ch.narrative_text or "")
 
     cleaned = scrub_leaked_names(raw, archetypes)
+    cleaned = normalize_duplicate_archetype_phrases(cleaned, archetypes)
     cleaned = insert_annotations(cleaned, archetypes)
     problems = validate(cleaned, archetypes)
 

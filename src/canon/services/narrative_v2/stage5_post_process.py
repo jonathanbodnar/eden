@@ -244,6 +244,37 @@ def validate(narrative: str, archetypes: list[ArchetypeRegistry]) -> list[str]:
     return problems
 
 
+def normalize_duplicate_archetype_phrases(
+    text: str, archetypes: list[ArchetypeRegistry]
+) -> str:
+    """Collapse patterns like 'Primordial The Primordial Void' to 'The Primordial Void'.
+
+    These arise when a previous scrub run replaced a token that was already
+    adjacent to a descriptor word shared with the archetype name.
+    """
+    for a in archetypes:
+        name = a.archetype_name
+        if not name:
+            continue
+
+        # Pattern 1: "Word1 The Word1 Word2..." where Word1 is a token of the
+        # archetype name. E.g. "Primordial The Primordial Void" → "The Primordial Void".
+        tokens = [t for t in name.split() if len(t) >= 4 and t.lower() != "the"]
+        for tok in tokens:
+            pat = re.compile(rf"\b{re.escape(tok)}\s+({re.escape(name)})\b", re.IGNORECASE)
+            text = pat.sub(r"\1", text)
+
+        # Pattern 2: "the [Name]" where [Name] starts with "The " → drop one "the".
+        pat2 = re.compile(rf"\b[Tt]he\s+({re.escape(name)})\b")
+        text = pat2.sub(r"\1", text)
+
+        # Pattern 3: doubled name, e.g. "The X The X" → "The X".
+        pat3 = re.compile(rf"\b({re.escape(name)})\s+\1\b")
+        text = pat3.sub(r"\1", text)
+
+    return text
+
+
 async def post_process(
     session: AsyncSession,
     narrative_text: str,
@@ -258,6 +289,7 @@ async def post_process(
     archetypes = await load_archetypes_by_name(session, archetype_names)
 
     cleaned = scrub_leaked_names(narrative_text, archetypes)
+    cleaned = normalize_duplicate_archetype_phrases(cleaned, archetypes)
     cleaned = insert_annotations(cleaned, archetypes)
 
     entity_mentions = build_entity_mentions(archetypes, cluster_rows)
