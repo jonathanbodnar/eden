@@ -14,6 +14,7 @@ from typing import Any
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.canon.database import async_session_factory
 from src.canon.models.canonical_epoch import CanonicalEpoch
 from src.canon.models.culture_narrative import (
     CultureEventSkeleton,
@@ -87,53 +88,83 @@ class NarrativePipelineV2:
         total_chapters = 0
         total_clusters = 0
 
-        for epoch in epochs:
+        # Capture epoch IDs; we'll re-open sessions per-chapter to avoid stale conns.
+        epoch_records = [
+            (e.id, e.epoch_order, e.title) for e in epochs
+        ]
+
+        # Pre-close the passed session — chapters open their own to stay fresh.
+        try:
+            await session.close()
+        except Exception:
+            pass
+
+        for epoch_id, epoch_order, epoch_title in epoch_records:
             logger.info(
                 "V2 pipeline: processing epoch %d — %s",
-                epoch.epoch_order,
-                epoch.title,
+                epoch_order,
+                epoch_title,
             )
-            outlines = (
-                await session.execute(
-                    select(StoryOutline)
-                    .where(StoryOutline.epoch_id == epoch.id)
-                    .order_by(StoryOutline.chapter_number)
+
+            async with async_session_factory() as s_init:
+                outlines = (
+                    await s_init.execute(
+                        select(StoryOutline)
+                        .where(StoryOutline.epoch_id == epoch_id)
+                        .order_by(StoryOutline.chapter_number)
+                    )
+                ).scalars().all()
+
+                if not outlines:
+                    logger.warning(
+                        "Epoch %s has no story_outlines — run planner first",
+                        epoch_title,
+                    )
+                    continue
+
+                source_groups = await gather_sources_for_epoch(
+                    s_init, epoch_id, themes=[]
                 )
-            ).scalars().all()
+                if max_cultures is not None:
+                    source_groups = source_groups[:max_cultures]
 
-            if not outlines:
-                logger.warning(
-                    "Epoch %s has no story_outlines — run planner first", epoch.title
-                )
-                continue
+                equivalences = await gather_actor_equivalences(s_init)
 
-            source_groups = await gather_sources_for_epoch(
-                session, epoch.id, themes=[]
-            )
-            if max_cultures is not None:
-                source_groups = source_groups[:max_cultures]
-
-            equivalences = await gather_actor_equivalences(session)
+                # Detach outline objects so they're usable after session closes
+                outline_records = [
+                    (o.id, o.chapter_number, o.title, o.summary or "") for o in outlines
+                ]
 
             prior_summaries: list[str] = []
 
-            for outline in outlines:
+            for outline_id, chapter_number, outline_title, outline_summary in outline_records:
                 logger.info(
                     "  Chapter %d: %s",
-                    outline.chapter_number,
-                    outline.title,
+                    chapter_number,
+                    outline_title,
                 )
-                result = await self._run_chapter(
-                    session=session,
-                    epoch_id=epoch.id,
-                    outline=outline,
-                    source_groups=source_groups,
-                    equivalences=equivalences,
-                    prior_summaries=prior_summaries,
-                )
+                # Each chapter opens its own session; long-lived sessions die
+                # during the multi-minute parallel LLM gather.
+                async with async_session_factory() as chapter_session:
+                    # Re-load the StoryOutline ORM object in this session
+                    outline_obj = (
+                        await chapter_session.execute(
+                            select(StoryOutline).where(StoryOutline.id == outline_id)
+                        )
+                    ).scalar_one()
+                    result = await self._run_chapter(
+                        session=chapter_session,
+                        epoch_id=epoch_id,
+                        outline=outline_obj,
+                        source_groups=source_groups,
+                        equivalences=equivalences,
+                        prior_summaries=prior_summaries,
+                    )
                 total_chapters += 1
                 total_clusters += result.get("cluster_count", 0)
-                prior_summaries.append(f"Chapter {outline.chapter_number}: {outline.title} — {outline.summary}")
+                prior_summaries.append(
+                    f"Chapter {chapter_number}: {outline_title} — {outline_summary}"
+                )
 
         return {
             "epochs_processed": len(epochs),
@@ -163,10 +194,11 @@ class NarrativePipelineV2:
         sem = asyncio.Semaphore(CULTURE_CONCURRENCY)
 
         async def _process_culture(culture_key, culture_label, sources):
-            """Run Stage 1 + Stage 2 + embeddings for one culture.
+            """Run Stage 1 + Stage 2 + embeddings for one culture, then persist.
 
-            Pure LLM/API work — no DB writes. DB writes happen serially after gather.
-            Returns a dict or None on failure.
+            Each task uses its own short-lived DB session so the parent session
+            isn't held idle during long LLM calls (which would kill the conn).
+            Returns True on success, False on failure.
             """
             async with sem:
                 try:
@@ -179,11 +211,11 @@ class NarrativePipelineV2:
                     )
                 except Exception:
                     logger.exception("Stage 1 failed for %s", culture_key)
-                    return None
+                    return False
 
                 if not stage1 or not stage1.get("prose_history"):
                     logger.warning("Stage 1 empty for %s — skipping", culture_key)
-                    return None
+                    return False
 
                 prose = stage1["prose_history"]
                 fact_sheet = stage1.get("fact_sheet") or {}
@@ -194,132 +226,137 @@ class NarrativePipelineV2:
                     logger.exception("Stage 2 failed for %s", culture_key)
                     events = []
 
-                if not events:
-                    return {
-                        "culture_key": culture_key,
-                        "culture_label": culture_label,
-                        "sources": sources,
-                        "prose": prose,
-                        "fact_sheet": fact_sheet,
-                        "events": [],
-                        "embeddings": [],
-                    }
+                if events:
+                    try:
+                        embeddings = await compute_embeddings(events)
+                    except Exception:
+                        logger.exception("Embeddings failed for %s", culture_key)
+                        embeddings = [None] * len(events)
+                else:
+                    embeddings = []
 
+                # Persist with a fresh, short-lived session
                 try:
-                    embeddings = await compute_embeddings(events)
-                except Exception:
-                    logger.exception("Embeddings failed for %s", culture_key)
-                    embeddings = [None] * len(events)
+                    async with async_session_factory() as s:
+                        existing_cn = (
+                            await s.execute(
+                                select(CultureNarrative).where(
+                                    CultureNarrative.story_outline_id == outline.id,
+                                    CultureNarrative.culture_key == culture_key,
+                                )
+                            )
+                        ).scalar_one_or_none()
 
-                return {
-                    "culture_key": culture_key,
-                    "culture_label": culture_label,
-                    "sources": sources,
-                    "prose": prose,
-                    "fact_sheet": fact_sheet,
-                    "events": events,
-                    "embeddings": embeddings,
-                }
+                        if existing_cn is None:
+                            cn = CultureNarrative(
+                                story_outline_id=outline.id,
+                                culture_key=culture_key,
+                                culture_label=culture_label,
+                                narrative_text=prose,
+                                prose_history=prose,
+                                fact_sheet=fact_sheet,
+                                actors_json=fact_sheet.get("actors"),
+                                events_json=fact_sheet.get("events"),
+                                places_json=fact_sheet.get("places"),
+                                source_ids=[s.source_id for s in sources],
+                                source_count=len(sources),
+                                word_count=len(prose.split()),
+                                generation_version=2,
+                            )
+                            s.add(cn)
+                            await s.flush()
+                        else:
+                            existing_cn.narrative_text = prose
+                            existing_cn.prose_history = prose
+                            existing_cn.fact_sheet = fact_sheet
+                            existing_cn.actors_json = fact_sheet.get("actors")
+                            existing_cn.events_json = fact_sheet.get("events")
+                            existing_cn.places_json = fact_sheet.get("places")
+                            existing_cn.source_ids = [s.source_id for s in sources]
+                            existing_cn.source_count = len(sources)
+                            existing_cn.word_count = len(prose.split())
+                            existing_cn.generation_version = 2
+                            cn = existing_cn
+
+                        if events:
+                            await s.execute(
+                                delete(CultureAtomicEvent).where(
+                                    CultureAtomicEvent.culture_narrative_id == cn.id
+                                )
+                            )
+                            await s.flush()
+
+                            for ev, emb in zip(events, embeddings):
+                                row = CultureAtomicEvent(
+                                    culture_narrative_id=cn.id,
+                                    story_outline_id=outline.id,
+                                    culture_key=culture_key,
+                                    seq=ev["seq"],
+                                    actors=ev["actors"],
+                                    verb=ev["verb"],
+                                    verb_family=ev["verb_family"],
+                                    objects=ev["objects"],
+                                    materials=ev["materials"],
+                                    place=ev["place"],
+                                    outcome=ev["outcome"],
+                                    outcome_keywords=ev["outcome_keywords"],
+                                    quoted_phrase=ev["quoted_phrase"],
+                                    source_ref=ev["source_ref"],
+                                    action_embedding=emb if emb else None,
+                                )
+                                s.add(row)
+                            await s.flush()
+                        await s.commit()
+                except Exception:
+                    logger.exception("DB persist failed for %s", culture_key)
+                    return False
+
+                logger.info(
+                    "    %s: %d events persisted", culture_key, len(events)
+                )
+                return True
 
         logger.info(
             "  Stage 1+2: parallel processing of %d cultures (concurrency=%d)",
             len(source_groups),
             CULTURE_CONCURRENCY,
         )
-        culture_results = await asyncio.gather(
+        await asyncio.gather(
             *[
                 _process_culture(culture_key, culture_label, sources)
                 for culture_key, culture_label, sources in source_groups
             ]
         )
 
-        # ---- DB writes (serial, since sharing a single session) ----
-        for res in culture_results:
-            if res is None:
-                continue
+        # Open a fresh session for Stage 3-5 — the parent `session` may have
+        # idled long enough during gather() that asyncpg dropped the conn.
+        try:
+            await session.close()
+        except Exception:
+            pass
 
-            culture_key = res["culture_key"]
-            culture_label = res["culture_label"]
-            sources = res["sources"]
-            prose = res["prose"]
-            fact_sheet = res["fact_sheet"]
-            events = res["events"]
-            embeddings = res["embeddings"]
-
-            existing_cn = (
-                await session.execute(
-                    select(CultureNarrative).where(
-                        CultureNarrative.story_outline_id == outline.id,
-                        CultureNarrative.culture_key == culture_key,
-                    )
-                )
-            ).scalar_one_or_none()
-
-            if existing_cn is None:
-                cn = CultureNarrative(
-                    story_outline_id=outline.id,
-                    culture_key=culture_key,
-                    culture_label=culture_label,
-                    narrative_text=prose,
-                    prose_history=prose,
-                    fact_sheet=fact_sheet,
-                    actors_json=fact_sheet.get("actors"),
-                    events_json=fact_sheet.get("events"),
-                    places_json=fact_sheet.get("places"),
-                    source_ids=[s.source_id for s in sources],
-                    source_count=len(sources),
-                    word_count=len(prose.split()),
-                    generation_version=2,
-                )
-                session.add(cn)
-                await session.flush()
-            else:
-                existing_cn.narrative_text = prose
-                existing_cn.prose_history = prose
-                existing_cn.fact_sheet = fact_sheet
-                existing_cn.actors_json = fact_sheet.get("actors")
-                existing_cn.events_json = fact_sheet.get("events")
-                existing_cn.places_json = fact_sheet.get("places")
-                existing_cn.source_ids = [s.source_id for s in sources]
-                existing_cn.source_count = len(sources)
-                existing_cn.word_count = len(prose.split())
-                existing_cn.generation_version = 2
-                cn = existing_cn
-
-            if not events:
-                await session.commit()
-                continue
-
-            await session.execute(
-                delete(CultureAtomicEvent).where(
-                    CultureAtomicEvent.culture_narrative_id == cn.id
-                )
+        async with async_session_factory() as session:
+            return await self._run_chapter_post_gather(
+                session=session,
+                epoch_id=epoch_id,
+                outline=outline,
+                equivalences=equivalences,
+                prior_summaries=prior_summaries,
+                atomic_events_for_chapter=atomic_events_for_chapter,
             )
-            await session.flush()
 
-            for ev, emb in zip(events, embeddings):
-                row = CultureAtomicEvent(
-                    culture_narrative_id=cn.id,
-                    story_outline_id=outline.id,
-                    culture_key=culture_key,
-                    seq=ev["seq"],
-                    actors=ev["actors"],
-                    verb=ev["verb"],
-                    verb_family=ev["verb_family"],
-                    objects=ev["objects"],
-                    materials=ev["materials"],
-                    place=ev["place"],
-                    outcome=ev["outcome"],
-                    outcome_keywords=ev["outcome_keywords"],
-                    quoted_phrase=ev["quoted_phrase"],
-                    source_ref=ev["source_ref"],
-                    action_embedding=emb if emb else None,
-                )
-                session.add(row)
-            await session.flush()
-            await session.commit()
+    async def _run_chapter_post_gather(
+        self,
+        *,
+        session: AsyncSession,
+        epoch_id: uuid.UUID,
+        outline: StoryOutline,
+        equivalences: dict[str, set[str]],
+        prior_summaries: list[str],
+        atomic_events_for_chapter: list[AtomicEventRow],
+    ) -> dict[str, Any]:
+        """Stage 3-5 of a chapter, run with a fresh session post-gather."""
 
-        # Re-load atomic events for this chapter (fresh from DB for clustering)
         atomic_rows = (
             await session.execute(
                 select(CultureAtomicEvent).where(
