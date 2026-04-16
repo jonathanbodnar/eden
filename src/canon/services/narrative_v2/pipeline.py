@@ -86,7 +86,7 @@ class NarrativePipelineV2:
             logger.info(
                 "V2 pipeline: processing epoch %d — %s",
                 epoch.epoch_order,
-                epoch.name,
+                epoch.title,
             )
             outlines = (
                 await session.execute(
@@ -98,7 +98,7 @@ class NarrativePipelineV2:
 
             if not outlines:
                 logger.warning(
-                    "Epoch %s has no story_outlines — run planner first", epoch.name
+                    "Epoch %s has no story_outlines — run planner first", epoch.title
                 )
                 continue
 
