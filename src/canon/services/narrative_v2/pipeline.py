@@ -50,6 +50,11 @@ from src.canon.services.narrative_v2.stage5_post_process import post_process
 
 logger = logging.getLogger(__name__)
 
+# How many cultures to process concurrently per chapter.
+# Each culture fires 2 DeepSeek calls (Stage 1 + Stage 2) + 1 OpenAI embeddings call.
+# DeepSeek-reasoner handles ~10-20 concurrent requests comfortably.
+CULTURE_CONCURRENCY = 8
+
 
 class NarrativePipelineV2:
     """Orchestrates the five-stage V2 pipeline."""
@@ -152,25 +157,95 @@ class NarrativePipelineV2:
     ) -> dict[str, Any]:
         """Run all five stages for one chapter."""
 
-        # ------------- Stage 1 + 2: per-culture -------------
+        # ------------- Stage 1 + 2: per-culture (parallel LLM calls) -------------
         atomic_events_for_chapter: list[AtomicEventRow] = []
 
-        for culture_key, culture_label, sources in source_groups:
-            # Stage 1: fact sheet
-            stage1 = await generate_fact_sheet(
-                culture_label=culture_label or CULTURE_LABELS.get(culture_key, culture_key),
-                chapter_title=outline.title,
-                chapter_summary=outline.summary or "",
-                sources=sources,
-            )
-            if not stage1 or not stage1.get("prose_history"):
-                logger.warning("Stage 1 empty for %s — skipping", culture_key)
+        sem = asyncio.Semaphore(CULTURE_CONCURRENCY)
+
+        async def _process_culture(culture_key, culture_label, sources):
+            """Run Stage 1 + Stage 2 + embeddings for one culture.
+
+            Pure LLM/API work — no DB writes. DB writes happen serially after gather.
+            Returns a dict or None on failure.
+            """
+            async with sem:
+                try:
+                    stage1 = await generate_fact_sheet(
+                        culture_label=culture_label
+                        or CULTURE_LABELS.get(culture_key, culture_key),
+                        chapter_title=outline.title,
+                        chapter_summary=outline.summary or "",
+                        sources=sources,
+                    )
+                except Exception:
+                    logger.exception("Stage 1 failed for %s", culture_key)
+                    return None
+
+                if not stage1 or not stage1.get("prose_history"):
+                    logger.warning("Stage 1 empty for %s — skipping", culture_key)
+                    return None
+
+                prose = stage1["prose_history"]
+                fact_sheet = stage1.get("fact_sheet") or {}
+
+                try:
+                    events = await distil_atomic_events(fact_sheet)
+                except Exception:
+                    logger.exception("Stage 2 failed for %s", culture_key)
+                    events = []
+
+                if not events:
+                    return {
+                        "culture_key": culture_key,
+                        "culture_label": culture_label,
+                        "sources": sources,
+                        "prose": prose,
+                        "fact_sheet": fact_sheet,
+                        "events": [],
+                        "embeddings": [],
+                    }
+
+                try:
+                    embeddings = await compute_embeddings(events)
+                except Exception:
+                    logger.exception("Embeddings failed for %s", culture_key)
+                    embeddings = [None] * len(events)
+
+                return {
+                    "culture_key": culture_key,
+                    "culture_label": culture_label,
+                    "sources": sources,
+                    "prose": prose,
+                    "fact_sheet": fact_sheet,
+                    "events": events,
+                    "embeddings": embeddings,
+                }
+
+        logger.info(
+            "  Stage 1+2: parallel processing of %d cultures (concurrency=%d)",
+            len(source_groups),
+            CULTURE_CONCURRENCY,
+        )
+        culture_results = await asyncio.gather(
+            *[
+                _process_culture(culture_key, culture_label, sources)
+                for culture_key, culture_label, sources in source_groups
+            ]
+        )
+
+        # ---- DB writes (serial, since sharing a single session) ----
+        for res in culture_results:
+            if res is None:
                 continue
 
-            prose = stage1["prose_history"]
-            fact_sheet = stage1.get("fact_sheet") or {}
+            culture_key = res["culture_key"]
+            culture_label = res["culture_label"]
+            sources = res["sources"]
+            prose = res["prose"]
+            fact_sheet = res["fact_sheet"]
+            events = res["events"]
+            embeddings = res["embeddings"]
 
-            # Persist CultureNarrative
             existing_cn = (
                 await session.execute(
                     select(CultureNarrative).where(
@@ -211,15 +286,10 @@ class NarrativePipelineV2:
                 existing_cn.generation_version = 2
                 cn = existing_cn
 
-            # Stage 2: atomic events
-            events = await distil_atomic_events(fact_sheet)
             if not events:
                 await session.commit()
                 continue
 
-            embeddings = await compute_embeddings(events)
-
-            # Wipe prior atomic events for this (narrative) to allow idempotent rerun
             await session.execute(
                 delete(CultureAtomicEvent).where(
                     CultureAtomicEvent.culture_narrative_id == cn.id
