@@ -157,22 +157,20 @@ class NarrativePipelineV2:
                 len(outline_records),
                 len(source_groups),
             )
-            for outline_id, chapter_number, outline_title, _ in outline_records:
+            for outline_id, chapter_number, outline_title, outline_summary in outline_records:
                 logger.info(
                     "    Chapter %d: %s — stage 1+2",
                     chapter_number,
                     outline_title,
                 )
-                async with async_session_factory() as chapter_session:
-                    outline_obj = (
-                        await chapter_session.execute(
-                            select(StoryOutline).where(StoryOutline.id == outline_id)
-                        )
-                    ).scalar_one()
-                    await self._run_phase_a(
-                        outline=outline_obj,
-                        source_groups=source_groups,
-                    )
+                # Phase A's _process_culture opens its own sessions, so we
+                # don't hold any outer session open across the long gather.
+                await self._run_phase_a(
+                    outline_id=outline_id,
+                    outline_title=outline_title,
+                    outline_summary=outline_summary,
+                    source_groups=source_groups,
+                )
 
             # -------------------------------------------------------------
             # PHASE B — Cluster globally across all chapters and mint
@@ -184,13 +182,11 @@ class NarrativePipelineV2:
                 "%d chapters",
                 len(outline_records),
             )
-            async with async_session_factory() as global_session:
-                global_cluster_map = await self._run_phase_b_global(
-                    session=global_session,
-                    epoch_id=epoch_id,
-                    outline_records=outline_records,
-                    equivalences=equivalences,
-                )
+            global_cluster_map = await self._run_phase_b_global(
+                epoch_id=epoch_id,
+                outline_records=outline_records,
+                equivalences=equivalences,
+            )
 
             # -------------------------------------------------------------
             # PHASE C — Render each chapter using the globally-consistent
@@ -215,19 +211,17 @@ class NarrativePipelineV2:
                     )
                     continue
 
-                async with async_session_factory() as chapter_session:
-                    outline_obj = (
-                        await chapter_session.execute(
-                            select(StoryOutline).where(StoryOutline.id == outline_id)
-                        )
-                    ).scalar_one()
-                    result = await self._run_phase_c_render(
-                        session=chapter_session,
-                        epoch_id=epoch_id,
-                        outline=outline_obj,
-                        cluster_rows=chapter_cluster_rows,
-                        prior_summaries=prior_summaries,
-                    )
+                # _run_phase_c_render opens its own short-lived sessions around
+                # DB lookups and DB writes, so nothing is held during the LLM
+                # call.
+                result = await self._run_phase_c_render(
+                    epoch_id=epoch_id,
+                    outline_id=outline_id,
+                    outline_title=outline_title,
+                    outline_summary=outline_summary,
+                    cluster_rows=chapter_cluster_rows,
+                    prior_summaries=prior_summaries,
+                )
                 total_chapters += 1
                 total_clusters += result.get("cluster_count", 0)
                 prior_summaries.append(
@@ -247,7 +241,9 @@ class NarrativePipelineV2:
     async def _run_phase_a(
         self,
         *,
-        outline: StoryOutline,
+        outline_id: uuid.UUID,
+        outline_title: str,
+        outline_summary: str,
         source_groups: list,
     ) -> None:
         """Run Stage 1 + Stage 2 for a single chapter, for each culture, in
@@ -267,8 +263,8 @@ class NarrativePipelineV2:
                     stage1 = await generate_fact_sheet(
                         culture_label=culture_label
                         or CULTURE_LABELS.get(culture_key, culture_key),
-                        chapter_title=outline.title,
-                        chapter_summary=outline.summary or "",
+                        chapter_title=outline_title,
+                        chapter_summary=outline_summary,
                         sources=sources,
                     )
                 except Exception:
@@ -303,7 +299,7 @@ class NarrativePipelineV2:
                         existing_cn = (
                             await s.execute(
                                 select(CultureNarrative).where(
-                                    CultureNarrative.story_outline_id == outline.id,
+                                    CultureNarrative.story_outline_id == outline_id,
                                     CultureNarrative.culture_key == culture_key,
                                 )
                             )
@@ -311,7 +307,7 @@ class NarrativePipelineV2:
 
                         if existing_cn is None:
                             cn = CultureNarrative(
-                                story_outline_id=outline.id,
+                                story_outline_id=outline_id,
                                 culture_key=culture_key,
                                 culture_label=culture_label,
                                 narrative_text=prose,
@@ -351,7 +347,7 @@ class NarrativePipelineV2:
                             for ev, emb in zip(events, embeddings):
                                 row = CultureAtomicEvent(
                                     culture_narrative_id=cn.id,
-                                    story_outline_id=outline.id,
+                                    story_outline_id=outline_id,
                                     culture_key=culture_key,
                                     seq=ev["seq"],
                                     actors=ev["actors"],
@@ -397,7 +393,6 @@ class NarrativePipelineV2:
     async def _run_phase_b_global(
         self,
         *,
-        session: AsyncSession,
         epoch_id: uuid.UUID,
         outline_records: list,
         equivalences: dict[str, set[str]],
@@ -416,39 +411,48 @@ class NarrativePipelineV2:
         outline_ids = [rec[0] for rec in outline_records]
         outline_id_to_number = {rec[0]: rec[1] for rec in outline_records}
 
-        # Load every atomic event for every chapter in this epoch
-        atomic_rows = (
-            await session.execute(
-                select(CultureAtomicEvent).where(
-                    CultureAtomicEvent.story_outline_id.in_(outline_ids)
+        # Load every atomic event for every chapter in this epoch (short session)
+        async with async_session_factory() as s:
+            atomic_rows = (
+                await s.execute(
+                    select(CultureAtomicEvent).where(
+                        CultureAtomicEvent.story_outline_id.in_(outline_ids)
+                    )
                 )
-            )
-        ).scalars().all()
+            ).scalars().all()
 
-        event_id_to_outline: dict[uuid.UUID, uuid.UUID] = {}
-        atomic_events: list[AtomicEventRow] = []
-        for r in atomic_rows:
-            event_id_to_outline[r.id] = r.story_outline_id
-            atomic_events.append(
-                AtomicEventRow(
-                    id=r.id,
-                    culture_key=r.culture_key,
-                    seq=r.seq,
-                    actors=list(r.actors or []),
-                    verb=r.verb,
-                    verb_family=r.verb_family,
-                    objects=list(r.objects or []),
-                    materials=list(r.materials or []),
-                    place=r.place,
-                    outcome=r.outcome,
-                    outcome_keywords=list(r.outcome_keywords or []),
-                    quoted_phrase=r.quoted_phrase,
-                    source_ref=r.source_ref,
-                    action_embedding=(
-                        list(r.action_embedding) if r.action_embedding else None
-                    ),
+            event_id_to_outline: dict[uuid.UUID, uuid.UUID] = {}
+            atomic_events: list[AtomicEventRow] = []
+            for r in atomic_rows:
+                event_id_to_outline[r.id] = r.story_outline_id
+                atomic_events.append(
+                    AtomicEventRow(
+                        id=r.id,
+                        culture_key=r.culture_key,
+                        seq=r.seq,
+                        actors=list(r.actors or []),
+                        verb=r.verb,
+                        verb_family=r.verb_family,
+                        objects=list(r.objects or []),
+                        materials=list(r.materials or []),
+                        place=r.place,
+                        outcome=r.outcome,
+                        outcome_keywords=list(r.outcome_keywords or []),
+                        quoted_phrase=r.quoted_phrase,
+                        source_ref=r.source_ref,
+                        action_embedding=(
+                            list(r.action_embedding) if r.action_embedding else None
+                        ),
+                    )
+                )
+
+            # Wipe prior cluster rows for all chapters in scope.
+            await s.execute(
+                delete(EventCluster).where(
+                    EventCluster.story_outline_id.in_(outline_ids)
                 )
             )
+            await s.commit()
 
         logger.info(
             "    Phase B: clustering %d atomic events globally",
@@ -459,38 +463,35 @@ class NarrativePipelineV2:
             "    Phase B: produced %d global clusters", len(clusters)
         )
 
-        # Wipe prior cluster rows for all chapters in scope so we can
-        # repopulate cleanly.
-        await session.execute(
-            delete(EventCluster).where(
-                EventCluster.story_outline_id.in_(outline_ids)
-            )
-        )
-        await session.flush()
-
-        # For each global cluster, resolve the archetype ONCE, then emit a
-        # per-chapter cluster_row (same archetype_registry_id) for every
-        # chapter whose events participated.
+        # For each global cluster, resolve the archetype ONCE (its own fresh
+        # session, so the LLM call doesn't idle a long-held conn), then emit a
+        # per-chapter cluster_row (same archetype_registry_id) for every chapter
+        # whose events participated.
         chapter_to_rows: dict[uuid.UUID, list[dict[str, Any]]] = {
             oid: [] for oid in outline_ids
         }
         chapter_next_seq: dict[uuid.UUID, int] = {oid: 1 for oid in outline_ids}
         skipped_non_actor = 0
 
-        for cluster in clusters:
-            # Resolve the archetype ONCE for the global cluster.
+        for i, cluster in enumerate(clusters):
             canonical_row = cluster_to_row(cluster, seq=0)
 
-            archetype = await resolve_archetype(
-                session=session,
-                cluster_row=canonical_row,
-                epoch_id=epoch_id,
-                chapter_id=None,
-                entity_type="actor",
-            )
-            if archetype is None:
-                skipped_non_actor += 1
-                continue
+            async with async_session_factory() as s:
+                archetype = await resolve_archetype(
+                    session=s,
+                    cluster_row=canonical_row,
+                    epoch_id=epoch_id,
+                    chapter_id=None,
+                    entity_type="actor",
+                )
+                if archetype is None:
+                    skipped_non_actor += 1
+                    await s.commit()
+                    continue
+
+                archetype_name = archetype.archetype_name
+                archetype_id = archetype.id
+                await s.commit()
 
             # Determine which chapters this cluster touches.
             participating_outlines: set[uuid.UUID] = set()
@@ -499,49 +500,50 @@ class NarrativePipelineV2:
                 if oid is not None:
                     participating_outlines.add(oid)
 
-            for outline_id in participating_outlines:
-                seq = chapter_next_seq[outline_id]
-                chapter_next_seq[outline_id] = seq + 1
+            # Persist per-chapter cluster_rows in a short session.
+            async with async_session_factory() as s:
+                for outline_id in participating_outlines:
+                    seq = chapter_next_seq[outline_id]
+                    chapter_next_seq[outline_id] = seq + 1
 
-                chapter_members = [
-                    ev
-                    for ev in cluster.members
-                    if event_id_to_outline.get(ev.id) == outline_id
-                ]
-                if not chapter_members:
-                    continue
+                    chapter_members = [
+                        ev
+                        for ev in cluster.members
+                        if event_id_to_outline.get(ev.id) == outline_id
+                    ]
+                    if not chapter_members:
+                        continue
 
-                chapter_cluster = Cluster(
-                    cluster_key=f"{cluster.cluster_key}::ch{outline_id}",
-                    verb_family=cluster.verb_family,
-                    members=chapter_members,
-                )
-                chapter_row = cluster_to_row(chapter_cluster, seq=seq)
-                chapter_row["primary_archetype_name"] = archetype.archetype_name
-                chapter_row["archetype_registry_id"] = archetype.id
+                    chapter_cluster = Cluster(
+                        cluster_key=f"{cluster.cluster_key}::ch{outline_id}",
+                        verb_family=cluster.verb_family,
+                        members=chapter_members,
+                    )
+                    chapter_row = cluster_to_row(chapter_cluster, seq=seq)
+                    chapter_row["primary_archetype_name"] = archetype_name
+                    chapter_row["archetype_registry_id"] = archetype_id
 
-                db_row = EventCluster(
-                    story_outline_id=outline_id,
-                    cluster_key=chapter_row["cluster_key"],
-                    seq=chapter_row["seq"],
-                    primary_archetype_name=chapter_row["primary_archetype_name"],
-                    archetype_registry_id=chapter_row["archetype_registry_id"],
-                    contributing_event_ids=chapter_row["contributing_event_ids"],
-                    contributing_cultures=chapter_row["contributing_cultures"],
-                    canonical_verb=chapter_row["canonical_verb"],
-                    canonical_outcome=chapter_row["canonical_outcome"],
-                    verb_family=chapter_row["verb_family"],
-                    materials=chapter_row["materials"],
-                    vivid_details=chapter_row["vivid_details"],
-                    source_quotes=chapter_row["source_quotes"],
-                    age_rank_of_oldest=chapter_row["age_rank_of_oldest"],
-                    retention_score=chapter_row["retention_score"],
-                )
-                session.add(db_row)
-                chapter_to_rows[outline_id].append(chapter_row)
+                    db_row = EventCluster(
+                        story_outline_id=outline_id,
+                        cluster_key=chapter_row["cluster_key"],
+                        seq=chapter_row["seq"],
+                        primary_archetype_name=chapter_row["primary_archetype_name"],
+                        archetype_registry_id=chapter_row["archetype_registry_id"],
+                        contributing_event_ids=chapter_row["contributing_event_ids"],
+                        contributing_cultures=chapter_row["contributing_cultures"],
+                        canonical_verb=chapter_row["canonical_verb"],
+                        canonical_outcome=chapter_row["canonical_outcome"],
+                        verb_family=chapter_row["verb_family"],
+                        materials=chapter_row["materials"],
+                        vivid_details=chapter_row["vivid_details"],
+                        source_quotes=chapter_row["source_quotes"],
+                        age_rank_of_oldest=chapter_row["age_rank_of_oldest"],
+                        retention_score=chapter_row["retention_score"],
+                    )
+                    s.add(db_row)
+                    chapter_to_rows[outline_id].append(chapter_row)
 
-        await session.flush()
-        await session.commit()
+                await s.commit()
 
         if skipped_non_actor:
             logger.info(
@@ -563,34 +565,40 @@ class NarrativePipelineV2:
     async def _run_phase_c_render(
         self,
         *,
-        session: AsyncSession,
         epoch_id: uuid.UUID,
-        outline: StoryOutline,
+        outline_id: uuid.UUID,
+        outline_title: str,
+        outline_summary: str,
         cluster_rows: list[dict[str, Any]],
         prior_summaries: list[str],
     ) -> dict[str, Any]:
-        """Render one chapter using pre-resolved archetype cluster rows."""
+        """Render one chapter using pre-resolved archetype cluster rows.
+
+        Opens short-lived sessions around DB work; nothing is held during
+        the Stage 4 LLM render.
+        """
 
         if not cluster_rows:
             logger.warning(
                 "      Chapter %s produced zero clusters — skipping render",
-                outline.title,
+                outline_title,
             )
             return {"cluster_count": 0}
 
-        # Stage 4 input: look up archetype role descriptions
+        # Stage 4 input: look up archetype role descriptions (short session)
         arch_name_to_role: dict[str, str | None] = {}
-        arch_rows = (
-            await session.execute(
-                select(ArchetypeRegistry).where(
-                    ArchetypeRegistry.archetype_name.in_(
-                        [cr["primary_archetype_name"] for cr in cluster_rows]
+        async with async_session_factory() as s:
+            arch_rows_q = (
+                await s.execute(
+                    select(ArchetypeRegistry).where(
+                        ArchetypeRegistry.archetype_name.in_(
+                            [cr["primary_archetype_name"] for cr in cluster_rows]
+                        )
                     )
                 )
-            )
-        ).scalars().all()
-        for ar in arch_rows:
-            arch_name_to_role[ar.archetype_name] = ar.role_description
+            ).scalars().all()
+            for ar in arch_rows_q:
+                arch_name_to_role[ar.archetype_name] = ar.role_description
 
         render_inputs: list[ClusterForRendering] = []
         for cr in cluster_rows:
@@ -614,68 +622,78 @@ class NarrativePipelineV2:
                 )
             )
 
+        # LLM call with NO session held open.
         render_result = await render_chapter(
-            chapter_title=outline.title,
-            chapter_summary=outline.summary or "",
+            chapter_title=outline_title,
+            chapter_summary=outline_summary,
             prior_summaries=prior_summaries,
             clusters=render_inputs,
         )
         narrative_text = render_result["narrative_text"]
         archetypes_used = render_result["archetypes_used"]
 
-        # ------------- Stage 5: post-process -------------
-        post = await post_process(
-            session=session,
-            narrative_text=narrative_text,
-            archetype_names=archetypes_used,
-            cluster_rows=cluster_rows,
-        )
+        # Stage 5 post-process + persistence in a fresh session.
+        async with async_session_factory() as session:
+            post = await post_process(
+                session=session,
+                narrative_text=narrative_text,
+                archetype_names=archetypes_used,
+                cluster_rows=cluster_rows,
+            )
 
-        # ------------- Persist StoryChapter -------------
-        existing_ch = (
-            await session.execute(
-                select(StoryChapter).where(
-                    StoryChapter.story_outline_id == outline.id
+            existing_ch = (
+                await session.execute(
+                    select(StoryChapter).where(
+                        StoryChapter.story_outline_id == outline_id
+                    )
                 )
-            )
-        ).scalar_one_or_none()
+            ).scalar_one_or_none()
 
-        wc = len((post["narrative_text"] or "").split())
+            wc = len((post["narrative_text"] or "").split())
 
-        if existing_ch is None:
-            ch = StoryChapter(
-                story_outline_id=outline.id,
-                epoch_id=epoch_id,
-                narrative_text=post["narrative_text"],
-                entity_mentions_json=post["entity_mentions_json"],
-                word_count=wc,
-                pipeline_version="v2",
-                cluster_count=len(cluster_rows),
-                archetypes_used=post["archetypes_used"],
-            )
-            session.add(ch)
-        else:
-            existing_ch.epoch_id = epoch_id
-            existing_ch.narrative_text = post["narrative_text"]
-            existing_ch.entity_mentions_json = post["entity_mentions_json"]
-            existing_ch.word_count = wc
-            existing_ch.pipeline_version = "v2"
-            existing_ch.cluster_count = len(cluster_rows)
-            existing_ch.archetypes_used = post["archetypes_used"]
-            ch = existing_ch
-        await session.flush()
+            if existing_ch is None:
+                ch = StoryChapter(
+                    story_outline_id=outline_id,
+                    epoch_id=epoch_id,
+                    narrative_text=post["narrative_text"],
+                    entity_mentions_json=post["entity_mentions_json"],
+                    word_count=wc,
+                    pipeline_version="v2",
+                    cluster_count=len(cluster_rows),
+                    archetypes_used=post["archetypes_used"],
+                )
+                session.add(ch)
+            else:
+                existing_ch.epoch_id = epoch_id
+                existing_ch.narrative_text = post["narrative_text"]
+                existing_ch.entity_mentions_json = post["entity_mentions_json"]
+                existing_ch.word_count = wc
+                existing_ch.pipeline_version = "v2"
+                existing_ch.cluster_count = len(cluster_rows)
+                existing_ch.archetypes_used = post["archetypes_used"]
+                ch = existing_ch
+            await session.flush()
 
-        # Back-fill first_seen_chapter_id for newly-minted archetypes
-        for ar in arch_rows:
-            if ar.first_seen_chapter_id is None:
-                ar.first_seen_chapter_id = ch.id
+            # Back-fill first_seen_chapter_id for newly-minted archetypes
+            arch_rows_live = (
+                await session.execute(
+                    select(ArchetypeRegistry).where(
+                        ArchetypeRegistry.archetype_name.in_(
+                            [cr["primary_archetype_name"] for cr in cluster_rows]
+                        )
+                    )
+                )
+            ).scalars().all()
+            for ar in arch_rows_live:
+                if ar.first_seen_chapter_id is None:
+                    ar.first_seen_chapter_id = ch.id
 
-        await session.commit()
+            await session.commit()
 
         if post["problems"]:
             logger.warning(
                 "Chapter %s validator flagged %d issues: %s",
-                outline.title,
+                outline_title,
                 len(post["problems"]),
                 post["problems"][:5],
             )
