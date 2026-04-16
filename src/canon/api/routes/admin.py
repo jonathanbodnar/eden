@@ -275,6 +275,7 @@ async def run_narrative_pipeline(
 @router.post("/run-narrative-v2")
 async def run_narrative_v2(
     epoch_orders: str | None = None,
+    chapter_numbers: str | None = None,
     wipe: bool = False,
     max_cultures: int | None = None,
     session: AsyncSession = Depends(get_session),
@@ -285,14 +286,20 @@ async def run_narrative_v2(
 
     Args:
         epoch_orders: comma-separated epoch_order values (e.g. "0,1,2"), omit for all
-        wipe: if True, delete all culture_narratives / story_chapters / clusters
-              for the targeted epochs before regenerating
+        chapter_numbers: comma-separated chapter numbers to process (e.g. "1" or
+            "1,2"); omit for all chapters of each epoch
+        wipe: if True, delete culture_narratives / story_chapters / clusters for
+            the targeted scope before regenerating (epoch-wide unless
+            chapter_numbers is set — in which case only those chapters are wiped)
         max_cultures: cap cultures per chapter (None = all)
     """
     import asyncio
 
     orders = (
         [int(x.strip()) for x in epoch_orders.split(",")] if epoch_orders else None
+    )
+    chapters = (
+        [int(x.strip()) for x in chapter_numbers.split(",")] if chapter_numbers else None
     )
 
     async def _run() -> None:
@@ -306,6 +313,7 @@ async def run_narrative_v2(
                 result = await svc.run(
                     bg_session,
                     epoch_orders=orders,
+                    chapter_numbers=chapters,
                     wipe=wipe,
                     max_cultures=max_cultures,
                 )
@@ -317,6 +325,7 @@ async def run_narrative_v2(
     return {
         "status": "started",
         "epoch_orders": orders,
+        "chapter_numbers": chapters,
         "wipe": wipe,
         "max_cultures": max_cultures,
         "message": "V2 pipeline running in background. Monitor logs for progress.",

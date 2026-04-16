@@ -65,14 +65,19 @@ class NarrativePipelineV2:
         session: AsyncSession,
         *,
         epoch_orders: list[int] | None = None,
+        chapter_numbers: list[int] | None = None,
         wipe: bool = False,
         max_cultures: int | None = None,
     ) -> dict[str, Any]:
-        """Run V2 for the given epochs.
+        """Run V2 for the given epochs (and optionally specific chapters).
 
         Args:
             epoch_orders: list of epoch_order ints; None = all
-            wipe: if True, delete all V1 and V2 artifacts before regenerating
+            chapter_numbers: list of chapter numbers to process within each
+                epoch (e.g. [1] to only run chapter 1). None = all chapters.
+            wipe: if True, delete artifacts before regenerating. If
+                chapter_numbers is set, only those chapters' artifacts are
+                wiped; otherwise all artifacts for the targeted epochs.
             max_cultures: cap number of cultures per chapter (None = all)
         """
 
@@ -83,7 +88,11 @@ class NarrativePipelineV2:
         epochs = (await session.execute(q)).scalars().all()
 
         if wipe:
-            await self._wipe_epochs(session, [e.id for e in epochs])
+            await self._wipe_epochs(
+                session,
+                [e.id for e in epochs],
+                chapter_numbers=chapter_numbers,
+            )
 
         total_chapters = 0
         total_clusters = 0
@@ -107,13 +116,16 @@ class NarrativePipelineV2:
             )
 
             async with async_session_factory() as s_init:
-                outlines = (
-                    await s_init.execute(
-                        select(StoryOutline)
-                        .where(StoryOutline.epoch_id == epoch_id)
-                        .order_by(StoryOutline.chapter_number)
+                outlines_q = (
+                    select(StoryOutline)
+                    .where(StoryOutline.epoch_id == epoch_id)
+                    .order_by(StoryOutline.chapter_number)
+                )
+                if chapter_numbers:
+                    outlines_q = outlines_q.where(
+                        StoryOutline.chapter_number.in_(chapter_numbers)
                     )
-                ).scalars().all()
+                outlines = (await s_init.execute(outlines_q)).scalars().all()
 
                 if not outlines:
                     logger.warning(
@@ -572,22 +584,24 @@ class NarrativePipelineV2:
     # ------------------------------------------------------------------
 
     async def _wipe_epochs(
-        self, session: AsyncSession, epoch_ids: list[uuid.UUID]
+        self,
+        session: AsyncSession,
+        epoch_ids: list[uuid.UUID],
+        chapter_numbers: list[int] | None = None,
     ) -> None:
         if not epoch_ids:
             return
 
-        # Get outlines for these epochs
-        outline_ids = [
-            r
-            for r in (
-                await session.execute(
-                    select(StoryOutline.id).where(
-                        StoryOutline.epoch_id.in_(epoch_ids)
-                    )
-                )
-            ).scalars().all()
-        ]
+        outlines_q = select(StoryOutline.id).where(
+            StoryOutline.epoch_id.in_(epoch_ids)
+        )
+        if chapter_numbers:
+            outlines_q = outlines_q.where(
+                StoryOutline.chapter_number.in_(chapter_numbers)
+            )
+        outline_ids = list(
+            (await session.execute(outlines_q)).scalars().all()
+        )
 
         if outline_ids:
             await session.execute(
