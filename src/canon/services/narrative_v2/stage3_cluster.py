@@ -132,6 +132,18 @@ def _cosine(a: list[float] | None, b: list[float] | None) -> float:
     return dot / (na * nb)
 
 
+def _is_usable_embedding(emb: list[float] | None) -> bool:
+    """True if the embedding has non-trivial magnitude.
+
+    Zero-vectors come from a missing OpenAI API key or embed failure. Treat
+    them as 'no embedding' so rule-based clustering still works.
+    """
+    if not emb:
+        return False
+    mag_sq = sum(x * x for x in emb)
+    return mag_sq > 1e-6
+
+
 def _actor_overlap(
     a: list[str], b: list[str], equivalences: dict[str, set[str]]
 ) -> bool:
@@ -239,30 +251,30 @@ def _split_by_embeddings(
     Iteratively pick the centroid and keep only members above threshold.
     Kicked-out members form new candidate clusters.
     """
-    # If nobody has an embedding, trust the rule-based grouping
-    if all(m.action_embedding is None for m in members):
+    # If nobody has a usable embedding, trust the rule-based grouping.
+    if not any(_is_usable_embedding(m.action_embedding) for m in members):
         return [members]
 
     remaining = list(members)
     groups: list[list[AtomicEventRow]] = []
 
     while remaining:
-        # Pick the oldest-tradition member as anchor
-        anchor = min(
-            remaining,
-            key=lambda m: (CULTURE_AGE_ORDER.get(m.culture_key, 99), m.seq),
-        )
-        if anchor.action_embedding is None:
-            # No embedding available — take rule-based group wholesale
+        # Pick the oldest-tradition member with a usable embedding as anchor
+        with_emb = [m for m in remaining if _is_usable_embedding(m.action_embedding)]
+        if not with_emb:
             groups.append(remaining)
             return groups
+        anchor = min(
+            with_emb,
+            key=lambda m: (CULTURE_AGE_ORDER.get(m.culture_key, 99), m.seq),
+        )
 
         group = [anchor]
         rest = []
         for m in remaining:
             if m is anchor:
                 continue
-            if m.action_embedding is None:
+            if not _is_usable_embedding(m.action_embedding):
                 # Unknown embedding: trust rule match, keep with anchor
                 group.append(m)
                 continue

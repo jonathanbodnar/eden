@@ -37,6 +37,8 @@ services:
       WORLD_DEEPSEEK_API_KEY: "${WORLD_DEEPSEEK_API_KEY:-}"
       WORLD_DEEPSEEK_BASE_URL: "${WORLD_DEEPSEEK_BASE_URL:-https://api.deepseek.com}"
       WORLD_DEEPSEEK_MODEL: "${WORLD_DEEPSEEK_MODEL:-deepseek-chat}"
+      WORLD_OPENAI_API_KEY: "${WORLD_OPENAI_API_KEY:-${EDEN_OPENAI_API_KEY:-}}"
+      WORLD_EMBEDDING_MODEL: "${WORLD_EMBEDDING_MODEL:-text-embedding-3-small}"
       WORLD_RUNPOD_API_KEY: "${WORLD_RUNPOD_API_KEY:-}"
       WORLD_RUNPOD_ENDPOINT_ID: "${WORLD_RUNPOD_ENDPOINT_ID:-}"
       WORLD_CARTESIA_API_KEY: "${WORLD_CARTESIA_API_KEY:-}"
@@ -44,7 +46,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1G
+          memory: 2G
 
   world-worker:
     build:
