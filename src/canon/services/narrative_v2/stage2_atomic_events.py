@@ -54,6 +54,35 @@ def _is_absence_event(event: dict[str, Any]) -> bool:
     return False
 
 
+# Generic plurals that are NOT real actors — they're descriptions of classes
+# of beings. Appearing as a sole actor means the event is under-specified.
+_GENERIC_PLURAL_ACTORS: set[str] = {
+    "gods", "goddesses", "deities", "divinities",
+    "animals", "beasts", "creatures", "monsters",
+    "birds", "fish", "cattle",
+    "humans", "humanity", "mankind", "men", "women", "people", "mortals",
+    "spirits", "demons", "angels",
+    "the gods", "the animals", "the beasts",
+}
+
+
+def _filter_actors(actors: list[str]) -> list[str]:
+    """Remove generic plurals from actor list. Keep real names (proper nouns).
+
+    A real actor is capitalized (proper name) OR is a role word paired with a
+    proper noun. Generic plurals alone don't anchor an event.
+    """
+    cleaned: list[str] = []
+    for a in actors:
+        if not a or not a.strip():
+            continue
+        a = a.strip()
+        if a.lower() in _GENERIC_PLURAL_ACTORS:
+            continue
+        cleaned.append(a)
+    return cleaned
+
+
 _VERB_LIST_FOR_PROMPT = "\n".join(
     f"  {family}: {', '.join(verbs)}" for family, verbs in VERB_FAMILIES.items()
 )
@@ -162,8 +191,10 @@ async def distil_atomic_events(fact_sheet: dict[str, Any]) -> list[dict[str, Any
         if _is_absence_event(ev):
             dropped_absence += 1
             continue
-        actors = [str(a).strip() for a in (ev.get("actors") or []) if a]
+        raw_actors = [str(a).strip() for a in (ev.get("actors") or []) if a]
+        actors = _filter_actors(raw_actors)
         if not actors:
+            # All actors were generic plurals — skip this event
             continue
         family = str(ev.get("verb_family") or "").strip().upper()
         if family not in VERB_FAMILIES:

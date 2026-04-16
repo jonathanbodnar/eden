@@ -138,15 +138,21 @@ CULTURE_LABELS: dict[str, str] = {
 def retention_score(age_rank_oldest: int, culture_count: int) -> float:
     """Law 4 + 5 + 7 encoded as a scalar.
 
-    retention = 10 / age_rank + (size - 1) * 5
+    retention = 20 / age_rank + (size - 1) * 8
 
-    Singletons from the oldest cultures (Sumerian, Mesopotamian) survive alone.
-    Newer singletons are dropped. Convergence across cultures rescues any age.
+    At threshold 2.0:
+      - rank 1 (Sumerian)      → 20 ✓
+      - rank 4 (Hittite)       → 5  ✓
+      - rank 8 (Greek)         → 2.5 ✓
+      - rank 10 (Zoroastrian)  → 2  ✓
+      - rank 14 (Norse)        → 1.4 ✗ (needs a cross-cultural merge)
+
+    Cross-cultural merging always rescues (adds 8 per extra culture).
     """
     if age_rank_oldest <= 0:
         age_rank_oldest = 1
-    return (10.0 / age_rank_oldest) + max(culture_count - 1, 0) * 5.0
+    return (20.0 / age_rank_oldest) + max(culture_count - 1, 0) * 8.0
 
 
-RETENTION_THRESHOLD: float = 5.0
-EMBEDDING_COSINE_THRESHOLD: float = 0.78
+RETENTION_THRESHOLD: float = 2.0
+EMBEDDING_COSINE_THRESHOLD: float = 0.75

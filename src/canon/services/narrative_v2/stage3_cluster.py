@@ -341,14 +341,15 @@ def _embedding_join_pass(
         if rx != ry:
             parent[rx] = ry
 
-    HIGH = 0.85  # very confident — merge even without shared keyword
+    HIGH = 0.80  # confident — merge even without shared keyword
+    LOW = threshold - 0.03  # 0.72 — merge when ALSO has shared keyword
 
     for i in range(n):
         for j in range(i + 1, n):
             best, feature_match = _best_sim_and_feature_match(clusters[i], clusters[j])
             if best >= HIGH:
                 union(i, j)
-            elif best >= threshold and feature_match:
+            elif best >= LOW and feature_match:
                 union(i, j)
 
     merged: dict[int, list[AtomicEventRow]] = defaultdict(list)

@@ -66,6 +66,12 @@ _PLACE_TOKENS: set[str] = {
     "foundation", "brick", "bricks", "dwelling", "dwellings",
     "settlement", "settlements", "field", "fields",
     "wall", "walls", "tower", "towers",
+    # Generic plurals — not specific actors
+    "gods", "goddesses", "deities", "divinities",
+    "animals", "beasts", "creatures", "monsters",
+    "humans", "humanity", "mankind", "men", "women", "people", "mortals",
+    "spirits", "demons", "angels",
+    "birds", "fish", "cattle",
 }
 
 
