@@ -43,11 +43,69 @@ An archetype is the stable English phrase the unified narrative uses for a role 
 3. The name describes a ROLE, not a personality. Think job title, not character.
 4. Keep names short: 2-5 words. "The [Adjective] [Noun]" or "[Noun] of the [Noun]" work well.
 5. Never reuse another archetype's name. This is a new archetype.
+6. The archetype MUST describe a BEING (a deity, primordial entity, mythic figure, or class of beings). Do NOT create archetypes for places, cities, temples, rivers, or inanimate objects. If the contributing names are clearly places/objects (Nippur, Eridu, Uruk, Mount Meru), respond with {"archetype_name": "", "role_description": "NOT_AN_ACTOR"}.
+7. Do NOT create archetypes that merely describe an absence or negative state ("The Void Maker", "The Unbuilt", "The Cityless"). If the cluster describes non-existence, respond with {"archetype_name": "", "role_description": "NOT_AN_ACTOR"}.
 
 ## OUTPUT — return ONLY this JSON:
 
 {"archetype_name": "The Divine Craftsman", "role_description": "shapes matter into beings, especially humanity"}
 """
+
+
+# Tokens that suggest a cluster is about a place, building, or inanimate object
+# rather than a real actor. Used as a defensive pre-check before Stage 3B LLM.
+_PLACE_TOKENS: set[str] = {
+    "nippur", "eridu", "uruk", "ur", "lagash", "kish", "babylon", "akkad",
+    "abzu", "apsu", "kur", "duku", "ekur", "etemenanki",
+    "eden", "sheol", "zion", "jerusalem", "sinai",
+    "olympus", "meru", "asgard", "midgard", "valhalla",
+    "e-anna", "ebabbar", "esagila", "eanna",
+    "heliopolis", "memphis", "thebes",
+    "city", "cities", "temple", "temples", "shrine", "shrines",
+    "river", "rivers", "mountain", "mountains", "sea", "seas",
+    "foundation", "brick", "bricks", "dwelling", "dwellings",
+    "settlement", "settlements", "field", "fields",
+    "wall", "walls", "tower", "towers",
+}
+
+
+def _is_non_actor_cluster(cluster_row: dict[str, Any]) -> bool:
+    """Heuristic: does the cluster describe places/objects rather than beings?
+
+    Checks whether all contributing 'actor' names are actually places/objects,
+    or whether the canonical outcome describes non-existence.
+    """
+    contrib = cluster_row.get("contributing_cultures") or {}
+    all_names: list[str] = []
+    for names in contrib.values():
+        for n in names:
+            if n:
+                all_names.append(n)
+    if not all_names:
+        return True
+
+    def _norm(s: str) -> str:
+        return re.sub(r"[^a-z0-9]+", "", s.lower())
+
+    # If EVERY contributing name looks like a place/object token, it's not an actor.
+    if all_names and all(_norm(n) in _PLACE_TOKENS for n in all_names):
+        return True
+
+    # Outcome clearly describes absence/non-existence.
+    outcome = (cluster_row.get("canonical_outcome") or "").lower()
+    if any(
+        phrase in outcome
+        for phrase in [
+            "no ",
+            "not yet",
+            "had not been",
+            "did not exist",
+            "was not made",
+        ]
+    ):
+        return True
+
+    return False
 
 
 def _normalize_name(s: str) -> str:
@@ -151,13 +209,25 @@ async def resolve_archetype(
     epoch_id: uuid.UUID | None,
     chapter_id: uuid.UUID | None,
     entity_type: str = "actor",
-) -> ArchetypeRegistry:
+) -> ArchetypeRegistry | None:
     """Resolve a cluster to an ArchetypeRegistry row (creating one if needed).
 
-    The returned object is already flushed in the session. Caller should
-    attach `cluster_row["primary_archetype_name"]` and
+    Returns None for clusters that don't describe a real actor (e.g. place
+    clusters, absence statements). Caller should skip those clusters.
+
+    The returned object (if non-None) is already flushed in the session. Caller
+    should attach `cluster_row["primary_archetype_name"]` and
     `cluster_row["archetype_registry_id"]` and then commit.
     """
+
+    # Guard: don't mint archetypes for place/object clusters or absence events.
+    if _is_non_actor_cluster(cluster_row):
+        logger.info(
+            "Stage 3B: skipping non-actor cluster (verb=%s outcome=%r)",
+            cluster_row.get("canonical_verb"),
+            (cluster_row.get("canonical_outcome") or "")[:60],
+        )
+        return None
 
     contrib = cluster_row.get("contributing_cultures") or {}
     all_actor_names: list[str] = []
@@ -210,6 +280,14 @@ async def resolve_archetype(
 
     archetype_name = str(llm_result.get("archetype_name") or "").strip()
     role_description = str(llm_result.get("role_description") or "").strip() or None
+
+    # LLM can veto with NOT_AN_ACTOR when it recognises a non-actor cluster.
+    if role_description == "NOT_AN_ACTOR" or (not archetype_name and role_description == "NOT_AN_ACTOR"):
+        logger.info(
+            "Stage 3B: LLM vetoed non-actor cluster (verb=%s)",
+            cluster_row.get("canonical_verb"),
+        )
+        return None
 
     if not archetype_name:
         # Fallback: deterministic name from oldest member's role

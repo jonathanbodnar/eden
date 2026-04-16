@@ -8,6 +8,7 @@ Stage 3.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from src.canon.services.narrative_v2.llm import call_deepseek, embed_texts
@@ -18,6 +19,39 @@ from src.canon.services.narrative_v2.shared import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# Patterns that indicate a Sumerian/ancient-text "absence" statement:
+# "X had not yet been made", "Y did not exist", "no reed had sprung up".
+# These are scene-setting/context, NOT events with real actors. We skip them
+# from atomic-event extraction — they'd otherwise turn places into "actors"
+# and poison clustering/archetype minting.
+_ABSENCE_PATTERNS: list[re.Pattern[str]] = [
+    re.compile(r"\bhad not (?:yet )?been (?:made|built|constructed|laid|erected|formed|completed|constituted|raised)\b", re.IGNORECASE),
+    re.compile(r"\bhad not (?:yet )?been\b", re.IGNORECASE),
+    re.compile(r"\bhad not (?:yet )?(?:sprung|grown|come|arisen|existed|arrived)\b", re.IGNORECASE),
+    re.compile(r"\bdid not (?:yet )?exist\b", re.IGNORECASE),
+    re.compile(r"\bwas not (?:yet )?(?:made|built|born|created|shaped|formed)\b", re.IGNORECASE),
+    re.compile(r"\bwere not (?:yet )?(?:made|built|born|created|shaped|formed)\b", re.IGNORECASE),
+    re.compile(r"^\s*(?:no|not)\b", re.IGNORECASE),
+    re.compile(r"\bno\s+\w+\s+(?:had|exists|existed|was|were)\b", re.IGNORECASE),
+    re.compile(r"\bhas not been\b", re.IGNORECASE),
+]
+
+
+def _is_absence_event(event: dict[str, Any]) -> bool:
+    """True if the 'event' describes non-existence rather than an action."""
+    blob = " ".join(
+        [
+            str(event.get("outcome") or ""),
+            str(event.get("quoted_phrase") or ""),
+            str(event.get("verb") or ""),
+        ]
+    )
+    for pat in _ABSENCE_PATTERNS:
+        if pat.search(blob):
+            return True
+    return False
 
 
 _VERB_LIST_FOR_PROMPT = "\n".join(
@@ -39,13 +73,15 @@ If the source verb isn't literally on the list, choose the closest verb from the
 
 ## RULES
 
-1. Extract EVERY event from the fact_sheet. Do not skip any. (Law 14)
-2. Keep culture-specific names verbatim in `actors` (e.g. "Enki", "Tiamat").
-3. Preserve direct quotes verbatim in `quoted_phrase` when available.
-4. Include source_ref if present in the fact_sheet.
-5. `outcome_keywords` should be 2-5 normalized lowercase keywords for matching (e.g. ["humanity", "serve"], ["sky", "earth", "separated"], ["void", "beginning"]).
-6. `materials` covers physical substances (clay, dust, blood, breath, water, maize, wood).
-7. Do NOT interpret. Do NOT add motivation unless the fact_sheet explicitly states it.
+1. Extract EVERY TRUE EVENT from the fact_sheet. An event requires an actor performing an action producing an outcome. (Law 14)
+2. Do NOT extract "absence statements" — sentences describing what had not yet happened or did not exist ("X had not yet been made", "no reed had sprung up", "no city existed"). These are scene-setting, not events. Skip them entirely.
+3. The `actors` field must contain beings (deities, mythic figures, humans), NOT places, objects, or temples. If a sentence's grammatical subject is a place (Nippur, Eridu, Abzu), do NOT create an event for it.
+4. Keep culture-specific names verbatim in `actors` (e.g. "Enki", "Tiamat").
+5. Preserve direct quotes verbatim in `quoted_phrase` when available.
+6. Include source_ref if present in the fact_sheet.
+7. `outcome_keywords` should be 2-5 normalized lowercase keywords for matching (e.g. ["humanity", "serve"], ["sky", "earth", "separated"], ["void", "beginning"]). Prefer universal/cross-cultural nouns ("human" over "mankind", "water" over "sea").
+8. `materials` covers physical substances (clay, dust, blood, breath, water, maize, wood).
+9. Do NOT interpret. Do NOT add motivation unless the fact_sheet explicitly states it.
 
 ## OUTPUT — return ONLY valid JSON:
 
@@ -115,6 +151,7 @@ async def distil_atomic_events(fact_sheet: dict[str, Any]) -> list[dict[str, Any
         return []
 
     normalized: list[dict[str, Any]] = []
+    dropped_absence = 0
     for i, ev in enumerate(events, start=1):
         if not isinstance(ev, dict):
             continue
@@ -122,13 +159,19 @@ async def distil_atomic_events(fact_sheet: dict[str, Any]) -> list[dict[str, Any
         outcome = str(ev.get("outcome") or "").strip()
         if not verb or not outcome:
             continue
+        if _is_absence_event(ev):
+            dropped_absence += 1
+            continue
+        actors = [str(a).strip() for a in (ev.get("actors") or []) if a]
+        if not actors:
+            continue
         family = str(ev.get("verb_family") or "").strip().upper()
         if family not in VERB_FAMILIES:
             family = classify_verb(verb)
         normalized.append(
             {
                 "seq": int(ev.get("seq") or i),
-                "actors": [str(a) for a in (ev.get("actors") or [])],
+                "actors": actors,
                 "verb": verb,
                 "verb_family": family,
                 "objects": [str(o) for o in (ev.get("objects") or [])],
@@ -142,6 +185,12 @@ async def distil_atomic_events(fact_sheet: dict[str, Any]) -> list[dict[str, Any
                 "quoted_phrase": ev.get("quoted_phrase") or None,
                 "source_ref": ev.get("source_ref") or None,
             }
+        )
+
+    if dropped_absence:
+        logger.info(
+            "Stage 2: dropped %d absence-statement events (scene-setting context)",
+            dropped_absence,
         )
 
     return normalized

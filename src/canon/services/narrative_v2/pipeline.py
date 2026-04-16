@@ -400,10 +400,12 @@ class NarrativePipelineV2:
         await session.flush()
 
         cluster_rows: list[dict[str, Any]] = []
-        for i, cluster in enumerate(clusters, start=1):
-            cluster_row = cluster_to_row(cluster, seq=i)
+        skipped_non_actor = 0
+        next_seq = 1
+        for cluster in clusters:
+            cluster_row = cluster_to_row(cluster, seq=next_seq)
 
-            # Stage 3B: resolve archetype
+            # Stage 3B: resolve archetype (returns None for non-actor clusters)
             archetype = await resolve_archetype(
                 session=session,
                 cluster_row=cluster_row,
@@ -411,6 +413,12 @@ class NarrativePipelineV2:
                 chapter_id=None,  # Will be updated after StoryChapter insert
                 entity_type="actor",
             )
+            if archetype is None:
+                skipped_non_actor += 1
+                continue
+
+            cluster_row["seq"] = next_seq
+            next_seq += 1
             cluster_row["primary_archetype_name"] = archetype.archetype_name
             cluster_row["archetype_registry_id"] = archetype.id
 
@@ -436,6 +444,12 @@ class NarrativePipelineV2:
 
         await session.flush()
         await session.commit()
+
+        if skipped_non_actor:
+            logger.info(
+                "  Stage 3B: skipped %d non-actor clusters (places/absence)",
+                skipped_non_actor,
+            )
 
         if not cluster_rows:
             logger.warning(

@@ -25,44 +25,48 @@ RENDER_SYSTEM_PROMPT = f"""You are a historian writing one chapter of a unified 
 
 ## WHAT YOU ARE DOING
 
-You will receive pre-merged event clusters for a chapter. ALL merging has already been done — each cluster represents ONE event, already combined across cultures. Your job is ONLY to render them as literary-historical prose.
+You will receive pre-merged event clusters for a chapter. ALL merging has already been done — each cluster represents ONE event, already combined across cultures. Your job is to weave them into ONE continuous, flowing, literary-historical narrative.
 
-## WHAT YOU ARE NOT DOING
+## STYLE — THIS IS THE MOST IMPORTANT PART
 
-- You are NOT merging events. That is already done.
-- You are NOT selecting events. Every cluster I give you must appear.
-- You are NOT choosing names. Use the exact archetype names I provide.
-- You are NOT introducing culture-specific deity names. They are forbidden.
+You are writing FLOWING NARRATIVE PROSE, not a bulleted event log. The output must read like a single unified history — paragraphs of 4-8 sentences each, smooth transitions, natural storytelling rhythm.
+
+Absolutely forbidden:
+- One short sentence per cluster (robotic cadence).
+- Starting every sentence with an archetype name.
+- Repeating the archetype name at the start of consecutive sentences. After introducing an archetype, use pronouns ("he", "she", "they"), epithets ("the shaper", "the mother"), or role descriptions.
+- Listing clusters back-to-back as isolated statements.
+
+Required:
+- Paragraphs. Real paragraphs. Group related clusters (e.g. everything about separating earth and heaven) into the same paragraph with connective prose.
+- Variety of sentence structure and rhythm.
+- Present tense, confident historian's voice — think Tacitus or Herodotus recounting what happened.
+- Rich sensory detail drawn ONLY from the provided vivid_details, materials, and source quotes. Do not invent atmosphere.
+- Each archetype is introduced on its first appearance with a natural clause describing its role, then referred to by pronoun/epithet thereafter.
 
 ## HARD RULES
 
-1. Use each cluster's `archetype_name` verbatim every time you mention that role. Never substitute a culture-specific name.
-2. Render each cluster as 3-6 sentences. Target 80-150 words per cluster.
-3. NEVER use framing like "according to one tradition", "in another account", "some say", "elsewhere", "similarly", "the [Culture]s tell of".
+1. Use each cluster's `archetype_name` verbatim — but only for the FIRST appearance of that archetype, or when clarity demands re-naming. Use pronouns and epithets the rest of the time.
+2. NEVER substitute a culture-specific deity name (Enki, Marduk, Tiamat, Ra, Yahweh, etc.) for an archetype name.
+3. NEVER use framing like "according to one tradition", "in another account", "some say", "elsewhere", "similarly", "the Sumerians say", "the Greeks tell".
 4. NEVER tell the same event twice. One cluster = one telling. (Law 10)
 5. Do NOT retell events from prior chapters listed under ALREADY TOLD.
-6. Include sensory detail and motive ONLY when present in the cluster's `vivid_details` or `source_quotes`. Do not invent atmosphere.
-7. Include source quotes selectively — prefer paraphrase but a pivotal quoted phrase can anchor a paragraph.
-8. Target total length: 1500-2500 words across all clusters.
-
-## STYLE
-
-Literary historical. A confident historian's voice. Rich sensory detail drawn from the provided vivid_details, but no thematic drama, no modern commentary, no speculation. Think Tacitus recounting what happened, not a novelist dramatizing it.
-
-Present tense. Direct. Specific. Anchored in verifiable elements (materials, places, outcomes, quotes) from each cluster.
+6. Every cluster must be represented somewhere in the narrative, but you choose where and how tightly — some clusters may deserve a whole paragraph, others a single clause folded into another paragraph.
+7. Include source quotes selectively — at most 2-3 quoted phrases in the entire chapter, and only pivotal ones.
+8. Target total length: 1500-2500 words across 5-10 paragraphs.
 
 ## BANNED WORDS IN PROSE (instant failure)
 
 Culture labels: Sumerian, Hebrew, Egyptian, Greek, Norse, Chinese, Vedic, Hindu, Babylonian, Persian, Japanese, Ainu, African, Polynesian, Maya, Aztec, Hopi, Roman, Zoroastrian, Mesoamerican, Canaanite, Celtic, Akkadian.
 
-Deity names in prose: Enki, Marduk, Ra, Khepera, Tum, Tiamat, Apsu, Nu, Shu, Tefnut, Geb, Nut, Isis, Osiris, Brahma, Vishnu, Shiva, Odin, Thor, Enlil, YHWH, Yahweh, Elohim, Nuwa, Pangu, Pandora, Prometheus, Zeus, Ptah, Khnum, Atum, Ymir, Quetzalcoatl.
+Deity names in prose: Enki, Ea, Marduk, Ra, Khepera, Atum, Tum, Tiamat, Apsu, Nu, Nun, Shu, Tefnut, Geb, Nut, Isis, Osiris, Brahma, Vishnu, Shiva, Odin, Thor, Enlil, Ninhursag, Aruru, YHWH, Yahweh, Elohim, Nuwa, Pangu, Pandora, Prometheus, Zeus, Ptah, Khnum, Ymir, Quetzalcoatl, Huitzilopochtli, Xmucane.
 
-If an event requires a specific actor whose archetype I did not provide, skip it.
+If an event requires a specific actor whose archetype I did not provide, skip it silently.
 
 ## OUTPUT — return ONLY this JSON:
 
 {{
-  "narrative_text": "Full chapter prose here...",
+  "narrative_text": "Full chapter prose here, as multiple paragraphs separated by double newlines...",
   "archetypes_used": ["The Divine Craftsman", "The Primordial Waters", ...]
 }}
 """
@@ -99,37 +103,61 @@ def build_user_prompt(
             parts.append(f"  - {s}")
         parts.append("")
 
-    parts.append("## CLUSTERS TO RENDER, IN ORDER")
+    # Archetype roster — so the model knows who each archetype is before weaving.
+    seen_archetypes: dict[str, str | None] = {}
+    for c in clusters:
+        if c.archetype_name and c.archetype_name not in seen_archetypes:
+            seen_archetypes[c.archetype_name] = c.archetype_role
+    if seen_archetypes:
+        parts.append("## ARCHETYPES APPEARING IN THIS CHAPTER")
+        parts.append("(use these names; introduce each once, then pronouns/epithets)")
+        parts.append("")
+        for name, role in seen_archetypes.items():
+            if role:
+                parts.append(f"  - **{name}** — {role}")
+            else:
+                parts.append(f"  - **{name}**")
+        parts.append("")
+
+    parts.append("## EVENT FACTS TO WEAVE INTO ONE CONTINUOUS CHAPTER")
     parts.append("")
     parts.append(
-        "Each cluster is one event. Render it as literary-historical prose. "
-        "Use the archetype_name verbatim every time you reference that role."
+        "These are the facts the chapter must cover, in approximate order. "
+        "Weave them into FLOWING PARAGRAPHS — not one sentence per fact. "
+        "Group related facts (e.g. all separations of earth and sky) into a "
+        "single paragraph with connective prose. Vary sentence length."
     )
     parts.append("")
 
     for c in clusters:
-        parts.append(f"### [{c.seq}] {c.archetype_name}")
-        if c.archetype_role:
-            parts.append(f"role: {c.archetype_role}")
-        parts.append(f"action: {c.canonical_verb} — {c.canonical_outcome}")
+        parts.append(f"- [{c.seq}] **{c.archetype_name}** {c.canonical_verb} → {c.canonical_outcome}")
+        extras: list[str] = []
         if c.materials:
-            parts.append(f"materials: {', '.join(c.materials)}")
+            extras.append(f"materials: {', '.join(c.materials[:6])}")
         if c.vivid_details:
-            parts.append("vivid details (weave naturally, do not list):")
-            for d in c.vivid_details[:6]:
+            details = []
+            for d in c.vivid_details[:4]:
                 detail = d.get("detail") if isinstance(d, dict) else str(d)
-                parts.append(f"  - {detail}")
+                if detail:
+                    details.append(detail[:140])
+            if details:
+                extras.append("vivid: " + " | ".join(details))
         if c.source_quotes:
-            parts.append("source quotes (use selectively):")
-            for q in c.source_quotes[:3]:
+            quotes = []
+            for q in c.source_quotes[:2]:
                 quote = q.get("quote") if isinstance(q, dict) else str(q)
-                parts.append(f'  - "{quote}"')
-        if c.contributing_deities:
-            parts.append(
-                f"NAMES IN SOURCES — DO NOT USE IN PROSE, metadata only: "
-                f"{', '.join(c.contributing_deities[:10])}"
-            )
-        parts.append("")
+                if quote:
+                    quotes.append(f'"{quote[:120]}"')
+            if quotes:
+                extras.append("quotes: " + " ".join(quotes))
+        for e in extras:
+            parts.append(f"    · {e}")
+
+    parts.append("")
+    parts.append(
+        "Now write the chapter as flowing prose. 1500-2500 words, 5-10 paragraphs. "
+        "No bullet points. No 'according to' framing. Present tense."
+    )
 
     return "\n".join(parts)
 
@@ -152,7 +180,7 @@ async def render_chapter(
     result = await call_deepseek(
         user_prompt=prompt,
         system_prompt=RENDER_SYSTEM_PROMPT,
-        temperature=0.4,
+        temperature=0.55,
         max_tokens=8192,
     )
 

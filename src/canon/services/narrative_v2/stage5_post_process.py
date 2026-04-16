@@ -69,23 +69,61 @@ async def load_archetypes_by_name(
 
 
 def scrub_leaked_names(narrative: str, archetypes: list[ArchetypeRegistry]) -> str:
-    """Replace every culture-specific also_known_as name with the archetype name."""
+    """Replace every culture-specific also_known_as name with the archetype name.
+
+    Defensive against: leading "The " in the original text followed by a name
+    that we're replacing with "The Archetype" — would produce "The The Archetype".
+    We strip a leading "The " from the match if the replacement already starts
+    with "The ".
+    """
     text = narrative
     for a in archetypes:
-        aka = [n for n in (a.also_known_as or []) if n]
+        aka = [n for n in (a.also_known_as or []) if n and len(n) >= 3]
+        # Guard: never scrub generic nouns (temple, city, river, etc.) even if
+        # they ended up in aka — only scrub likely proper names (capitalized
+        # or non-English).
+        aka = [n for n in aka if _looks_like_proper_name(n)]
         pattern = _build_name_regex(aka)
         if pattern is None:
             continue
         replacement = a.archetype_name
+        replacement_starts_with_the = replacement.lower().startswith("the ")
 
-        def _sub(m: re.Match[str]) -> str:
-            return replacement
+        def _sub(m: re.Match[str], repl=replacement, collapse_the=replacement_starts_with_the) -> str:
+            # If the preceding characters are "the " (case-insensitive) AND the
+            # replacement also starts with "The ", drop one "The ".
+            if collapse_the:
+                start = m.start()
+                pre = text[max(0, start - 4):start]
+                if re.search(r"\b[Tt]he\s$", pre):
+                    return repl[4:]  # drop "The "
+            return repl
 
         text = pattern.sub(_sub, text)
-
-        # Possessives: "The Archetype's" already works naturally because we
-        # replaced the name and the apostrophe-s remains attached outside \b.
     return text
+
+
+_GENERIC_NOUNS = {
+    "temple", "city", "cities", "river", "rivers", "mountain",
+    "mountains", "sea", "seas", "wall", "walls", "gate", "gates",
+    "palace", "palaces", "house", "houses", "land", "lands",
+    "field", "fields", "garden", "gardens", "tower", "towers",
+    "street", "road", "earth", "sky", "heaven", "heavens",
+}
+
+
+def _looks_like_proper_name(s: str) -> bool:
+    """Heuristic: is this a proper name (deity/place) vs a generic noun?"""
+    if not s:
+        return False
+    s_norm = s.strip().lower()
+    if s_norm in _GENERIC_NOUNS:
+        return False
+    # Capitalized or contains non-ASCII → likely a name
+    if s[0].isupper():
+        return True
+    # All-lowercase generic words — skip
+    return False
 
 
 def insert_annotations(

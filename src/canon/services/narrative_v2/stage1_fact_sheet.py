@@ -37,6 +37,8 @@ You will receive source texts from a single cultural tradition. Your job is to p
 - When motivation ("why") appears in sources, include it verbatim. Do NOT fabricate motive.
 - Include epithets ("god of wisdom", "lord of the Abzu", "the bright one") next to each actor.
 - Every event in the fact_sheet should be atomic: one verb, one actor set, one outcome.
+- DO NOT record "absence statements" as events. Lines like "X had not yet been made", "no reed had sprung up", "the earth did not yet exist" are scene-setting. If the source opens with such lines, mention them once in `prose_history` but do NOT add them to `fact_sheet.events`.
+- An `event` requires a real actor (deity, mythic figure, human) performing an action. A place (Nippur, Eridu) cannot be the actor of an event.
 
 ## OUTPUT FORMAT — return ONLY valid JSON with these exact keys:
 

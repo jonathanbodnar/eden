@@ -165,6 +165,55 @@ def _actor_overlap(
 # ---------------------------------------------------------------------------
 
 
+# Human-theme synonyms — treat as one bucket for matching. Stage 2 LLMs vary
+# their word choice across cultures; rule-based Jaccard misses the echo.
+_SEMANTIC_BUCKETS: list[set[str]] = [
+    {"human", "humans", "humanity", "mankind", "man", "men", "person", "people", "folk", "mortal", "mortals"},
+    {"woman", "women", "female"},
+    {"sky", "heaven", "heavens", "firmament"},
+    {"earth", "ground", "land", "soil", "dust"},
+    {"water", "waters", "sea", "seas", "ocean", "abyss", "deep"},
+    {"light", "day", "dawn", "sun", "illumination", "brightness"},
+    {"dark", "darkness", "night", "shadow", "shade"},
+    {"void", "chaos", "formless", "empty", "emptiness", "nothing", "nothingness"},
+    {"god", "gods", "deity", "deities", "divine", "divinities"},
+    {"breath", "spirit", "wind", "air"},
+    {"fire", "flame"},
+    {"clay", "dust", "mud", "earth"},
+    {"blood", "gore"},
+    {"bone", "bones", "flesh"},
+    {"mountain", "mountains", "peak", "peaks"},
+    {"river", "rivers", "stream", "streams"},
+    {"plant", "plants", "vegetation", "grass", "tree", "trees", "reed", "reeds", "shrub", "garden"},
+    {"create", "made", "fashion", "shape", "form", "mold", "craft", "build"},
+    {"slay", "kill", "defeat", "destroy", "shatter"},
+    {"separate", "divide", "split", "part", "cleave"},
+    {"flood", "deluge", "drown"},
+    {"name", "names", "utter", "speak", "proclaim", "call"},
+]
+
+
+def _expand_with_buckets(tokens: set[str]) -> set[str]:
+    """Replace token with its semantic bucket so cross-cultural wording matches."""
+    out: set[str] = set(tokens)
+    for t in tokens:
+        for bucket in _SEMANTIC_BUCKETS:
+            if t in bucket:
+                out |= bucket
+    return out
+
+
+def _semantic_keyword_overlap(e1: AtomicEventRow, e2: AtomicEventRow) -> bool:
+    """True if the two events share any bucket-expanded keyword."""
+    kw_a = _expand_with_buckets(
+        _keyword_set(e1.outcome_keywords + [e1.outcome] + (e1.objects or []) + (e1.materials or []))
+    )
+    kw_b = _expand_with_buckets(
+        _keyword_set(e2.outcome_keywords + [e2.outcome] + (e2.objects or []) + (e2.materials or []))
+    )
+    return bool(kw_a & kw_b)
+
+
 def _events_should_cluster(
     e1: AtomicEventRow,
     e2: AtomicEventRow,
@@ -174,7 +223,7 @@ def _events_should_cluster(
 
     Must share verb_family (caller guarantees this), plus at least one of:
       - actor equivalence
-      - outcome keyword Jaccard >= 0.5
+      - semantic keyword overlap (bucket-expanded)
       - material Jaccard >= 0.3
     """
     if e1.verb_family != e2.verb_family:
@@ -183,12 +232,9 @@ def _events_should_cluster(
     if _actor_overlap(e1.actors, e2.actors, equivalences):
         return True
 
-    # Strong keyword match — compact outcome_keywords lists from Stage 2.
-    # If they share ANY non-trivial keyword, cluster (subject to embedding
-    # confirmation later).
-    kw_a = _keyword_set(e1.outcome_keywords)
-    kw_b = _keyword_set(e2.outcome_keywords)
-    if kw_a & kw_b:
+    # Bucket-expanded keyword match. Handles "humans" vs "humanity" vs "mankind"
+    # across cultures without needing exact token overlap.
+    if _semantic_keyword_overlap(e1, e2):
         return True
 
     # Weaker keyword match — free-text outcome. Require higher Jaccard.
@@ -242,14 +288,83 @@ def _union_find_cluster(
 # ---------------------------------------------------------------------------
 
 
-def _split_by_embeddings(
-    members: list[AtomicEventRow],
+def _embedding_join_pass(
+    clusters: list[list[AtomicEventRow]],
     threshold: float = EMBEDDING_COSINE_THRESHOLD,
 ) -> list[list[AtomicEventRow]]:
-    """Split a candidate cluster into sub-clusters if embeddings diverge.
+    """Merge cross-cultural singletons/small clusters using embedding similarity.
 
-    Iteratively pick the centroid and keep only members above threshold.
-    Kicked-out members form new candidate clusters.
+    For every pair of clusters in the same verb_family, compute the max pairwise
+    cosine similarity between their members. If >= threshold AND the pair shares
+    at least one bucket-expanded keyword (guardrail against semantic drift),
+    merge them.
+
+    This pass is what enables cross-cultural unification when rule-based
+    matching fails to connect two cultures' phrasing of the same event.
+    """
+
+    if len(clusters) < 2:
+        return clusters
+
+    # All members in these clusters share the same verb_family (guaranteed by
+    # caller which groups by family before running Stage 3).
+    def _best_sim_and_feature_match(
+        a: list[AtomicEventRow], b: list[AtomicEventRow]
+    ) -> tuple[float, bool]:
+        best = 0.0
+        feature_match = False
+        for x in a:
+            if not _is_usable_embedding(x.action_embedding):
+                continue
+            for y in b:
+                if not _is_usable_embedding(y.action_embedding):
+                    continue
+                sim = _cosine(x.action_embedding, y.action_embedding)
+                if sim > best:
+                    best = sim
+                if not feature_match and _semantic_keyword_overlap(x, y):
+                    feature_match = True
+        return best, feature_match
+
+    # Union-find across clusters
+    n = len(clusters)
+    parent = list(range(n))
+
+    def find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(x: int, y: int) -> None:
+        rx, ry = find(x), find(y)
+        if rx != ry:
+            parent[rx] = ry
+
+    HIGH = 0.85  # very confident — merge even without shared keyword
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            best, feature_match = _best_sim_and_feature_match(clusters[i], clusters[j])
+            if best >= HIGH:
+                union(i, j)
+            elif best >= threshold and feature_match:
+                union(i, j)
+
+    merged: dict[int, list[AtomicEventRow]] = defaultdict(list)
+    for i, members in enumerate(clusters):
+        merged[find(i)].extend(members)
+    return list(merged.values())
+
+
+def _split_by_embeddings(
+    members: list[AtomicEventRow],
+    threshold: float = EMBEDDING_COSINE_THRESHOLD - 0.08,
+) -> list[list[AtomicEventRow]]:
+    """Split a candidate cluster into sub-clusters if embeddings clearly diverge.
+
+    Uses a lower (more permissive) threshold than the JOIN pass — we don't want
+    to undo cross-cultural merges that the JOIN pass deliberately made.
     """
     # If nobody has a usable embedding, trust the rule-based grouping.
     if not any(_is_usable_embedding(m.action_embedding) for m in members):
@@ -355,16 +470,27 @@ def cluster_events(
     for ev in events:
         by_family[ev.verb_family].append(ev)
 
-    # Step 2-3: rule-based candidate cluster, then embedding split
+    # Step 2: rule-based candidate clusters per verb_family
+    # Step 2b: embedding JOIN pass — merge cross-cultural echoes the rules missed
+    # Step 3: embedding split pass — break up any accidental over-merges
     all_clusters: list[Cluster] = []
     for family, family_events in by_family.items():
         candidates = _union_find_cluster(family_events, equivalences)
-        for cand in candidates:
+        joined = _embedding_join_pass(candidates)
+        for cand in joined:
             subs = _split_by_embeddings(cand)
             for sub in subs:
                 c = Cluster(cluster_key="", verb_family=family, members=sub)
                 c.cluster_key = _cluster_key_from_oldest(c)
                 all_clusters.append(c)
+
+    # Log merge stats for observability
+    multi_culture = sum(1 for c in all_clusters if len(c.cultures) > 1)
+    logger.info(
+        "Stage 3: %d clusters formed (%d span multiple cultures)",
+        len(all_clusters),
+        multi_culture,
+    )
 
     # Step 4: apply retention rule
     retained = [c for c in all_clusters if c.retention >= RETENTION_THRESHOLD]
