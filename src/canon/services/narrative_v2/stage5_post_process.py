@@ -71,32 +71,58 @@ async def load_archetypes_by_name(
 def scrub_leaked_names(narrative: str, archetypes: list[ArchetypeRegistry]) -> str:
     """Replace every culture-specific also_known_as name with the archetype name.
 
-    Defensive against: leading "The " in the original text followed by a name
-    that we're replacing with "The Archetype" — would produce "The The Archetype".
-    We strip a leading "The " from the match if the replacement already starts
-    with "The ".
+    Guards:
+      - Skip aka tokens that are substrings of the archetype name (avoids
+        "Primordial Void" → "The Primordial Void" producing "Primordial The
+        Primordial Void" when the descriptor word is already present).
+      - Skip generic nouns (temple, city, river, serpent...) to avoid false
+        positives.
+      - Collapse "the X" → "X" when replacing X with "The Archetype" would
+        otherwise produce "the The Archetype".
     """
     text = narrative
     for a in archetypes:
+        arch_name = a.archetype_name or ""
+        arch_tokens = {t.lower() for t in re.findall(r"[A-Za-z]+", arch_name) if len(t) >= 3}
+
         aka = [n for n in (a.also_known_as or []) if n and len(n) >= 3]
-        # Guard: never scrub generic nouns (temple, city, river, etc.) even if
-        # they ended up in aka — only scrub likely proper names (capitalized
-        # or non-English).
         aka = [n for n in aka if _looks_like_proper_name(n)]
+        # Skip aka tokens already embedded in the archetype name.
+        aka = [n for n in aka if n.lower() not in arch_tokens]
         pattern = _build_name_regex(aka)
         if pattern is None:
             continue
-        replacement = a.archetype_name
-        replacement_starts_with_the = replacement.lower().startswith("the ")
+        replacement = arch_name
 
-        def _sub(m: re.Match[str], repl=replacement, collapse_the=replacement_starts_with_the) -> str:
-            # If the preceding characters are "the " (case-insensitive) AND the
-            # replacement also starts with "The ", drop one "The ".
-            if collapse_the:
-                start = m.start()
-                pre = text[max(0, start - 4):start]
-                if re.search(r"\b[Tt]he\s$", pre):
-                    return repl[4:]  # drop "The "
+        def _sub(m: re.Match[str], repl=replacement) -> str:
+            # Look at the word immediately before the match.
+            start = m.start()
+            pre_text = text[max(0, start - 20):start]
+            # Find the last word before the match
+            prev_word_match = re.search(r"(\w+)\s*$", pre_text)
+            if prev_word_match:
+                prev_word = prev_word_match.group(1).lower()
+                # If the previous word is already in the archetype name, drop the
+                # duplicate descriptor from the replacement. e.g.
+                # "Primordial Void" → trigger → "Primordial The Primordial Void"
+                # would start with the same word "Primordial" as the preceding
+                # word. Strip everything before the distinct suffix.
+                repl_words = repl.split()
+                # Skip leading "The" in replacement for this match
+                if repl_words and repl_words[0].lower() == "the":
+                    # "the Void" followed by replacement "The Primordial Void":
+                    # match replaces "Void" — but if preceded by "the", caller
+                    # sees "the The Primordial Void". Drop the leading "The".
+                    if prev_word == "the":
+                        return " ".join(repl_words[1:])
+                # General de-duplication: if the previous word matches any word
+                # in the replacement, drop up to that word from the replacement.
+                for i, w in enumerate(repl_words):
+                    if w.lower() == prev_word:
+                        # Drop everything up to and including this duplicate
+                        tail = repl_words[i + 1:]
+                        if tail:
+                            return " ".join(tail)
             return repl
 
         text = pattern.sub(_sub, text)
@@ -109,6 +135,11 @@ _GENERIC_NOUNS = {
     "palace", "palaces", "house", "houses", "land", "lands",
     "field", "fields", "garden", "gardens", "tower", "towers",
     "street", "road", "earth", "sky", "heaven", "heavens",
+    "serpent", "snake", "dragon", "beast", "void", "chaos",
+    "abyss", "deep", "waters", "water", "light", "dark",
+    "darkness", "day", "night", "moon", "sun", "stars",
+    "world", "cosmos", "universe", "life", "death",
+    "man", "men", "woman", "women",
 }
 
 
