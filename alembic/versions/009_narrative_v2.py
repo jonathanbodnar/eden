@@ -28,8 +28,6 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # pgvector extension for similarity search
-    op.execute("CREATE EXTENSION IF NOT EXISTS vector")
 
     # ---------------------------------------------------------------
     # archetype_registry — global archetype name map
@@ -102,12 +100,8 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True),
                   server_default=sa.text("now()"), nullable=False),
     )
-    # Switch action_embedding to vector(1536) via raw SQL
-    op.execute(
-        "ALTER TABLE culture_atomic_events "
-        "ALTER COLUMN action_embedding TYPE vector(1536) "
-        "USING action_embedding::vector(1536)"
-    )
+    # action_embedding stays as ARRAY(Float) (double precision[]). We compute
+    # cosine similarity in Python (Stage 3) — no SQL-side vector ops are needed.
     op.create_index(
         "ix_culture_atomic_events_outline",
         "culture_atomic_events",
