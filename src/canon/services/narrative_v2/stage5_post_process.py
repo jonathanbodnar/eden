@@ -160,20 +160,46 @@ def _looks_like_proper_name(s: str) -> bool:
 def insert_annotations(
     narrative: str, archetypes: list[ArchetypeRegistry]
 ) -> str:
-    """Wrap the first occurrence of each archetype name in [[actor:Name]]."""
+    """Wrap every occurrence of each archetype name in [[actor:Name]].
+
+    The frontend highlights archetype mentions (yellow) only when they are
+    wrapped. We wrap ALL occurrences (not just the first) so readers can click
+    any mention in the text. Guards against nesting existing wraps.
+    """
     text = narrative
-    for a in archetypes:
+
+    # Sort archetypes by name length desc so "The Primordial Void" is processed
+    # before any archetype named "Void" (if such a thing existed).
+    ordered = sorted(
+        archetypes, key=lambda a: len(a.archetype_name or ""), reverse=True
+    )
+
+    for a in ordered:
         name = a.archetype_name
         if not name:
             continue
-        already = re.search(r"\[\[(?:actor|place):" + re.escape(name) + r"\]\]", text)
-        if already:
-            continue
         entity_kind = a.entity_type or "actor"
         annotation = f"[[{entity_kind}:{name}]]"
-        # First occurrence: match case-sensitively at word boundary
-        pattern = re.compile(r"\b" + re.escape(name) + r"\b")
-        text = pattern.sub(annotation, text, count=1)
+
+        # Strip any pre-existing wraps for THIS archetype first (they may have
+        # come from Stage 4 itself or from earlier idempotent runs) so we can
+        # re-wrap uniformly.
+        existing_pattern = re.compile(
+            r"\[\[(?:actor|place):" + re.escape(name) + r"\]\]"
+        )
+        text = existing_pattern.sub(name, text)
+
+        # Now wrap every bare occurrence. Use negative lookbehind/lookahead to
+        # avoid wrapping names that happen to sit inside another annotation's
+        # body (e.g. if archetype A's name contains archetype B's name as a
+        # substring — unlikely but possible after ordering).
+        # Lookbehind `(?<![:\[])` prevents matching after "[[actor:" or "[[".
+        # Lookahead `(?!\]\])` prevents matching before "]]".
+        pattern = re.compile(
+            r"(?<![:\[])\b" + re.escape(name) + r"\b(?!\]\])"
+        )
+        text = pattern.sub(annotation, text)
+
     return text
 
 
