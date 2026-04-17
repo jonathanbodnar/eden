@@ -23,8 +23,8 @@ class Settings(BaseSettings):
     # MiniMax m2.5 — used by the deity-dossier pipeline for reasoning-heavy
     # archetype merge analysis. Chat API is OpenAI-compatible.
     minimax_api_key: str = ""
-    minimax_base_url: str = "https://api.minimaxi.com/v1"
-    minimax_model: str = "MiniMax-M2"
+    minimax_base_url: str = "https://api.minimax.io/v1"
+    minimax_model: str = "MiniMax-M2.5"
 
     # OpenAI — used by the V2 narrative pipeline for action embeddings
     openai_api_key: str = ""
