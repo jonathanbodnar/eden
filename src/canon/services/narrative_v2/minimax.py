@@ -90,20 +90,49 @@ logger = logging.getLogger(__name__)
 def _bracket_aware_repair(s: str) -> str:
     """Fix mismatched `]` vs `}` closings.
 
-    MiniMax-M2.5 has a recurring failure mode where an inner array is closed
-    with `}` instead of `]`, e.g. `"evidence":["a","b","c"}]}]}`. We walk the
-    string character-by-character, tracking whether each closing bracket is
-    inside a string or a real structural token, and swap mismatched
-    closers to match the innermost opener on the stack. Any still-open
-    brackets at EOS are closed cleanly.
+    MiniMax-M2.5 has two recurring failure modes:
+      1. `"evidence":["a","b","c"}]}` — array closed with `}` where `]` is
+         needed. A single wrong-kind closer should be SWAPPED.
+      2. `"evidence":["a","b","c"}]}` where the leading `}` is SPURIOUS
+         (the LLM double-closed). Swapping produces cascading corruption;
+         SKIPPING the spurious closer yields valid JSON.
+
+    We disambiguate with a lookahead: when the current closer doesn't
+    match the stack top, peek at the next non-string structural char.
+    If skipping the current closer would make the next closer match the
+    current stack top, SKIP. Otherwise, SWAP.
+
+    Any still-open brackets at EOS are closed cleanly.
     """
+
+    # Pre-scan: build list of (index, char) for structural chars outside
+    # strings so we can cheaply lookahead past whitespace and commas.
+    struct_positions: list[int] = []
+    in_string = False
+    escape = False
+    for i, ch in enumerate(s):
+        if escape:
+            escape = False
+            continue
+        if ch == "\\" and in_string:
+            escape = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch in "[]{}":
+            struct_positions.append(i)
+
+    pos_idx_by_i = {i: k for k, i in enumerate(struct_positions)}
 
     stack: list[str] = []
     out: list[str] = []
     in_string = False
     escape = False
 
-    for ch in s:
+    for i, ch in enumerate(s):
         if escape:
             out.append(ch)
             escape = False
@@ -126,7 +155,18 @@ def _bracket_aware_repair(s: str) -> str:
         elif ch in "]}":
             if not stack:
                 continue
-            expected = "]" if stack[-1] == "[" else "}"
+            top = stack[-1]
+            expected = "]" if top == "[" else "}"
+            if ch == expected:
+                out.append(ch)
+                stack.pop()
+                continue
+            next_structural: str | None = None
+            k = pos_idx_by_i.get(i, -1)
+            if k >= 0 and k + 1 < len(struct_positions):
+                next_structural = s[struct_positions[k + 1]]
+            if next_structural == expected:
+                continue
             out.append(expected)
             stack.pop()
         else:
