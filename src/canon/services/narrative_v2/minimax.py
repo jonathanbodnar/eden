@@ -23,6 +23,59 @@ from src.canon.services.narrative_v2.llm import (
 logger = logging.getLogger(__name__)
 
 
+def _bracket_aware_repair(s: str) -> str:
+    """Fix mismatched `]` vs `}` closings.
+
+    MiniMax-M2.5 has a recurring failure mode where an inner array is closed
+    with `}` instead of `]`, e.g. `"evidence":["a","b","c"}]}]}`. We walk the
+    string character-by-character, tracking whether each closing bracket is
+    inside a string or a real structural token, and swap mismatched
+    closers to match the innermost opener on the stack. Any still-open
+    brackets at EOS are closed cleanly.
+    """
+
+    stack: list[str] = []
+    out: list[str] = []
+    in_string = False
+    escape = False
+
+    for ch in s:
+        if escape:
+            out.append(ch)
+            escape = False
+            continue
+        if ch == "\\" and in_string:
+            out.append(ch)
+            escape = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            out.append(ch)
+            continue
+        if in_string:
+            out.append(ch)
+            continue
+
+        if ch in "[{":
+            stack.append(ch)
+            out.append(ch)
+        elif ch in "]}":
+            if not stack:
+                continue
+            expected = "]" if stack[-1] == "[" else "}"
+            out.append(expected)
+            stack.pop()
+        else:
+            if not stack:
+                continue
+            out.append(ch)
+
+    while stack:
+        out.append("]" if stack.pop() == "[" else "}")
+
+    return "".join(out)
+
+
 async def call_minimax(
     user_prompt: str,
     system_prompt: str,
@@ -115,6 +168,13 @@ async def call_minimax(
         parsed = _try_parse_json(repaired)
         if parsed is not None:
             logger.warning("Recovered truncated MiniMax JSON via brace balancing")
+            return parsed
+
+    bracket_fixed = _bracket_aware_repair(js)
+    if bracket_fixed != js:
+        parsed = _try_parse_json(bracket_fixed)
+        if parsed is not None:
+            logger.warning("Recovered MiniMax JSON via bracket-aware repair")
             return parsed
 
     logger.warning(
