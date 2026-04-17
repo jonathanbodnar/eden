@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { CSSProperties, useEffect, useMemo, useState } from 'react'
 
 interface ActorEntry {
   name: string
@@ -21,8 +21,101 @@ interface ArchetypeEntry {
   actors: ActorEntry[]
 }
 
+interface DossierAction {
+  verb?: string
+  verb_family?: string
+  outcome?: string
+  objects?: string[]
+  culture_key?: string
+  chapter_number?: number
+  source_ref?: string
+  quoted_phrase?: string
+}
+
+interface PassageExcerpt {
+  source_id: string
+  title: string
+  culture: string | null
+  excerpt: string
+}
+
+interface DeityDossier {
+  id: string
+  actor_name: string
+  normalized_name: string
+  canonical_actor_id: string | null
+  cultures: string[]
+  event_count: number
+  actions: DossierAction[]
+  co_occurring_actors: Record<string, number>
+  earliest_source_id: string | null
+  earliest_source_title: string | null
+  earliest_date_start: number | null
+  earliest_date_end: number | null
+  earliest_date_label: string | null
+  dating_confidence: string | null
+  source_passage_excerpts: PassageExcerpt[]
+  characteristics_md: string | null
+  current_archetype_id: string | null
+  current_archetype_name: string | null
+  updated_at: string | null
+}
+
+interface ProposalGroup {
+  proposed_archetype_name: string
+  role_description: string
+  members: string[]
+  rationale: string
+  evidence: string[]
+}
+
+interface ArchetypeMergeProposal {
+  id: string
+  epoch_id: string
+  source_archetype_ids: string[]
+  source_archetype_names: string[]
+  proposal_kind: 'keep' | 'split' | 'reassign' | 'merge'
+  proposed_groups: ProposalGroup[]
+  overall_rationale: string | null
+  confidence: number | null
+  status: 'pending' | 'approved' | 'rejected' | 'applied'
+  applied_at: string | null
+  applied_note: string | null
+  model_name: string | null
+  created_at: string | null
+  updated_at: string | null
+}
+
 type SortMode = 'cohesion_asc' | 'cohesion_desc' | 'size_desc' | 'events_desc' | 'name'
 type FilterMode = 'all' | 'multi' | 'problems' | 'with_events'
+type CardTab = 'map' | 'dossiers' | 'proposal'
+
+function normalizeName(s: string): string {
+  return (s || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+}
+
+const toolbarBtnStyle: CSSProperties = {
+  padding: '6px 12px',
+  fontSize: 11,
+  background: 'var(--bg-primary)',
+  border: '1px solid var(--border)',
+  borderRadius: 4,
+  color: 'var(--text-primary)',
+  cursor: 'pointer',
+  whiteSpace: 'nowrap',
+}
+
+function formatDate(start: number | null, end: number | null, label: string | null): string {
+  if (start == null && end == null) return label || '—'
+  const fmt = (v: number) => {
+    if (v < 0) return `${Math.abs(v).toLocaleString()} BCE`
+    return `${v.toLocaleString()} CE`
+  }
+  if (start != null && end != null && start !== end) return `${fmt(start)} – ${fmt(end)}`
+  if (start != null) return fmt(start)
+  if (end != null) return fmt(end)
+  return label || '—'
+}
 
 function colorForScore(s: number | null): string {
   if (s === null) return '#888'
@@ -263,8 +356,354 @@ function ActorDetail({ actor }: { actor: ActorEntry }) {
   )
 }
 
-function ArchetypeCard({ arch }: { arch: ArchetypeEntry }) {
+function DossierPanel({ dossier }: { dossier: DeityDossier | null }) {
+  if (!dossier) {
+    return (
+      <div style={{ fontSize: 11, color: 'var(--text-secondary)', padding: 8 }}>
+        No dossier built yet. Run <code>POST /admin/build-deity-dossiers?epoch_orders=0</code>.
+      </div>
+    )
+  }
+  const topCooc = Object.entries(dossier.co_occurring_actors)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8)
+
+  return (
+    <div
+      style={{
+        background: 'var(--bg-primary)',
+        border: '1px solid var(--border)',
+        borderRadius: 6,
+        padding: 10,
+        marginBottom: 8,
+      }}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+        <div style={{ fontWeight: 700, color: 'var(--gold)', fontSize: 13 }}>
+          {dossier.actor_name}
+        </div>
+        <div style={{ fontSize: 10, color: 'var(--text-secondary)' }}>
+          {dossier.event_count} event{dossier.event_count !== 1 ? 's' : ''} ·{' '}
+          {dossier.cultures.length} culture{dossier.cultures.length !== 1 ? 's' : ''}
+        </div>
+      </div>
+
+      {dossier.earliest_source_title && (
+        <div style={{ fontSize: 11, marginTop: 4, color: 'var(--text-secondary)' }}>
+          <strong>Earliest attestation:</strong> {dossier.earliest_source_title} (
+          {formatDate(dossier.earliest_date_start, dossier.earliest_date_end, dossier.earliest_date_label)}
+          )
+          {dossier.dating_confidence ? ` · ${dossier.dating_confidence}` : ''}
+        </div>
+      )}
+
+      {dossier.cultures.length > 0 && (
+        <div style={{ fontSize: 11, marginTop: 3, color: 'var(--text-secondary)' }}>
+          <strong>Cultures:</strong> {dossier.cultures.join(', ')}
+        </div>
+      )}
+
+      {topCooc.length > 0 && (
+        <div style={{ fontSize: 11, marginTop: 3, color: 'var(--text-secondary)' }}>
+          <strong>Co-occurs with:</strong>{' '}
+          {topCooc.map(([n, c]) => `${n} (${c})`).join(', ')}
+        </div>
+      )}
+
+      {dossier.actions.length > 0 && (
+        <details style={{ marginTop: 6 }}>
+          <summary style={{ cursor: 'pointer', fontSize: 11 }}>
+            Actions ({dossier.actions.length})
+          </summary>
+          <div style={{ maxHeight: 140, overflowY: 'auto', marginTop: 4 }}>
+            {dossier.actions.slice(0, 20).map((a, i) => (
+              <div key={i} style={{ fontSize: 10, marginBottom: 3, fontFamily: 'monospace' }}>
+                <span style={{ color: 'var(--text-secondary)' }}>[{a.culture_key}]</span>{' '}
+                <span style={{ color: '#a78bfa' }}>{a.verb}</span> → {a.outcome}
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
+
+      {dossier.characteristics_md && (
+        <div
+          style={{
+            marginTop: 8,
+            padding: 8,
+            background: 'var(--bg-secondary)',
+            borderRadius: 4,
+            fontSize: 11.5,
+            lineHeight: 1.5,
+            whiteSpace: 'pre-wrap',
+          }}
+        >
+          {dossier.characteristics_md}
+        </div>
+      )}
+
+      {dossier.source_passage_excerpts.length > 0 && (
+        <details style={{ marginTop: 6 }}>
+          <summary style={{ cursor: 'pointer', fontSize: 11 }}>
+            Source passages ({dossier.source_passage_excerpts.length})
+          </summary>
+          <div style={{ maxHeight: 200, overflowY: 'auto', marginTop: 4 }}>
+            {dossier.source_passage_excerpts.map((p, i) => (
+              <div
+                key={i}
+                style={{
+                  fontSize: 10.5,
+                  marginBottom: 8,
+                  padding: 6,
+                  background: 'var(--bg-tertiary)',
+                  borderRadius: 4,
+                }}
+              >
+                <div style={{ fontWeight: 600, marginBottom: 2 }}>
+                  {p.title} {p.culture ? `· ${p.culture}` : ''}
+                </div>
+                <div style={{ fontStyle: 'italic', color: 'var(--text-secondary)' }}>
+                  {(p.excerpt || '').slice(0, 500)}
+                  {(p.excerpt || '').length > 500 ? '…' : ''}
+                </div>
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
+    </div>
+  )
+}
+
+function ProposalPanel({
+  proposal,
+  onApprove,
+  onReject,
+  working,
+}: {
+  proposal: ArchetypeMergeProposal | null
+  onApprove: () => void
+  onReject: () => void
+  working: boolean
+}) {
+  if (!proposal) {
+    return (
+      <div style={{ fontSize: 11, color: 'var(--text-secondary)', padding: 8 }}>
+        No proposal generated yet. Run{' '}
+        <code>POST /admin/propose-archetype-remerges?epoch_orders=0</code>.
+      </div>
+    )
+  }
+  const isActionable = proposal.status === 'pending'
+  const verdictColor =
+    proposal.proposal_kind === 'keep'
+      ? '#4ade80'
+      : proposal.proposal_kind === 'split' || proposal.proposal_kind === 'reassign'
+      ? '#facc15'
+      : '#a78bfa'
+  return (
+    <div style={{ padding: 4 }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'baseline',
+          justifyContent: 'space-between',
+          marginBottom: 8,
+        }}
+      >
+        <div>
+          <span
+            style={{
+              display: 'inline-block',
+              padding: '2px 8px',
+              borderRadius: 4,
+              fontSize: 11,
+              fontWeight: 700,
+              background: 'var(--bg-tertiary)',
+              color: verdictColor,
+              textTransform: 'uppercase',
+              marginRight: 8,
+            }}
+          >
+            {proposal.proposal_kind}
+          </span>
+          {proposal.confidence != null && (
+            <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+              confidence {Math.round((proposal.confidence || 0) * 100)}%
+            </span>
+          )}
+          {proposal.model_name && (
+            <span style={{ fontSize: 10, color: 'var(--text-secondary)', marginLeft: 8 }}>
+              ({proposal.model_name})
+            </span>
+          )}
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+          status:{' '}
+          <strong
+            style={{
+              color:
+                proposal.status === 'applied'
+                  ? '#4ade80'
+                  : proposal.status === 'rejected'
+                  ? '#f87171'
+                  : 'var(--text-primary)',
+            }}
+          >
+            {proposal.status}
+          </strong>
+        </div>
+      </div>
+
+      {proposal.overall_rationale && (
+        <div
+          style={{
+            fontSize: 12,
+            padding: 8,
+            background: 'var(--bg-primary)',
+            border: '1px solid var(--border)',
+            borderRadius: 4,
+            marginBottom: 8,
+            lineHeight: 1.5,
+          }}
+        >
+          {proposal.overall_rationale}
+        </div>
+      )}
+
+      <div style={{ display: 'grid', gap: 8 }}>
+        {proposal.proposed_groups.map((g, i) => (
+          <div
+            key={i}
+            style={{
+              background: 'var(--bg-primary)',
+              border: '1px solid var(--border)',
+              borderRadius: 4,
+              padding: 10,
+            }}
+          >
+            <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--gold)' }}>
+              {g.proposed_archetype_name || '(no name)'}
+            </div>
+            {g.role_description && (
+              <div
+                style={{
+                  fontSize: 11,
+                  color: 'var(--text-secondary)',
+                  fontStyle: 'italic',
+                  marginTop: 2,
+                }}
+              >
+                {g.role_description}
+              </div>
+            )}
+            <div style={{ fontSize: 11, marginTop: 6 }}>
+              <strong>Members ({g.members.length}):</strong> {g.members.join(', ')}
+            </div>
+            {g.rationale && (
+              <div style={{ fontSize: 11, marginTop: 6, lineHeight: 1.5 }}>
+                <strong>Rationale:</strong> {g.rationale}
+              </div>
+            )}
+            {g.evidence && g.evidence.length > 0 && (
+              <ul
+                style={{
+                  fontSize: 11,
+                  margin: '4px 0 0 16px',
+                  padding: 0,
+                  color: 'var(--text-secondary)',
+                }}
+              >
+                {g.evidence.map((e, j) => (
+                  <li key={j}>{e}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {isActionable && (
+        <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+          <button
+            disabled={working}
+            onClick={onApprove}
+            style={{
+              flex: 1,
+              padding: '8px 14px',
+              fontSize: 12,
+              fontWeight: 700,
+              background: '#16a34a',
+              color: 'white',
+              border: 'none',
+              borderRadius: 4,
+              cursor: working ? 'wait' : 'pointer',
+              opacity: working ? 0.6 : 1,
+            }}
+          >
+            Approve
+          </button>
+          <button
+            disabled={working}
+            onClick={onReject}
+            style={{
+              flex: 1,
+              padding: '8px 14px',
+              fontSize: 12,
+              fontWeight: 700,
+              background: 'transparent',
+              color: '#f87171',
+              border: '1px solid #f87171',
+              borderRadius: 4,
+              cursor: working ? 'wait' : 'pointer',
+              opacity: working ? 0.6 : 1,
+            }}
+          >
+            Reject
+          </button>
+        </div>
+      )}
+
+      {proposal.applied_note && (
+        <div
+          style={{
+            marginTop: 8,
+            fontSize: 10.5,
+            color: 'var(--text-secondary)',
+            fontFamily: 'monospace',
+          }}
+        >
+          {proposal.applied_note}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ArchetypeCard({
+  arch,
+  dossiersByNorm,
+  proposal,
+  onApprove,
+  onReject,
+  workingId,
+}: {
+  arch: ArchetypeEntry
+  dossiersByNorm: Map<string, DeityDossier>
+  proposal: ArchetypeMergeProposal | null
+  onApprove: (id: string) => void
+  onReject: (id: string) => void
+  workingId: string | null
+}) {
   const [expanded, setExpanded] = useState(false)
+  const [tab, setTab] = useState<CardTab>('map')
+
+  const actorDossiers = useMemo(() => {
+    return arch.actors
+      .map(a => dossiersByNorm.get(normalizeName(a.name)) || null)
+      .filter((d): d is DeityDossier => d != null)
+  }, [arch.actors, dossiersByNorm])
+
   return (
     <div
       style={{
@@ -337,36 +776,111 @@ function ArchetypeCard({ arch }: { arch: ArchetypeEntry }) {
               cursor: 'pointer',
             }}
           >
-            {expanded ? 'Hide detail' : 'Detail'}
+            {expanded ? 'Collapse' : 'Expand'}
           </button>
         </div>
       </div>
       <div
         style={{
-          display: 'grid',
-          gridTemplateColumns: expanded ? '360px 1fr' : '1fr',
-          gap: 14,
+          display: 'flex',
+          gap: 0,
+          borderBottom: '1px solid var(--border)',
+          background: 'var(--bg-tertiary)',
+        }}
+      >
+        {(['map', 'dossiers', 'proposal'] as CardTab[]).map(t => {
+          const isActive = tab === t
+          const label =
+            t === 'map'
+              ? 'Map'
+              : t === 'dossiers'
+              ? `Dossiers (${actorDossiers.length})`
+              : `Proposal${
+                  proposal && proposal.status === 'pending'
+                    ? ' •'
+                    : proposal && proposal.status === 'applied'
+                    ? ' ✓'
+                    : ''
+                }`
+          return (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              style={{
+                padding: '6px 14px',
+                fontSize: 11,
+                background: isActive ? 'var(--bg-primary)' : 'transparent',
+                border: 'none',
+                borderBottom: isActive
+                  ? '2px solid var(--gold)'
+                  : '2px solid transparent',
+                color: isActive ? 'var(--text-primary)' : 'var(--text-secondary)',
+                cursor: 'pointer',
+                fontWeight: isActive ? 700 : 400,
+              }}
+            >
+              {label}
+            </button>
+          )
+        })}
+      </div>
+      <div
+        style={{
           padding: 12,
           background: 'var(--bg-primary)',
         }}
       >
-        <div style={{ display: 'flex', justifyContent: 'center' }}>
-          <MiniMindMap arch={arch} />
-        </div>
-        {expanded && (
+        {tab === 'map' && (
           <div
             style={{
               display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
-              gap: 8,
-              maxHeight: 340,
-              overflowY: 'auto',
+              gridTemplateColumns: expanded ? '360px 1fr' : '1fr',
+              gap: 14,
             }}
           >
-            {arch.actors.map(a => (
-              <ActorDetail key={a.name} actor={a} />
+            <div style={{ display: 'flex', justifyContent: 'center' }}>
+              <MiniMindMap arch={arch} />
+            </div>
+            {expanded && (
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns:
+                    'repeat(auto-fill, minmax(220px, 1fr))',
+                  gap: 8,
+                  maxHeight: 340,
+                  overflowY: 'auto',
+                }}
+              >
+                {arch.actors.map(a => (
+                  <ActorDetail key={a.name} actor={a} />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {tab === 'dossiers' && (
+          <div style={{ maxHeight: 520, overflowY: 'auto', paddingRight: 4 }}>
+            {actorDossiers.length === 0 && (
+              <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+                No dossiers built for this archetype's actors yet. Run{' '}
+                <code>POST /admin/build-deity-dossiers?epoch_orders=0</code>.
+              </div>
+            )}
+            {actorDossiers.map(d => (
+              <DossierPanel key={d.id} dossier={d} />
             ))}
           </div>
+        )}
+
+        {tab === 'proposal' && (
+          <ProposalPanel
+            proposal={proposal}
+            onApprove={() => proposal && onApprove(proposal.id)}
+            onReject={() => proposal && onReject(proposal.id)}
+            working={workingId !== null && proposal?.id === workingId}
+          />
         )}
       </div>
     </div>
@@ -375,20 +889,122 @@ function ArchetypeCard({ arch }: { arch: ArchetypeEntry }) {
 
 export default function ActorsPage() {
   const [data, setData] = useState<ArchetypeEntry[] | null>(null)
+  const [dossiers, setDossiers] = useState<DeityDossier[] | null>(null)
+  const [proposals, setProposals] = useState<ArchetypeMergeProposal[] | null>(
+    null
+  )
   const [err, setErr] = useState<string | null>(null)
   const [q, setQ] = useState('')
   const [sort, setSort] = useState<SortMode>('events_desc')
   const [filter, setFilter] = useState<FilterMode>('with_events')
+  const [workingProposalId, setWorkingProposalId] = useState<string | null>(
+    null
+  )
+  const [banner, setBanner] = useState<string | null>(null)
+
+  const loadAll = async () => {
+    try {
+      const [aRes, dRes, pRes] = await Promise.all([
+        fetch('/world-api/story/archetype-analysis'),
+        fetch('/world-api/story/deity-dossiers?epoch_order=0'),
+        fetch('/world-api/story/archetype-proposals?epoch_order=0'),
+      ])
+      if (!aRes.ok) throw new Error(`archetype-analysis ${aRes.status}`)
+      setData(await aRes.json())
+      setDossiers(dRes.ok ? await dRes.json() : [])
+      setProposals(pRes.ok ? await pRes.json() : [])
+    } catch (e) {
+      setErr(String(e))
+    }
+  }
 
   useEffect(() => {
-    fetch('/world-api/story/archetype-analysis')
-      .then(r => {
-        if (!r.ok) throw new Error(`${r.status}`)
-        return r.json()
-      })
-      .then(setData)
-      .catch(e => setErr(String(e)))
+    loadAll()
   }, [])
+
+  const dossiersByNorm = useMemo(() => {
+    const m = new Map<string, DeityDossier>()
+    for (const d of dossiers || []) m.set(d.normalized_name, d)
+    return m
+  }, [dossiers])
+
+  const proposalByArchetypeId = useMemo(() => {
+    const m = new Map<string, ArchetypeMergeProposal>()
+    for (const p of proposals || []) {
+      for (const aid of p.source_archetype_ids) {
+        // Prefer the most recent pending proposal; fall back to applied.
+        const existing = m.get(aid)
+        if (!existing) {
+          m.set(aid, p)
+        } else {
+          const rank = (x: ArchetypeMergeProposal) =>
+            x.status === 'pending' ? 3 : x.status === 'applied' ? 2 : 1
+          if (rank(p) > rank(existing)) m.set(aid, p)
+        }
+      }
+    }
+    return m
+  }, [proposals])
+
+  const runAdmin = async (
+    path: string,
+    successMsg: string,
+    refetch = false
+  ) => {
+    setBanner(`Running ${path}…`)
+    try {
+      const r = await fetch(`/world-api${path}`, { method: 'POST' })
+      if (!r.ok) throw new Error(`${r.status}`)
+      const body = await r.json().catch(() => ({}))
+      setBanner(`${successMsg} ${body.message || ''}`.trim())
+      if (refetch) {
+        // The build/propose endpoints run in the background; give them a
+        // moment then refresh.
+        setTimeout(loadAll, 2000)
+      }
+    } catch (e) {
+      setBanner(`Error: ${e}`)
+    }
+  }
+
+  const handleApprove = async (proposalId: string) => {
+    setWorkingProposalId(proposalId)
+    setBanner('Applying proposal…')
+    try {
+      const r = await fetch(
+        `/world-api/admin/archetype-proposals/${proposalId}/approve`,
+        { method: 'POST' }
+      )
+      if (!r.ok) {
+        const body = await r.text()
+        throw new Error(`${r.status}: ${body}`)
+      }
+      setBanner('Proposal applied. Refreshing…')
+      await loadAll()
+    } catch (e) {
+      setBanner(`Error applying proposal: ${e}`)
+    } finally {
+      setWorkingProposalId(null)
+    }
+  }
+
+  const handleReject = async (proposalId: string) => {
+    setWorkingProposalId(proposalId)
+    setBanner('Rejecting proposal…')
+    try {
+      const r = await fetch(
+        `/world-api/admin/archetype-proposals/${proposalId}/reject`,
+        { method: 'POST' }
+      )
+      if (!r.ok) throw new Error(`${r.status}`)
+      setBanner('Proposal rejected.')
+      await loadAll()
+    } catch (e) {
+      setBanner(`Error rejecting proposal: ${e}`)
+    } finally {
+      setWorkingProposalId(null)
+    }
+  }
 
   const filtered = useMemo(() => {
     if (!data) return []
@@ -581,7 +1197,63 @@ export default function ActorsPage() {
             <option value="size_desc">Actor count</option>
             <option value="name">Alphabetical</option>
           </select>
+          <div style={{ flex: 1 }} />
+          <button
+            onClick={() =>
+              runAdmin(
+                '/admin/build-deity-dossiers?epoch_orders=0&wipe=true',
+                'Dossier build started.',
+                true
+              )
+            }
+            style={toolbarBtnStyle}
+          >
+            Build dossiers
+          </button>
+          <button
+            onClick={() =>
+              runAdmin(
+                '/admin/propose-archetype-remerges?epoch_orders=0&wipe_pending=true',
+                'Proposal generation started.',
+                true
+              )
+            }
+            style={toolbarBtnStyle}
+          >
+            Propose re-merges
+          </button>
+          <button
+            onClick={() =>
+              runAdmin(
+                '/admin/run-narrative-v2?epoch_orders=0&phase=render_only',
+                'Re-render started.',
+                false
+              )
+            }
+            style={toolbarBtnStyle}
+          >
+            Re-render chapters
+          </button>
+          <button onClick={loadAll} style={toolbarBtnStyle}>
+            Refresh
+          </button>
         </div>
+        {banner && (
+          <div
+            style={{
+              marginTop: 8,
+              fontSize: 11,
+              padding: '6px 10px',
+              background: 'var(--bg-primary)',
+              border: '1px solid var(--border)',
+              borderRadius: 4,
+              color: 'var(--text-secondary)',
+              fontFamily: 'monospace',
+            }}
+          >
+            {banner}
+          </div>
+        )}
       </div>
 
       <div style={{ padding: '16px 24px' }}>
@@ -606,7 +1278,15 @@ export default function ActorsPage() {
           }}
         >
           {filtered.map(a => (
-            <ArchetypeCard key={a.archetype_id} arch={a} />
+            <ArchetypeCard
+              key={a.archetype_id}
+              arch={a}
+              dossiersByNorm={dossiersByNorm}
+              proposal={proposalByArchetypeId.get(a.archetype_id) || null}
+              onApprove={handleApprove}
+              onReject={handleReject}
+              workingId={workingProposalId}
+            />
           ))}
         </div>
       </div>

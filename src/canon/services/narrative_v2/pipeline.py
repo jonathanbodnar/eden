@@ -69,6 +69,7 @@ class NarrativePipelineV2:
         chapter_numbers: list[int] | None = None,
         wipe: bool = False,
         max_cultures: int | None = None,
+        phase: str = "full",
     ) -> dict[str, Any]:
         """Run V2 for the given epochs (and optionally specific chapters).
 
@@ -80,7 +81,18 @@ class NarrativePipelineV2:
                 chapter_numbers is set, only those chapters' artifacts are
                 wiped; otherwise all artifacts for the targeted epochs.
             max_cultures: cap number of cultures per chapter (None = all)
+            phase: "full" (default) runs Phase A → B → C end to end.
+                "render_only" skips Phase A (atomic event extraction) and
+                Phase B (clustering + archetype minting) and re-renders
+                every chapter using the existing `event_clusters` rows and
+                the current `archetype_registry`. Use this after approving
+                archetype merge proposals to regenerate chapters without
+                paying the extraction cost again.
         """
+
+        phase = (phase or "full").lower()
+        if phase not in ("full", "render_only"):
+            raise ValueError(f"Unknown phase: {phase!r}")
 
         q = select(CanonicalEpoch).where(CanonicalEpoch.is_current.is_(True))
         if epoch_orders is not None:
@@ -88,7 +100,7 @@ class NarrativePipelineV2:
         q = q.order_by(CanonicalEpoch.epoch_order)
         epochs = (await session.execute(q)).scalars().all()
 
-        if wipe:
+        if wipe and phase != "render_only":
             await self._wipe_epochs(
                 session,
                 [e.id for e in epochs],
@@ -148,45 +160,54 @@ class NarrativePipelineV2:
                     for o in outlines
                 ]
 
-            # -------------------------------------------------------------
-            # PHASE A — Extract atomic events for every chapter × culture.
-            # This produces per-chapter atomic events but no clusters yet.
-            # -------------------------------------------------------------
-            logger.info(
-                "  PHASE A: extracting atomic events for %d chapters × %d cultures",
-                len(outline_records),
-                len(source_groups),
-            )
-            for outline_id, chapter_number, outline_title, outline_summary in outline_records:
+            if phase == "render_only":
                 logger.info(
-                    "    Chapter %d: %s — stage 1+2",
-                    chapter_number,
-                    outline_title,
+                    "  PHASE A+B skipped (render_only). Loading existing "
+                    "event_clusters from DB…"
                 )
-                # Phase A's _process_culture opens its own sessions, so we
-                # don't hold any outer session open across the long gather.
-                await self._run_phase_a(
-                    outline_id=outline_id,
-                    outline_title=outline_title,
-                    outline_summary=outline_summary,
-                    source_groups=source_groups,
+                global_cluster_map = await self._load_existing_cluster_rows(
+                    outline_records=outline_records
                 )
+            else:
+                # ---------------------------------------------------------
+                # PHASE A — Extract atomic events for every chapter × culture.
+                # This produces per-chapter atomic events but no clusters yet.
+                # ---------------------------------------------------------
+                logger.info(
+                    "  PHASE A: extracting atomic events for %d chapters × %d cultures",
+                    len(outline_records),
+                    len(source_groups),
+                )
+                for outline_id, chapter_number, outline_title, outline_summary in outline_records:
+                    logger.info(
+                        "    Chapter %d: %s — stage 1+2",
+                        chapter_number,
+                        outline_title,
+                    )
+                    # Phase A's _process_culture opens its own sessions, so we
+                    # don't hold any outer session open across the long gather.
+                    await self._run_phase_a(
+                        outline_id=outline_id,
+                        outline_title=outline_title,
+                        outline_summary=outline_summary,
+                        source_groups=source_groups,
+                    )
 
-            # -------------------------------------------------------------
-            # PHASE B — Cluster globally across all chapters and mint
-            # archetypes ONCE for the whole epoch. Consistent archetypes
-            # across chapters = consistent narrative.
-            # -------------------------------------------------------------
-            logger.info(
-                "  PHASE B: global clustering + archetype minting across "
-                "%d chapters",
-                len(outline_records),
-            )
-            global_cluster_map = await self._run_phase_b_global(
-                epoch_id=epoch_id,
-                outline_records=outline_records,
-                equivalences=equivalences,
-            )
+                # ---------------------------------------------------------
+                # PHASE B — Cluster globally across all chapters and mint
+                # archetypes ONCE for the whole epoch. Consistent archetypes
+                # across chapters = consistent narrative.
+                # ---------------------------------------------------------
+                logger.info(
+                    "  PHASE B: global clustering + archetype minting across "
+                    "%d chapters",
+                    len(outline_records),
+                )
+                global_cluster_map = await self._run_phase_b_global(
+                    epoch_id=epoch_id,
+                    outline_records=outline_records,
+                    equivalences=equivalences,
+                )
 
             # -------------------------------------------------------------
             # PHASE C — Render each chapter using the globally-consistent
@@ -554,6 +575,81 @@ class NarrativePipelineV2:
                 "    Chapter %d: %d clusters assigned",
                 outline_id_to_number.get(oid, -1),
                 len(rows),
+            )
+
+        return chapter_to_rows
+
+    # ------------------------------------------------------------------
+    # render_only helper: load existing event_clusters → cluster_row dicts
+    # ------------------------------------------------------------------
+
+    async def _load_existing_cluster_rows(
+        self,
+        *,
+        outline_records: list,
+    ) -> dict[uuid.UUID, list[dict[str, Any]]]:
+        """Rebuild the cluster_row dicts Phase C expects from the already-
+        persisted `event_clusters` rows. Used when we've approved archetype
+        merge proposals and want to re-render chapters with the updated
+        `archetype_registry` without re-running Phase A or Phase B.
+
+        The returned rows inherit the *current* `archetype_registry_id`
+        and its `archetype_name` — meaning any rewiring done by an approved
+        merge proposal is honored automatically.
+        """
+        outline_ids = [rec[0] for rec in outline_records]
+        outline_id_to_number = {rec[0]: rec[1] for rec in outline_records}
+
+        chapter_to_rows: dict[uuid.UUID, list[dict[str, Any]]] = {
+            oid: [] for oid in outline_ids
+        }
+
+        async with async_session_factory() as s:
+            rows = (
+                await s.execute(
+                    select(EventCluster, ArchetypeRegistry.archetype_name)
+                    .outerjoin(
+                        ArchetypeRegistry,
+                        EventCluster.archetype_registry_id == ArchetypeRegistry.id,
+                    )
+                    .where(EventCluster.story_outline_id.in_(outline_ids))
+                    .order_by(EventCluster.story_outline_id, EventCluster.seq)
+                )
+            ).all()
+
+        for ec, live_archetype_name in rows:
+            outline_id = ec.story_outline_id
+            # Prefer the live archetype_registry.archetype_name if linked,
+            # so rewired clusters pick up their new name automatically.
+            archetype_name = live_archetype_name or ec.primary_archetype_name
+            chapter_to_rows[outline_id].append(
+                {
+                    "cluster_key": ec.cluster_key,
+                    "seq": ec.seq,
+                    "primary_archetype_name": archetype_name,
+                    "archetype_registry_id": ec.archetype_registry_id,
+                    "contributing_event_ids": list(
+                        ec.contributing_event_ids or []
+                    ),
+                    "contributing_cultures": dict(
+                        ec.contributing_cultures or {}
+                    ),
+                    "canonical_verb": ec.canonical_verb,
+                    "canonical_outcome": ec.canonical_outcome,
+                    "verb_family": ec.verb_family,
+                    "materials": list(ec.materials or []),
+                    "vivid_details": list(ec.vivid_details or []),
+                    "source_quotes": list(ec.source_quotes or []),
+                    "age_rank_of_oldest": ec.age_rank_of_oldest,
+                    "retention_score": ec.retention_score,
+                }
+            )
+
+        for oid, chrows in chapter_to_rows.items():
+            logger.info(
+                "    Chapter %d: loaded %d clusters (render_only)",
+                outline_id_to_number.get(oid, -1),
+                len(chrows),
             )
 
         return chapter_to_rows

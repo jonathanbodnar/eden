@@ -42,6 +42,10 @@ from src.canon.models.narrative_v2 import (
     CultureAtomicEvent,
     EventCluster,
 )
+from src.canon.models.deity_dossier import (
+    ArchetypeMergeProposal,
+    DeityDossier,
+)
 
 try:
     from src.canon.models.video_script import VideoScript
@@ -102,4 +106,6 @@ __all__ = [
     "ArchetypeRegistry",
     "CultureAtomicEvent",
     "EventCluster",
+    "DeityDossier",
+    "ArchetypeMergeProposal",
 ]

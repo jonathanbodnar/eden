@@ -1282,3 +1282,131 @@ async def archetype_analysis(session: AsyncSession = Depends(get_session)):
     )
 
     return result
+
+
+@router.get("/deity-dossiers")
+async def get_deity_dossiers(
+    epoch_order: int = 0,
+    archetype_id: str | None = None,
+    q: str | None = None,
+    limit: int = 500,
+    session: AsyncSession = Depends(get_session),
+):
+    """Return evidence-based dossiers for every actor in the given epoch."""
+    clauses = [
+        "dd.epoch_id IN (SELECT id FROM canonical_epochs "
+        "WHERE epoch_order = :eo AND is_current = true)"
+    ]
+    params: dict = {"eo": epoch_order, "lim": limit}
+    if archetype_id:
+        clauses.append("dd.current_archetype_id = :aid")
+        params["aid"] = archetype_id
+    if q:
+        clauses.append("(dd.actor_name ILIKE :q OR dd.normalized_name ILIKE :qn)")
+        params["q"] = f"%{q}%"
+        params["qn"] = f"%{q.lower()}%"
+    where = " AND ".join(clauses)
+    rows = (
+        await session.execute(
+            text(
+                f"""
+                SELECT dd.id, dd.actor_name, dd.normalized_name,
+                       dd.canonical_actor_id, dd.cultures, dd.event_count,
+                       dd.actions, dd.co_occurring_actors,
+                       dd.earliest_source_id, dd.earliest_source_title,
+                       dd.earliest_date_start, dd.earliest_date_end,
+                       dd.earliest_date_label, dd.dating_confidence,
+                       dd.source_passage_ids, dd.source_passage_excerpts,
+                       dd.characteristics_md,
+                       dd.current_archetype_id, dd.current_archetype_name,
+                       dd.updated_at
+                FROM deity_dossiers dd
+                WHERE {where}
+                ORDER BY dd.event_count DESC, dd.actor_name ASC
+                LIMIT :lim
+                """
+            ),
+            params,
+        )
+    ).all()
+
+    return [
+        {
+            "id": str(r[0]),
+            "actor_name": r[1],
+            "normalized_name": r[2],
+            "canonical_actor_id": str(r[3]) if r[3] else None,
+            "cultures": r[4] or [],
+            "event_count": r[5],
+            "actions": r[6] or [],
+            "co_occurring_actors": r[7] or {},
+            "earliest_source_id": str(r[8]) if r[8] else None,
+            "earliest_source_title": r[9],
+            "earliest_date_start": r[10],
+            "earliest_date_end": r[11],
+            "earliest_date_label": r[12],
+            "dating_confidence": r[13],
+            "source_passage_ids": r[14] or [],
+            "source_passage_excerpts": r[15] or [],
+            "characteristics_md": r[16],
+            "current_archetype_id": str(r[17]) if r[17] else None,
+            "current_archetype_name": r[18],
+            "updated_at": r[19].isoformat() if r[19] else None,
+        }
+        for r in rows
+    ]
+
+
+@router.get("/archetype-proposals")
+async def get_archetype_proposals(
+    epoch_order: int = 0,
+    status: str | None = None,
+    session: AsyncSession = Depends(get_session),
+):
+    """Return MiniMax-generated proposals for archetype re-merging."""
+    clauses = [
+        "amp.epoch_id IN (SELECT id FROM canonical_epochs "
+        "WHERE epoch_order = :eo AND is_current = true)"
+    ]
+    params: dict = {"eo": epoch_order}
+    if status:
+        clauses.append("amp.status = :st")
+        params["st"] = status
+    where = " AND ".join(clauses)
+    rows = (
+        await session.execute(
+            text(
+                f"""
+                SELECT amp.id, amp.epoch_id, amp.source_archetype_ids,
+                       amp.source_archetype_names, amp.proposal_kind,
+                       amp.proposed_groups, amp.overall_rationale,
+                       amp.confidence, amp.status, amp.applied_at,
+                       amp.applied_note, amp.model_name, amp.created_at,
+                       amp.updated_at
+                FROM archetype_merge_proposals amp
+                WHERE {where}
+                ORDER BY amp.created_at DESC
+                """
+            ),
+            params,
+        )
+    ).all()
+    return [
+        {
+            "id": str(r[0]),
+            "epoch_id": str(r[1]),
+            "source_archetype_ids": [str(x) for x in (r[2] or [])],
+            "source_archetype_names": r[3] or [],
+            "proposal_kind": r[4],
+            "proposed_groups": r[5] or [],
+            "overall_rationale": r[6],
+            "confidence": r[7],
+            "status": r[8],
+            "applied_at": r[9].isoformat() if r[9] else None,
+            "applied_note": r[10],
+            "model_name": r[11],
+            "created_at": r[12].isoformat() if r[12] else None,
+            "updated_at": r[13].isoformat() if r[13] else None,
+        }
+        for r in rows
+    ]

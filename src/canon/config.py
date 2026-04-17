@@ -20,6 +20,12 @@ class Settings(BaseSettings):
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_model: str = "deepseek-reasoner"
 
+    # MiniMax m2.5 — used by the deity-dossier pipeline for reasoning-heavy
+    # archetype merge analysis. Chat API is OpenAI-compatible.
+    minimax_api_key: str = ""
+    minimax_base_url: str = "https://api.minimaxi.com/v1"
+    minimax_model: str = "MiniMax-M2"
+
     # OpenAI — used by the V2 narrative pipeline for action embeddings
     openai_api_key: str = ""
     embedding_model: str = "text-embedding-3-small"

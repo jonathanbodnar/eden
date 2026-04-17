@@ -278,6 +278,7 @@ async def run_narrative_v2(
     chapter_numbers: str | None = None,
     wipe: bool = False,
     max_cultures: int | None = None,
+    phase: str = "full",
     session: AsyncSession = Depends(get_session),
 ):
     """V2 narrative pipeline — deterministic merge architecture.
@@ -290,8 +291,13 @@ async def run_narrative_v2(
             "1,2"); omit for all chapters of each epoch
         wipe: if True, delete culture_narratives / story_chapters / clusters for
             the targeted scope before regenerating (epoch-wide unless
-            chapter_numbers is set — in which case only those chapters are wiped)
+            chapter_numbers is set — in which case only those chapters are wiped).
+            Ignored when phase='render_only'.
         max_cultures: cap cultures per chapter (None = all)
+        phase: 'full' runs Phase A → B → C. 'render_only' skips A+B and
+            re-renders every chapter using the existing event_clusters + the
+            current archetype_registry. Use after approving archetype merge
+            proposals.
     """
     import asyncio
 
@@ -316,6 +322,7 @@ async def run_narrative_v2(
                     chapter_numbers=chapters,
                     wipe=wipe,
                     max_cultures=max_cultures,
+                    phase=phase,
                 )
                 logger.info("V2 pipeline complete: %s", result)
         except Exception:
@@ -328,7 +335,539 @@ async def run_narrative_v2(
         "chapter_numbers": chapters,
         "wipe": wipe,
         "max_cultures": max_cultures,
+        "phase": phase,
         "message": "V2 pipeline running in background. Monitor logs for progress.",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Deity Dossier + Archetype merge proposal pipeline
+# ---------------------------------------------------------------------------
+
+
+@router.post("/build-deity-dossiers")
+async def build_deity_dossiers(
+    epoch_orders: str | None = None,
+    wipe: bool = False,
+    max_actors: int | None = None,
+    skip_llm: bool = False,
+    session: AsyncSession = Depends(get_session),
+):
+    """Build per-deity evidence dossiers for the given epoch(s).
+
+    Runs in the background. For each unique actor name in
+    `culture_atomic_events` within each epoch, aggregates actions +
+    co-occurrences, resolves a canonical actor, finds the earliest
+    attested source, and calls MiniMax m2.5 to write a 2-3 paragraph
+    evidence-grounded dossier.
+    """
+    import asyncio
+
+    from sqlalchemy import text as sql_text
+
+    from src.canon.database import async_session_factory
+    from src.canon.services.deity_dossier import DossierBuilder
+
+    orders = (
+        [int(x.strip()) for x in epoch_orders.split(",")] if epoch_orders else [0]
+    )
+
+    # Resolve epoch ids now (cheap) so the background task doesn't depend
+    # on the request-scoped session.
+    async with async_session_factory() as s:
+        rows = (
+            await s.execute(
+                sql_text(
+                    "SELECT id, epoch_order, title FROM canonical_epochs "
+                    "WHERE epoch_order = ANY(:orders) AND is_current = true"
+                ),
+                {"orders": orders},
+            )
+        ).all()
+    epoch_tuples = [(str(r[0]), r[1], r[2]) for r in rows]
+
+    async def _run() -> None:
+        try:
+            builder = DossierBuilder(
+                max_actors=max_actors,
+                llm_concurrency=4,
+                skip_llm=skip_llm,
+            )
+            for eid, eorder, etitle in epoch_tuples:
+                logger.info(
+                    "Deity dossier build: epoch %d — %s", eorder, etitle
+                )
+                result = await builder.build_for_epoch(
+                    eid, eorder, wipe=wipe
+                )
+                logger.info("Deity dossier build complete: %s", result)
+        except Exception:
+            logger.exception("Deity dossier build failed")
+
+    asyncio.create_task(_run())
+    return {
+        "status": "started",
+        "epoch_orders": orders,
+        "wipe": wipe,
+        "max_actors": max_actors,
+        "skip_llm": skip_llm,
+        "epochs_resolved": len(epoch_tuples),
+        "message": "Dossier build running in background. Monitor logs for progress.",
+    }
+
+
+@router.post("/propose-archetype-remerges")
+async def propose_archetype_remerges(
+    epoch_orders: str | None = None,
+    wipe_pending: bool = True,
+    min_members: int = 2,
+    session: AsyncSession = Depends(get_session),
+):
+    """Ask MiniMax m2.5 to audit each archetype and propose splits/merges.
+
+    Runs in the background. Uses the dossiers populated by
+    `/admin/build-deity-dossiers`, so that endpoint must be run first.
+    Proposals land in `archetype_merge_proposals` with status='pending'
+    and are NOT applied until a human approves via
+    `/admin/archetype-proposals/{id}/approve`.
+    """
+    import asyncio
+
+    from sqlalchemy import text as sql_text
+
+    from src.canon.database import async_session_factory
+    from src.canon.services.deity_dossier import ProposalGenerator
+
+    orders = (
+        [int(x.strip()) for x in epoch_orders.split(",")] if epoch_orders else [0]
+    )
+    async with async_session_factory() as s:
+        rows = (
+            await s.execute(
+                sql_text(
+                    "SELECT id, epoch_order, title FROM canonical_epochs "
+                    "WHERE epoch_order = ANY(:orders) AND is_current = true"
+                ),
+                {"orders": orders},
+            )
+        ).all()
+    epoch_tuples = [(str(r[0]), r[1], r[2]) for r in rows]
+
+    async def _run() -> None:
+        try:
+            gen = ProposalGenerator(llm_concurrency=3, min_members=min_members)
+            for eid, eorder, etitle in epoch_tuples:
+                logger.info("Proposer: epoch %d — %s", eorder, etitle)
+                result = await gen.propose_for_epoch(
+                    eid, eorder, wipe_pending=wipe_pending
+                )
+                logger.info("Proposer complete: %s", result)
+        except Exception:
+            logger.exception("Proposer failed")
+
+    asyncio.create_task(_run())
+    return {
+        "status": "started",
+        "epoch_orders": orders,
+        "wipe_pending": wipe_pending,
+        "min_members": min_members,
+        "epochs_resolved": len(epoch_tuples),
+        "message": (
+            "Proposal generation running in background. Monitor logs."
+        ),
+    }
+
+
+@router.post("/archetype-proposals/{proposal_id}/approve")
+async def approve_archetype_proposal(
+    proposal_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    """Apply a proposal: rewrite archetype_registry + rewire event_clusters.
+
+    For a KEEP proposal: nothing to change, just mark applied.
+
+    For a SPLIT proposal: for each proposed_group,
+      - If group has 1 member with the same name as the source archetype
+        → no-op.
+      - Else create a new archetype_registry row (or reuse if an archetype
+        with that proposed name already exists), set
+        also_known_as = group.members, move matching canonical_ids across
+        from the source archetype.
+      - event_clusters whose contributing actors match the group's member
+        names get their archetype_registry_id / primary_archetype_name
+        rewired.
+      - If the source archetype ends up empty (no AKAs left), clear its
+        also_known_as but keep the row (it may still be referenced).
+    """
+    from sqlalchemy import text as sql_text
+
+    # Load the proposal
+    row = (
+        await session.execute(
+            sql_text(
+                """
+                SELECT id, epoch_id, source_archetype_ids,
+                       source_archetype_names, proposal_kind, proposed_groups,
+                       status
+                FROM archetype_merge_proposals WHERE id = :pid
+                """
+            ),
+            {"pid": proposal_id},
+        )
+    ).first()
+    if not row:
+        raise HTTPException(404, "Proposal not found")
+    if row[6] not in ("pending", "rejected"):
+        raise HTTPException(
+            400, f"Proposal is already {row[6]}; nothing to apply"
+        )
+
+    (
+        _pid,
+        _eid,
+        source_ids,
+        source_names,
+        kind,
+        groups,
+        _status,
+    ) = row
+    source_ids = list(source_ids or [])
+    source_names = list(source_names or [])
+    groups = list(groups or [])
+
+    applied_notes: list[str] = []
+
+    if kind == "keep":
+        applied_notes.append("Proposal was KEEP — no structural changes.")
+    else:
+        # Build a normalize helper
+        import re
+
+        def norm(s: str) -> str:
+            return re.sub(r"[^a-z0-9]", "", (s or "").lower())
+
+        # For each source archetype, collect its current AKA and
+        # canonical_ids; we'll re-distribute them into the proposed groups.
+        src_rows = (
+            await session.execute(
+                sql_text(
+                    """
+                    SELECT id, archetype_name, also_known_as, canonical_ids
+                    FROM archetype_registry
+                    WHERE id = ANY(:ids::uuid[])
+                    """
+                ),
+                {"ids": source_ids},
+            )
+        ).all()
+
+        existing_aka: dict[str, list[str]] = {}
+        existing_cids: dict[str, list[str]] = {}
+        src_by_id: dict[str, str] = {}
+        for r in src_rows:
+            sid = str(r[0])
+            src_by_id[sid] = r[1]
+            existing_aka[sid] = list(r[2] or [])
+            existing_cids[sid] = [str(x) for x in (r[3] or [])]
+
+        # Flatten: (normalized_name → canonical_id mapping) per source
+        # (we need to know which canonical_id belongs to each AKA — but
+        # the registry stores them flat, not paired. So for now assume
+        # all canonical_ids from a source archetype get distributed by
+        # looking up each AKA member against canonical_actors.)
+        # Build a lookup (norm_name → canonical_id) via canonical_actors.
+        cid_lookup: dict[str, str] = {}
+        all_norms = set()
+        for sid, akas in existing_aka.items():
+            for a in akas:
+                all_norms.add(norm(a))
+        if all_norms:
+            cid_rows = (
+                await session.execute(
+                    sql_text(
+                        """
+                        SELECT id, canonical_name
+                        FROM canonical_actors
+                        WHERE is_current = true
+                        """
+                    )
+                )
+            ).all()
+            for cid, cname in cid_rows:
+                if not cname:
+                    continue
+                n = norm(cname)
+                if n in all_norms and n not in cid_lookup:
+                    cid_lookup[n] = str(cid)
+
+        # Now apply each proposed group
+        for g in groups:
+            members = g.get("members") or []
+            if not members:
+                continue
+            proposed_name = (g.get("proposed_archetype_name") or "").strip()
+            role = (g.get("role_description") or "").strip()
+            if not proposed_name:
+                continue
+
+            # Canonical IDs for this group's members
+            member_cids: list[str] = []
+            for m in members:
+                c = cid_lookup.get(norm(m))
+                if c:
+                    member_cids.append(c)
+
+            # Upsert the target archetype by name
+            tgt_row = (
+                await session.execute(
+                    sql_text(
+                        """
+                        SELECT id, also_known_as, canonical_ids
+                        FROM archetype_registry WHERE archetype_name = :nm
+                        """
+                    ),
+                    {"nm": proposed_name},
+                )
+            ).first()
+            if tgt_row:
+                tgt_id = str(tgt_row[0])
+                merged_aka = sorted(set(list(tgt_row[1] or []) + members))
+                merged_cids = list(
+                    {str(x) for x in (tgt_row[2] or [])} | set(member_cids)
+                )
+                await session.execute(
+                    sql_text(
+                        """
+                        UPDATE archetype_registry
+                        SET also_known_as = :aka,
+                            canonical_ids = :cids::uuid[],
+                            role_description = COALESCE(:role, role_description),
+                            updated_at = now()
+                        WHERE id = :id
+                        """
+                    ),
+                    {
+                        "id": tgt_id,
+                        "aka": merged_aka,
+                        "cids": merged_cids,
+                        "role": role or None,
+                    },
+                )
+            else:
+                inserted = (
+                    await session.execute(
+                        sql_text(
+                            """
+                            INSERT INTO archetype_registry (
+                                archetype_name, role_description,
+                                entity_type, also_known_as, canonical_ids
+                            ) VALUES (
+                                :nm, :role, 'actor',
+                                :aka, :cids::uuid[]
+                            ) RETURNING id
+                            """
+                        ),
+                        {
+                            "nm": proposed_name,
+                            "role": role or None,
+                            "aka": members,
+                            "cids": member_cids,
+                        },
+                    )
+                ).first()
+                tgt_id = str(inserted[0])
+
+            # Remove these members from ALL source archetypes (to
+            # prevent double-assignment) if the target isn't one of the
+            # source archetypes (or is a different archetype).
+            members_norm = {norm(m) for m in members}
+            member_cids_set = set(member_cids)
+            for sid, akas in list(existing_aka.items()):
+                if sid == tgt_id:
+                    continue
+                new_aka = [a for a in akas if norm(a) not in members_norm]
+                new_cids = [
+                    c for c in existing_cids.get(sid, []) if c not in member_cids_set
+                ]
+                existing_aka[sid] = new_aka
+                existing_cids[sid] = new_cids
+                await session.execute(
+                    sql_text(
+                        """
+                        UPDATE archetype_registry
+                        SET also_known_as = :aka,
+                            canonical_ids = :cids::uuid[],
+                            updated_at = now()
+                        WHERE id = :id
+                        """
+                    ),
+                    {
+                        "id": sid,
+                        "aka": new_aka,
+                        "cids": new_cids,
+                    },
+                )
+
+            # Rewire event_clusters whose primary_archetype_name is one
+            # of the source archetypes AND whose contributing_cultures
+            # names map into this group's members.
+            if source_ids:
+                # Build a regex-ish ANY match on contributing cultures
+                ev_rows = (
+                    await session.execute(
+                        sql_text(
+                            """
+                            SELECT id, contributing_cultures
+                            FROM event_clusters
+                            WHERE archetype_registry_id = ANY(:ids::uuid[])
+                            """
+                        ),
+                        {"ids": source_ids},
+                    )
+                ).all()
+                for ev_id, ccultures in ev_rows:
+                    names_in_event: set[str] = set()
+                    if isinstance(ccultures, dict):
+                        for culture_key, actors in ccultures.items():
+                            if isinstance(actors, list):
+                                for a in actors:
+                                    names_in_event.add(norm(str(a)))
+                            elif isinstance(actors, str):
+                                names_in_event.add(norm(actors))
+                    if names_in_event & members_norm:
+                        await session.execute(
+                            sql_text(
+                                """
+                                UPDATE event_clusters
+                                SET archetype_registry_id = :tid,
+                                    primary_archetype_name = :pn
+                                WHERE id = :eid
+                                """
+                            ),
+                            {
+                                "tid": tgt_id,
+                                "pn": proposed_name,
+                                "eid": str(ev_id),
+                            },
+                        )
+
+            applied_notes.append(
+                f"Group '{proposed_name}' → {len(members)} members"
+            )
+
+        # Update deity_dossiers.current_archetype_* denormalization
+        await session.execute(
+            sql_text(
+                """
+                UPDATE deity_dossiers dd
+                SET current_archetype_id = ar.id,
+                    current_archetype_name = ar.archetype_name,
+                    updated_at = now()
+                FROM archetype_registry ar
+                WHERE ar.also_known_as && ARRAY[dd.actor_name]
+                """
+            )
+        )
+
+    # Mark the proposal applied
+    await session.execute(
+        sql_text(
+            """
+            UPDATE archetype_merge_proposals
+            SET status = 'applied',
+                applied_at = now(),
+                applied_note = :note,
+                updated_at = now()
+            WHERE id = :pid
+            """
+        ),
+        {"pid": proposal_id, "note": " | ".join(applied_notes)[:4000]},
+    )
+    await session.commit()
+    return {
+        "status": "applied",
+        "proposal_id": proposal_id,
+        "notes": applied_notes,
+    }
+
+
+@router.post("/archetype-proposals/{proposal_id}/reject")
+async def reject_archetype_proposal(
+    proposal_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    """Mark a proposal as rejected (no structural changes)."""
+    from sqlalchemy import text as sql_text
+
+    result = await session.execute(
+        sql_text(
+            """
+            UPDATE archetype_merge_proposals
+            SET status = 'rejected', updated_at = now()
+            WHERE id = :pid AND status = 'pending'
+            RETURNING id
+            """
+        ),
+        {"pid": proposal_id},
+    )
+    if not result.first():
+        raise HTTPException(
+            404, "Proposal not found or not in pending state"
+        )
+    await session.commit()
+    return {"status": "rejected", "proposal_id": proposal_id}
+
+
+@router.get("/deity-dossier-status")
+async def deity_dossier_status(
+    epoch_orders: str | None = None,
+    session: AsyncSession = Depends(get_session),
+):
+    """Check the number of deity_dossiers produced so far."""
+    from sqlalchemy import text as sql_text
+
+    params: dict = {}
+    where = ""
+    if epoch_orders:
+        orders = [int(x.strip()) for x in epoch_orders.split(",")]
+        where = (
+            " AND dd.epoch_id IN (SELECT id FROM canonical_epochs "
+            "WHERE epoch_order = ANY(:orders))"
+        )
+        params["orders"] = orders
+    counts = (
+        await session.execute(
+            sql_text(
+                f"""
+                SELECT COUNT(*) AS total,
+                       COUNT(canonical_actor_id) AS resolved,
+                       COUNT(earliest_source_id) AS dated,
+                       COUNT(characteristics_md) AS llm_enriched
+                FROM deity_dossiers dd
+                WHERE 1=1 {where}
+                """
+            ),
+            params,
+        )
+    ).first()
+    proposal_counts = (
+        await session.execute(
+            sql_text(
+                """
+                SELECT status, COUNT(*)
+                FROM archetype_merge_proposals
+                GROUP BY status
+                """
+            )
+        )
+    ).all()
+    return {
+        "dossiers_total": counts[0] if counts else 0,
+        "dossiers_canonical_resolved": counts[1] if counts else 0,
+        "dossiers_dated": counts[2] if counts else 0,
+        "dossiers_llm_enriched": counts[3] if counts else 0,
+        "proposal_counts": {r[0]: r[1] for r in proposal_counts},
     }
 
 
