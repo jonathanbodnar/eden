@@ -122,6 +122,11 @@ async def call_minimax(
         js[:200],
         js[-200:] if len(js) > 200 else "",
     )
+    logger.warning(
+        "MiniMax raw content (len=%d) FULL: %s",
+        len(raw),
+        raw,
+    )
     return {}
 
 

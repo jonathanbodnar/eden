@@ -275,8 +275,8 @@ async def _dispatch_proposal(
                 user_prompt=packet,
                 system_prompt=_PROPOSER_SYSTEM_PROMPT,
                 temperature=0.2,
-                max_tokens=8000,
-                timeout=360.0,
+                max_tokens=16000,
+                timeout=600.0,
                 json_mode=True,
             )
         except Exception:  # noqa: BLE001
