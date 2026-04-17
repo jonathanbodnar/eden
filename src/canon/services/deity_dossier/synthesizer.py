@@ -1045,14 +1045,29 @@ Output strict JSON:
                 ).first()
                 if existing:
                     if existing[3] == "primary":
-                        # Name collision with a primary row — skip to
-                        # avoid silently converting a primary archetype
-                        # into a class. Log and move on.
-                        logger.warning(
-                            "Class %r collides with existing primary archetype — skipping",
-                            cname,
-                        )
-                        continue
+                        existing_aka = list(existing[1] or [])
+                        existing_norms = {_norm(a) for a in existing_aka}
+                        # If every remaining member of the old primary row
+                        # is also in the new class, it's safe to convert
+                        # the row to a class — we just absorbed its
+                        # surviving AKAs into the class membership. This
+                        # commonly happens when the previous synthesis
+                        # created a pseudo-primary like "The Shining Ones"
+                        # that the new model correctly reclassifies as a
+                        # class.
+                        new_norms = {_norm(m) for m in cmembers}
+                        if existing_norms.issubset(new_norms):
+                            logger.info(
+                                "Class %r converting existing primary row to class (members absorbed)",
+                                cname,
+                            )
+                        else:
+                            logger.warning(
+                                "Class %r collides with existing primary archetype with non-absorbable members %s — skipping",
+                                cname,
+                                sorted(existing_norms - new_norms)[:5],
+                            )
+                            continue
                     cls_id = str(existing[0])
                     merged_aka = sorted(set(list(existing[1] or []) + cmembers))
                     merged_cids = sorted(
