@@ -201,6 +201,12 @@ class GlobalArchetypeSynthesizer:
         clusters = self._validate_clusters(result.get("clusters") or [], dossiers)
         summary_text = (result.get("summary") or "").strip()
 
+        # Second pass: any deities that landed in the "Unclustered
+        # (review)" bucket get sent back with the cluster catalog for
+        # placement. This catches real deities the first pass missed
+        # without re-running the entire 36K-token analysis.
+        clusters = await self._placement_pass(clusters, dossiers)
+
         # Persist a "synthesis" proposal row for audit/history
         await self._persist_proposal(
             epoch_id=epoch_id,
@@ -374,29 +380,63 @@ class GlobalArchetypeSynthesizer:
         raw_clusters: list[dict[str, Any]],
         dossiers: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
+        """Normalize LLM output and resolve duplicate memberships.
+
+        The LLM sometimes assigns the same deity to multiple clusters
+        (e.g., Quetzalcoatl in both "Feathered Serpent" and "Shining
+        Ones"). We resolve this by giving each deity to the highest-
+        confidence cluster that claims it; on ties, the cluster with
+        the most distinctive evidence (more evidence entries) wins;
+        on further ties, the cluster listed first.
+        """
         all_names = {d["actor_name"] for d in dossiers}
-        seen: set[str] = set()
-        cleaned: list[dict[str, Any]] = []
-        for c in raw_clusters:
+
+        staged: list[dict[str, Any]] = []
+        for idx, c in enumerate(raw_clusters):
             if not isinstance(c, dict):
                 continue
             name = (c.get("archetype_name") or "").strip()
-            members = [m for m in (c.get("members") or []) if m in all_names]
-            if not name or not members:
+            raw_members = [
+                m for m in (c.get("members") or []) if m in all_names
+            ]
+            if not name or not raw_members:
                 continue
-            members = sorted(set(members))
-            cleaned.append(
+            staged.append(
                 {
+                    "order": idx,
                     "archetype_name": name,
                     "role_description": (c.get("role_description") or "").strip(),
                     "confidence": float(c.get("confidence") or 0.0),
-                    "members": members,
+                    "members": sorted(set(raw_members)),
                     "rationale": (c.get("rationale") or "").strip(),
                     "evidence": list(c.get("evidence") or []),
                 }
             )
-            seen.update(members)
-        # Any missing deities go into a catch-all so we don't lose them
+
+        # Rank clusters: higher confidence wins, then more evidence,
+        # then original order.
+        staged.sort(
+            key=lambda x: (
+                -x["confidence"],
+                -len(x.get("evidence") or []),
+                x["order"],
+            )
+        )
+
+        claimed: set[str] = set()
+        for c in staged:
+            kept = [m for m in c["members"] if m not in claimed]
+            c["members"] = kept
+            claimed.update(kept)
+
+        # Drop any cluster that ended up with zero members, restore
+        # original cluster ordering.
+        cleaned = [c for c in staged if c["members"]]
+        cleaned.sort(key=lambda x: x["order"])
+        for c in cleaned:
+            c.pop("order", None)
+
+        seen = claimed
         missing = sorted(all_names - seen)
         if missing:
             cleaned.append(
@@ -413,6 +453,159 @@ class GlobalArchetypeSynthesizer:
                 }
             )
         return cleaned
+
+    async def _placement_pass(
+        self,
+        clusters: list[dict[str, Any]],
+        dossiers: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Try to place any leftover 'Unclustered' members into existing
+        clusters with a targeted follow-up LLM call.
+        """
+        leftover = next(
+            (c for c in clusters if c.get("archetype_name") == "Unclustered (review)"),
+            None,
+        )
+        if not leftover or not leftover.get("members"):
+            return clusters
+
+        dossier_by_name = {d["actor_name"]: d for d in dossiers}
+        missing_dossiers = [
+            dossier_by_name[n]
+            for n in leftover["members"]
+            if n in dossier_by_name
+        ]
+        if not missing_dossiers:
+            return clusters
+
+        catalog_lines = ["EXISTING CLUSTERS:"]
+        for c in clusters:
+            if c["archetype_name"] == "Unclustered (review)":
+                continue
+            catalog_lines.append(
+                f"- {c['archetype_name']}: {c.get('role_description') or ''} "
+                f"[members: {', '.join(c['members'][:10])}]"
+            )
+
+        dossier_lines = ["", "DEITIES TO PLACE:"]
+        for d in missing_dossiers:
+            dossier_lines.append("---")
+            dossier_lines.append(f"NAME: {d['actor_name']}")
+            if d.get("cultures"):
+                dossier_lines.append(f"Cultures: {', '.join(d['cultures'])}")
+            era = self._format_era(d)
+            if era:
+                dossier_lines.append(f"Earliest source: {era}")
+            actions = d.get("actions") or []
+            if actions:
+                bits: list[str] = []
+                for a in actions[:6]:
+                    verb = (a.get("verb") or "").strip()
+                    outcome = (a.get("outcome") or "").strip()
+                    if verb or outcome:
+                        bits.append(f"{verb} → {outcome}".strip(" →"))
+                if bits:
+                    dossier_lines.append("Actions: " + "; ".join(bits))
+            essence = _first_n_chars(d.get("characteristics_md") or "", 300)
+            if essence:
+                dossier_lines.append(f"Essence: {essence}")
+
+        system = """You are placing unclustered deities into an existing
+archetype taxonomy. For each deity, output either:
+
+  - "cluster_name": an EXACT name from the EXISTING CLUSTERS list
+    (to merge this deity into that archetype), OR
+  - "cluster_name": "<New Archetype Name>" AND is_new: true if the
+    deity genuinely does not fit any existing cluster — only use this
+    when confidence that it's a new archetype is >= 0.70.
+
+If you cannot reasonably place a deity (it's a generic noun like
+"moon" or "serpent" with no distinctive profile, or it's a non-deity
+entity that leaked from extraction), use cluster_name: "SKIP".
+
+Output strict JSON:
+
+{
+  "placements": [
+    {"name": "DeityName", "cluster_name": "...", "is_new": false,
+     "confidence": 0.0-1.0, "rationale": "one sentence"},
+    ...
+  ]
+}
+"""
+        user = "\n".join(catalog_lines + dossier_lines + [
+            "",
+            "Output strict JSON per the required schema.",
+        ])
+
+        try:
+            result = await call_minimax(
+                user_prompt=user,
+                system_prompt=system,
+                temperature=0.15,
+                max_tokens=12000,
+                timeout=600.0,
+                json_mode=True,
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("Placement pass failed; keeping unclustered bucket.")
+            return clusters
+
+        placements = (result.get("placements") if isinstance(result, dict) else []) or []
+        if not placements:
+            return clusters
+
+        by_name = {c["archetype_name"]: c for c in clusters}
+        placed_names: set[str] = set()
+        logger.info(
+            "Placement pass: %d placements returned by LLM", len(placements)
+        )
+
+        for p in placements:
+            if not isinstance(p, dict):
+                continue
+            deity = (p.get("name") or "").strip()
+            target = (p.get("cluster_name") or "").strip()
+            if not deity or not target or deity not in leftover["members"]:
+                continue
+            conf = float(p.get("confidence") or 0.0)
+            if target.upper() == "SKIP":
+                placed_names.add(deity)
+                continue
+            rationale = (p.get("rationale") or "").strip()
+            if target in by_name and not p.get("is_new"):
+                tgt = by_name[target]
+                tgt["members"] = sorted(set(tgt["members"] + [deity]))
+                if rationale:
+                    tgt.setdefault("evidence", []).append(
+                        f"placement: {deity} — {rationale}"
+                    )
+                placed_names.add(deity)
+            elif p.get("is_new") and conf >= 0.70:
+                new = {
+                    "archetype_name": target,
+                    "role_description": rationale,
+                    "confidence": conf,
+                    "members": [deity],
+                    "rationale": rationale,
+                    "evidence": [f"placement: {rationale}"],
+                }
+                clusters.insert(-1, new)  # insert before "Unclustered (review)"
+                by_name[target] = new
+                placed_names.add(deity)
+
+        leftover["members"] = sorted(
+            m for m in leftover["members"] if m not in placed_names
+        )
+        if not leftover["members"]:
+            clusters = [c for c in clusters if c is not leftover]
+        logger.info(
+            "Placement pass: %d/%d deities placed; %d still unclustered",
+            len(placed_names),
+            len(missing_dossiers),
+            len(leftover["members"]),
+        )
+        return clusters
 
     async def _persist_proposal(
         self,
