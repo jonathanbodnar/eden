@@ -46,82 +46,102 @@ Ancient Near Eastern / Indo-European religion, and cross-cultural
 archetype analysis.
 
 Your task: take a flat list of DEITY DOSSIERS from multiple cultures
-and produce a SINGLE unified archetype taxonomy that merges deities
-ACROSS cultures when the evidence warrants it.
+and produce a TWO-LEVEL taxonomy:
 
-Use these weighted criteria when deciding whether two deities from
-different cultures share a single archetype:
+  LEVEL 1 — PRIMARY CLUSTERS (mutually exclusive)
+  Each deity belongs to exactly ONE primary cluster representing its
+  specific functional role. Examples of primary archetypes:
+    - "The Flood Hero" (Noah, Utnapishtim, Atra-Hasis)
+    - "The Chaos-Slaying Champion" (Marduk, Zeus, Indra, Thor)
+    - "The Word Creator" (Ptah, YHWH, Hebrew God)
+    - "The Feathered Serpent" (Quetzalcoatl, Gucumatz)
+    - "The Storm God" (Indra, Tezcatlipoca, Susanoo)
+    - "The Primordial Waters" (Tiamat, Nu)
+    - "The Earth Mother" (Gaia, Nut, Nyx)
+  Primary clusters describe a deity's SPECIFIC distinctive action
+  profile — what they DO that makes them who they are.
 
-  1. DISTINCTIVE SHARED ACTIONS (highest weight). A unique, specific
-     action performed by multiple deities across cultures is strong
-     evidence for a shared archetype. Examples:
-       - Noah (Hebrew Bible) + Utnapishtim (Gilgamesh) + Atra-Hasis
-         (Mesopotamian) all: build an ark of specific dimensions,
-         survive the flood, release birds to find land, sacrifice on
-         disembarking → THE FLOOD HERO.
-       - Marduk (Enuma Elish) + Indra (Ṛgveda) + Zeus (Theogony) all
-         champion the young gods against a primordial chaos monster
-         → THE CHAOS-SLAYING STORM KING.
-       - Ptah (Memphite Theology) + the Hebrew God (Genesis) both
-         create the world through thought and word → THE WORD CREATOR.
+  LEVEL 2 — CLASS MEMBERSHIPS (many-to-many, overlapping)
+  A deity can additionally belong to any number of broader collective/
+  taxonomic groupings. A class membership does NOT compete with the
+  primary archetype — it's a separate axis of identity. Examples:
+    - "The Elohim" (the Hebrew plural-divine class — YHWH is AN
+      Elohim; other beings called elohim are also members)
+    - "The Anunnaki" (Mesopotamian divine council — Anu, Enlil,
+      Tiamat-era gods, etc. are Anunnaki)
+    - "The Devas" (Vedic shining gods — Indra, Agni, Mitra, etc.)
+    - "The Aesir" (Norse divine family)
+    - "The Olympians" (Zeus-generation Greek gods)
+    - "The Titan Generation" (Kronos, Rhea, Ouranos, Gaia's children)
+    - "The Shining Ones" (broad luminous-divine class spanning
+      multiple cultures: devas, Anunnaki, Quetzalcoatl as luminous
+      feathered-serpent, etc.)
+    - "The Divine Collective / Plurals" (any generic grouping noun)
+  Quetzalcoatl, for instance, has PRIMARY archetype "The Feathered
+  Serpent" (what he does) AND class memberships in "The Shining Ones"
+  and "The Aztec Pantheon" (what group he belongs to).
 
-  2. OVERLAPPING RELATIONAL NETWORK (high weight). If deity A co-occurs
-     with deities matching the counterparts of deity B's co-occurrences
-     across cultures, they likely share an archetype. Example: Anu
-     co-occurs with Anshar, Kishar in Mesopotamian creation; Ouranos
-     co-occurs with analogous pairs in Greek — both sit atop a
-     multi-generational genealogy of sky, mother-earth, and children.
+CRITERIA (applied to BOTH levels, heaviest at the top):
 
-  3. EARLIEST-SOURCE DATE ALIGNMENT (medium weight). If one deity is
-     attested centuries earlier than another that shares its action
-     profile, the later one is plausibly derivative — they belong in
-     the same archetype with a note about chronology.
-
-  4. CHARACTERISTIC ESSENCE (medium weight). Distinguish generic
-     plurals/collectives from specific named deities:
-       - "Elohim" = plural of gods (generic); "Anunnaki", "Devas",
-         "Aesir" are similar collective groupings. These belong
-         together as THE DIVINE COUNCIL / THE GODS (collective),
-         NOT merged with specific named patriarchal deities.
-       - "YHWH" is a SPECIFIC named deity of the Abrahamic tradition;
-         it should NOT be merged with generic-plural collectives.
-       - A god's self-description ("I am that I am", "the One")
-         suggests the self-existent / monotheistic supreme archetype
-         rather than one member of a pantheon.
+  1. DISTINCTIVE SHARED ACTIONS. A unique action across cultures is
+     strong evidence for a shared PRIMARY archetype.
+  2. OVERLAPPING RELATIONAL NETWORK. If deity A co-occurs with
+     counterparts of deity B's co-occurrences across cultures, they
+     likely share a primary archetype AND possibly classes.
+  3. EARLIEST-SOURCE DATE ALIGNMENT. Chronology suggests derivative
+     lineages; matters for primary clustering.
+  4. CHARACTERISTIC ESSENCE + GRAMMATICAL PLURALITY.
+     - Plural/collective nouns ("Elohim", "Anunnaki", "Devas",
+       "Aesir") are CLASSES, not primary archetypes. Do NOT create
+       a primary archetype whose members are all generic plurals;
+       make those classes instead.
+     - Specific named deities get a primary archetype from their
+       action profile, then class memberships for any pantheons or
+       plural-collectives they belong to.
 
 RULES FOR OUTPUT:
 
-A. Every input deity MUST appear in exactly one cluster. No omissions.
-B. Singleton clusters are allowed (a deity that is genuinely unique).
-C. Prefer cross-cultural merges. Do NOT create archetypes that contain
-   deities from only one culture unless no cross-cultural match exists.
-D. Archetype names are short noun phrases: "The Flood Hero", "The
-   Storm-Slaying Champion", "The Primordial Sea Mother", "The Divine
-   Craftsman". Do NOT use a single deity's name as the archetype name.
-E. For each cluster, confidence in [0.0, 1.0]. High confidence only
-   when criteria 1 AND (2 or 3) overlap strongly.
-F. For each cluster, cite concrete evidence: specific shared actions
-   (quote verbs/outcomes from the dossiers), specific earliest dates,
-   specific co-occurring actors.
-G. Output STRICT JSON, no prose outside the JSON object.
+A. Every input deity MUST appear in exactly ONE primary cluster.
+B. Class memberships are optional. A deity can be in 0, 1, or many.
+C. Primary cluster names: short noun phrases naming the ROLE ("The
+   Flood Hero"). Do NOT use a single deity's name.
+D. Class names: short noun phrases naming the COLLECTIVE ("The
+   Elohim", "The Anunnaki", "The Shining Ones"). Usually plural.
+E. Prefer cross-cultural primary merges when distinctive action or
+   relational overlap exists. Prefer culturally-specific classes
+   (Anunnaki, Devas, Aesir, Elohim) unless a cross-cultural class
+   concept is clearly warranted (Shining Ones, Divine Collective).
+F. For each primary cluster and each class, confidence in [0.0, 1.0].
+G. For each primary cluster, cite concrete evidence (shared actions,
+   relational overlap, dates, essence).
+H. Output STRICT JSON. No prose outside the JSON object.
 
 REQUIRED JSON SCHEMA:
 
 {
   "summary": "1–2 sentences on the overall taxonomy produced.",
-  "clusters": [
+  "primary_clusters": [
     {
-      "archetype_name": "The <Role>",
+      "archetype_name": "The <Specific Role>",
       "role_description": "one short sentence",
       "confidence": 0.0–1.0,
       "members": ["DeityName1", "DeityName2", ...],
       "rationale": "Why these belong together — cite criteria 1/2/3/4.",
       "evidence": [
-        "shared action: <quote a verb+outcome from multiple members>",
-        "relational overlap: <who both co-occur with>",
-        "temporal alignment: <earliest dates>",
-        "essence: <why not a generic plural / why genuinely shared>"
+        "shared action: <verb+outcome>",
+        "relational overlap: <co-occurrences>",
+        "temporal alignment: <dates>",
+        "essence: <why shared>"
       ]
+    }
+  ],
+  "classes": [
+    {
+      "class_name": "The <Collective>",
+      "description": "one short sentence describing this class",
+      "confidence": 0.0–1.0,
+      "members": ["DeityName1", "DeityName2", ...],
+      "rationale": "Why these deities share this class membership."
     }
   ]
 }
@@ -189,29 +209,37 @@ class GlobalArchetypeSynthesizer:
             timeout=self.timeout,
             json_mode=True,
         )
-        if not result or "clusters" not in result:
+        if not isinstance(result, dict) or (
+            "primary_clusters" not in result and "clusters" not in result
+        ):
             logger.error("Synthesizer LLM returned empty/invalid: %s", str(result)[:400])
             return {
                 "status": "llm_failed",
-                "clusters": [],
+                "primary_clusters": [],
+                "classes": [],
                 "applied": False,
                 "dossier_count": len(dossiers),
             }
 
-        clusters = self._validate_clusters(result.get("clusters") or [], dossiers)
+        raw_primary = (
+            result.get("primary_clusters") or result.get("clusters") or []
+        )
+        raw_classes = result.get("classes") or []
+
+        primary_clusters = self._validate_primary(raw_primary, dossiers)
+        classes = self._validate_classes(raw_classes, dossiers)
         summary_text = (result.get("summary") or "").strip()
 
-        # Second pass: any deities that landed in the "Unclustered
-        # (review)" bucket get sent back with the cluster catalog for
-        # placement. This catches real deities the first pass missed
-        # without re-running the entire 36K-token analysis.
-        clusters = await self._placement_pass(clusters, dossiers)
+        # Second pass: place any deities that landed in the "Unclustered
+        # (review)" bucket of PRIMARY clusters. Class memberships are
+        # opt-in so no need for a placement pass there.
+        primary_clusters = await self._placement_pass(primary_clusters, dossiers)
 
-        # Persist a "synthesis" proposal row for audit/history
         await self._persist_proposal(
             epoch_id=epoch_id,
             summary=summary_text,
-            clusters=clusters,
+            primary_clusters=primary_clusters,
+            classes=classes,
         )
 
         applied = False
@@ -219,7 +247,8 @@ class GlobalArchetypeSynthesizer:
         if apply:
             apply_stats = await self._apply_clusters(
                 epoch_id=epoch_id,
-                clusters=clusters,
+                primary_clusters=primary_clusters,
+                classes=classes,
                 dossiers=dossiers,
             )
             applied = True
@@ -227,10 +256,17 @@ class GlobalArchetypeSynthesizer:
         return {
             "status": "ok",
             "summary": summary_text,
-            "clusters": clusters,
-            "cluster_count": len(clusters),
-            "auto_applied_count": sum(
-                1 for c in clusters if c.get("confidence", 0) >= self.min_confidence
+            "primary_clusters": primary_clusters,
+            "classes": classes,
+            "primary_cluster_count": len(primary_clusters),
+            "class_count": len(classes),
+            "auto_applied_primary": sum(
+                1
+                for c in primary_clusters
+                if c.get("confidence", 0) >= self.min_confidence
+            ),
+            "auto_applied_classes": sum(
+                1 for c in classes if c.get("confidence", 0) >= self.min_confidence
             ),
             "applied": applied,
             "apply_stats": apply_stats,
@@ -352,10 +388,13 @@ class GlobalArchetypeSynthesizer:
         lines.append("---")
         lines.append("")
         lines.append(
-            "Produce the unified clustering now. Every deity above must "
-            "appear in exactly one cluster. Prefer cross-cultural merges "
-            "supported by distinctive shared actions or relational "
-            "overlap. Output JSON only per the required schema."
+            "Produce the two-level taxonomy now. Every deity above must "
+            "appear in exactly ONE entry of primary_clusters. In "
+            "addition, populate classes with the broader collective "
+            "groupings deities belong to (Elohim, Anunnaki, Devas, "
+            "Aesir, Shining Ones, Olympians, etc.). A deity can appear "
+            "in 0, 1, or many classes. Output JSON only per the "
+            "required schema."
         )
         return "\n".join(lines)
 
@@ -375,19 +414,16 @@ class GlobalArchetypeSynthesizer:
 
     # ----- validation -----
 
-    def _validate_clusters(
+    def _validate_primary(
         self,
         raw_clusters: list[dict[str, Any]],
         dossiers: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
-        """Normalize LLM output and resolve duplicate memberships.
+        """Normalize PRIMARY clusters and enforce mutual exclusion.
 
-        The LLM sometimes assigns the same deity to multiple clusters
-        (e.g., Quetzalcoatl in both "Feathered Serpent" and "Shining
-        Ones"). We resolve this by giving each deity to the highest-
-        confidence cluster that claims it; on ties, the cluster with
-        the most distinctive evidence (more evidence entries) wins;
-        on further ties, the cluster listed first.
+        Each deity must belong to exactly one primary cluster. When the
+        LLM double-assigns a deity, the highest-confidence cluster wins;
+        ties break on evidence count, then original listing order.
         """
         all_names = {d["actor_name"] for d in dossiers}
 
@@ -450,6 +486,43 @@ class GlobalArchetypeSynthesizer:
                         "a cluster. Kept separate for manual review."
                     ),
                     "evidence": [],
+                }
+            )
+        return cleaned
+
+    def _validate_classes(
+        self,
+        raw_classes: list[dict[str, Any]],
+        dossiers: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Normalize CLASS memberships. Overlap IS allowed — a deity
+        can be in many classes simultaneously (e.g. YHWH is an Elohim,
+        Quetzalcoatl is a Shining One AND part of the Aztec Pantheon).
+        """
+        all_names = {d["actor_name"] for d in dossiers}
+        cleaned: list[dict[str, Any]] = []
+        seen_names: set[str] = set()
+        for c in raw_classes:
+            if not isinstance(c, dict):
+                continue
+            name = (c.get("class_name") or c.get("archetype_name") or "").strip()
+            if not name or name.lower() in seen_names:
+                continue
+            members = sorted(
+                {m for m in (c.get("members") or []) if m in all_names}
+            )
+            if not members:
+                continue
+            seen_names.add(name.lower())
+            cleaned.append(
+                {
+                    "class_name": name,
+                    "description": (
+                        c.get("description") or c.get("role_description") or ""
+                    ).strip(),
+                    "confidence": float(c.get("confidence") or 0.0),
+                    "members": members,
+                    "rationale": (c.get("rationale") or "").strip(),
                 }
             )
         return cleaned
@@ -611,10 +684,12 @@ Output strict JSON:
         self,
         epoch_id: str,
         summary: str,
-        clusters: list[dict[str, Any]],
+        primary_clusters: list[dict[str, Any]],
+        classes: list[dict[str, Any]],
     ) -> None:
         groups_for_proposal = [
             {
+                "level": "primary",
                 "proposed_archetype_name": c["archetype_name"],
                 "role_description": c.get("role_description") or "",
                 "members": c["members"],
@@ -625,8 +700,23 @@ Output strict JSON:
                     c.get("confidence", 0.0) >= self.min_confidence
                 ),
             }
-            for c in clusters
+            for c in primary_clusters
+        ] + [
+            {
+                "level": "class",
+                "proposed_archetype_name": c["class_name"],
+                "role_description": c.get("description") or "",
+                "members": c["members"],
+                "rationale": c.get("rationale") or "",
+                "evidence": [],
+                "confidence": c.get("confidence", 0.0),
+                "auto_apply_eligible": (
+                    c.get("confidence", 0.0) >= self.min_confidence
+                ),
+            }
+            for c in classes
         ]
+        clusters = primary_clusters  # used below for overall_conf calc
         async with async_session_factory() as s:
             src_ids = (
                 await s.execute(
@@ -705,20 +795,26 @@ Output strict JSON:
     async def _apply_clusters(
         self,
         epoch_id: str,
-        clusters: list[dict[str, Any]],
+        primary_clusters: list[dict[str, Any]],
+        classes: list[dict[str, Any]],
         dossiers: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        """Rewrite archetype_registry + rewire event_clusters.
+        """Rewrite archetype_registry (primary + class rows) + rewire
+        event_clusters for primary clusters only.
 
-        For each cluster with confidence >= min_confidence:
-          - upsert archetype_registry by name (create if missing,
-            merge AKA/canonical_ids if present)
-          - rewire event_clusters whose contributing actors match
+        PRIMARY rows (classification_kind='primary') drive event_clusters
+        rewiring: each event_cluster with a contributing actor that
+        belongs to a primary cluster is rewired to that cluster's
+        registry row. A deity's OLD primary archetype row has that
+        deity stripped from its also_known_as.
 
-        Lower-confidence clusters are preserved in the `proposed_groups`
-        payload but NOT applied; their members stay in whatever
-        archetype they were in before.
+        CLASS rows (classification_kind='class') are upserted with the
+        same also_known_as/canonical_ids semantics but never rewire
+        event_clusters. Overlap across class rows is allowed; a deity
+        can appear in multiple class rows simultaneously.
         """
+        # Rename for brevity in the long body below.
+        clusters = primary_clusters
         # Build normalized-name → canonical_actor_id lookup from dossiers
         # themselves (we already resolved these during dossier build).
         cid_by_norm: dict[str, str] = {}
@@ -785,6 +881,7 @@ Output strict JSON:
                             UPDATE archetype_registry
                             SET also_known_as = :aka,
                                 canonical_ids = CAST(:cids AS uuid[]),
+                                classification_kind = 'primary',
                                 role_description = COALESCE(
                                     NULLIF(:role, ''), role_description
                                 ),
@@ -806,10 +903,10 @@ Output strict JSON:
                                 """
                                 INSERT INTO archetype_registry (
                                     archetype_name, role_description,
-                                    entity_type, also_known_as,
-                                    canonical_ids
+                                    entity_type, classification_kind,
+                                    also_known_as, canonical_ids
                                 ) VALUES (
-                                    :nm, :role, 'actor',
+                                    :nm, :role, 'actor', 'primary',
                                     :aka, CAST(:cids AS uuid[])
                                 ) RETURNING id
                                 """
@@ -867,8 +964,10 @@ Output strict JSON:
 
                 applied_clusters += 1
 
-            # Strip moved members from OLD archetypes (they're no longer
-            # in the old cluster since the new target claimed them).
+            # Strip moved members from OLD PRIMARY archetypes (they're
+            # no longer in the old cluster since the new target claimed
+            # them). Class rows are left alone — a deity's membership
+            # in a class is orthogonal to its primary archetype.
             if moved_norms:
                 old_rows = (
                     await s.execute(
@@ -877,6 +976,7 @@ Output strict JSON:
                             SELECT id, also_known_as, canonical_ids
                             FROM archetype_registry
                             WHERE id != ALL(CAST(:keep AS uuid[]))
+                              AND classification_kind = 'primary'
                             """
                         ),
                         {"keep": sorted(touched_archetype_ids)},
@@ -914,7 +1014,100 @@ Output strict JSON:
                         },
                     )
 
+            # ----- apply class memberships (classification_kind='class') -----
+            applied_classes = 0
+            touched_class_ids: set[str] = set()
+            for cls in classes:
+                if cls.get("confidence", 0.0) < self.min_confidence:
+                    continue
+                cname = cls.get("class_name", "").strip()
+                cdesc = (cls.get("description") or "").strip()
+                cmembers = list(cls.get("members") or [])
+                if not cname or not cmembers:
+                    continue
+                cm_norms = {_norm(m) for m in cmembers}
+                cm_cids = sorted(
+                    {cid_by_norm[n] for n in cm_norms if n in cid_by_norm}
+                )
+
+                existing = (
+                    await s.execute(
+                        text(
+                            """
+                            SELECT id, also_known_as, canonical_ids,
+                                   classification_kind
+                            FROM archetype_registry
+                            WHERE archetype_name = :nm
+                            """
+                        ),
+                        {"nm": cname},
+                    )
+                ).first()
+                if existing:
+                    if existing[3] == "primary":
+                        # Name collision with a primary row — skip to
+                        # avoid silently converting a primary archetype
+                        # into a class. Log and move on.
+                        logger.warning(
+                            "Class %r collides with existing primary archetype — skipping",
+                            cname,
+                        )
+                        continue
+                    cls_id = str(existing[0])
+                    merged_aka = sorted(set(list(existing[1] or []) + cmembers))
+                    merged_cids = sorted(
+                        {str(x) for x in (existing[2] or [])} | set(cm_cids)
+                    )
+                    await s.execute(
+                        text(
+                            """
+                            UPDATE archetype_registry
+                            SET also_known_as = :aka,
+                                canonical_ids = CAST(:cids AS uuid[]),
+                                classification_kind = 'class',
+                                role_description = COALESCE(
+                                    NULLIF(:desc, ''), role_description
+                                ),
+                                updated_at = now()
+                            WHERE id = :id
+                            """
+                        ),
+                        {
+                            "id": cls_id,
+                            "aka": merged_aka,
+                            "cids": merged_cids,
+                            "desc": cdesc,
+                        },
+                    )
+                else:
+                    inserted = (
+                        await s.execute(
+                            text(
+                                """
+                                INSERT INTO archetype_registry (
+                                    archetype_name, role_description,
+                                    entity_type, classification_kind,
+                                    also_known_as, canonical_ids
+                                ) VALUES (
+                                    :nm, :desc, 'actor', 'class',
+                                    :aka, CAST(:cids AS uuid[])
+                                ) RETURNING id
+                                """
+                            ),
+                            {
+                                "nm": cname,
+                                "desc": cdesc or None,
+                                "aka": cmembers,
+                                "cids": cm_cids,
+                            },
+                        )
+                    ).first()
+                    cls_id = str(inserted[0])
+                touched_class_ids.add(cls_id)
+                applied_classes += 1
+
             # Refresh deity_dossiers current_archetype_* denormalization
+            # using PRIMARY archetypes only — classes live alongside.
             await s.execute(
                 text(
                     """
@@ -924,6 +1117,7 @@ Output strict JSON:
                         updated_at = now()
                     FROM archetype_registry ar
                     WHERE ar.also_known_as && ARRAY[dd.actor_name]
+                      AND ar.classification_kind = 'primary'
                       AND dd.epoch_id = :eid
                     """
                 ),
@@ -932,11 +1126,16 @@ Output strict JSON:
             await s.commit()
 
         return {
-            "applied_clusters": applied_clusters,
-            "skipped_low_confidence": sum(
+            "applied_primary_clusters": applied_clusters,
+            "applied_classes": applied_classes,
+            "skipped_low_confidence_primary": sum(
                 1 for c in clusters if c.get("confidence", 0.0) < self.min_confidence
             ),
-            "touched_archetypes": len(touched_archetype_ids),
+            "skipped_low_confidence_classes": sum(
+                1 for c in classes if c.get("confidence", 0.0) < self.min_confidence
+            ),
+            "touched_primary_archetypes": len(touched_archetype_ids),
+            "touched_class_archetypes": len(touched_class_ids),
             "rewired_event_clusters": touched_event_clusters,
         }
 

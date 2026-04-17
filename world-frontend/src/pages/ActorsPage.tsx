@@ -16,6 +16,7 @@ interface ArchetypeEntry {
   archetype_name: string
   entity_type: string | null
   role_description: string | null
+  classification_kind: 'primary' | 'class'
   actor_count: number
   total_event_count: number
   cohesion_score: number | null
@@ -89,6 +90,7 @@ interface ArchetypeMergeProposal {
 
 type SortMode = 'cohesion_asc' | 'cohesion_desc' | 'size_desc' | 'events_desc' | 'name'
 type FilterMode = 'all' | 'multi' | 'problems' | 'with_events'
+type KindFilter = 'all' | 'primary' | 'class'
 type CardTab = 'map' | 'dossiers' | 'proposal'
 
 function normalizeName(s: string): string {
@@ -357,7 +359,13 @@ function ActorDetail({ actor }: { actor: ActorEntry }) {
   )
 }
 
-function DossierPanel({ dossier }: { dossier: DeityDossier | null }) {
+function DossierPanel({
+  dossier,
+  classes,
+}: {
+  dossier: DeityDossier | null
+  classes?: ArchetypeEntry[]
+}) {
   if (!dossier) {
     return (
       <div style={{ fontSize: 11, color: 'var(--text-secondary)', padding: 8 }}>
@@ -368,6 +376,9 @@ function DossierPanel({ dossier }: { dossier: DeityDossier | null }) {
   const topCooc = Object.entries(dossier.co_occurring_actors)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 8)
+  const classMemberships = (classes || []).filter(c =>
+    c.actors.some(a => normalizeName(a.name) === dossier.normalized_name)
+  )
 
   return (
     <div
@@ -401,6 +412,30 @@ function DossierPanel({ dossier }: { dossier: DeityDossier | null }) {
       {dossier.cultures.length > 0 && (
         <div style={{ fontSize: 11, marginTop: 3, color: 'var(--text-secondary)' }}>
           <strong>Cultures:</strong> {dossier.cultures.join(', ')}
+        </div>
+      )}
+
+      {classMemberships.length > 0 && (
+        <div style={{ fontSize: 11, marginTop: 3, color: 'var(--text-secondary)' }}>
+          <strong>Member of:</strong>{' '}
+          {classMemberships.map(c => (
+            <span
+              key={c.archetype_id}
+              style={{
+                display: 'inline-block',
+                padding: '1px 6px',
+                marginRight: 4,
+                marginBottom: 2,
+                fontSize: 10,
+                borderRadius: 3,
+                background: 'rgba(167, 139, 250, 0.15)',
+                color: '#a78bfa',
+                border: '1px solid rgba(167, 139, 250, 0.35)',
+              }}
+            >
+              {c.archetype_name}
+            </span>
+          ))}
         </div>
       )}
 
@@ -684,6 +719,7 @@ function ProposalPanel({
 function ArchetypeCard({
   arch,
   dossiersByNorm,
+  classArchetypes,
   proposal,
   onApprove,
   onReject,
@@ -691,6 +727,7 @@ function ArchetypeCard({
 }: {
   arch: ArchetypeEntry
   dossiersByNorm: Map<string, DeityDossier>
+  classArchetypes: ArchetypeEntry[]
   proposal: ArchetypeMergeProposal | null
   onApprove: (id: string) => void
   onReject: (id: string) => void
@@ -729,9 +766,29 @@ function ArchetypeCard({
               fontSize: 14,
               fontWeight: 700,
               color: 'var(--gold)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
             }}
           >
             {arch.archetype_name}
+            {arch.classification_kind === 'class' && (
+              <span
+                style={{
+                  fontSize: 9,
+                  fontWeight: 700,
+                  letterSpacing: 0.5,
+                  padding: '2px 6px',
+                  borderRadius: 3,
+                  background: 'rgba(167, 139, 250, 0.15)',
+                  color: '#a78bfa',
+                  border: '1px solid rgba(167, 139, 250, 0.35)',
+                  textTransform: 'uppercase',
+                }}
+              >
+                Class
+              </span>
+            )}
           </div>
           {arch.role_description && (
             <div
@@ -870,7 +927,11 @@ function ArchetypeCard({
               </div>
             )}
             {actorDossiers.map(d => (
-              <DossierPanel key={d.id} dossier={d} />
+              <DossierPanel
+                key={d.id}
+                dossier={d}
+                classes={classArchetypes}
+              />
             ))}
           </div>
         )}
@@ -898,6 +959,7 @@ export default function ActorsPage() {
   const [q, setQ] = useState('')
   const [sort, setSort] = useState<SortMode>('events_desc')
   const [filter, setFilter] = useState<FilterMode>('with_events')
+  const [kindFilter, setKindFilter] = useState<KindFilter>('all')
   const [workingProposalId, setWorkingProposalId] = useState<string | null>(
     null
   )
@@ -928,6 +990,11 @@ export default function ActorsPage() {
     for (const d of dossiers || []) m.set(d.normalized_name, d)
     return m
   }, [dossiers])
+
+  const classArchetypes = useMemo(
+    () => (data || []).filter(a => a.classification_kind === 'class'),
+    [data]
+  )
 
   const proposalByArchetypeId = useMemo(() => {
     const m = new Map<string, ArchetypeMergeProposal>()
@@ -1010,6 +1077,9 @@ export default function ActorsPage() {
   const filtered = useMemo(() => {
     if (!data) return []
     let items = [...data]
+    if (kindFilter !== 'all') {
+      items = items.filter(a => (a.classification_kind || 'primary') === kindFilter)
+    }
     if (filter === 'multi') {
       items = items.filter(a => a.actor_count >= 2)
     } else if (filter === 'problems') {
@@ -1051,24 +1121,28 @@ export default function ActorsPage() {
       items.sort((a, b) => a.archetype_name.localeCompare(b.archetype_name))
     }
     return items
-  }, [data, q, sort, filter])
+  }, [data, q, sort, filter, kindFilter])
 
   const globalStats = useMemo(() => {
     if (!data) return null
-    const total = data.length
-    const multi = data.filter(a => a.actor_count >= 2).length
-    const problems = data.filter(
+    const primary = data.filter(
+      a => (a.classification_kind || 'primary') === 'primary'
+    )
+    const classes = data.filter(a => a.classification_kind === 'class')
+    const total = primary.length
+    const multi = primary.filter(a => a.actor_count >= 2).length
+    const problems = primary.filter(
       a => a.cohesion_score !== null && a.cohesion_score < 45
     ).length
-    const solo = data.filter(a => a.actor_count === 1).length
+    const solo = primary.filter(a => a.actor_count === 1).length
     const avgCohesion = (() => {
-      const vals = data
+      const vals = primary
         .map(a => a.cohesion_score)
         .filter((v): v is number => v !== null)
       if (vals.length === 0) return null
       return Math.round(vals.reduce((s, v) => s + v, 0) / vals.length)
     })()
-    return { total, multi, problems, solo, avgCohesion }
+    return { total, multi, problems, solo, avgCohesion, classes: classes.length }
   }, [data])
 
   return (
@@ -1117,7 +1191,11 @@ export default function ActorsPage() {
           {globalStats && (
             <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
               <div>
-                <strong>{globalStats.total}</strong> archetypes ·{' '}
+                <strong>{globalStats.total}</strong> primary ·{' '}
+                <strong style={{ color: '#a78bfa' }}>
+                  {globalStats.classes}
+                </strong>{' '}
+                classes ·{' '}
                 <strong>{globalStats.multi}</strong> multi-actor ·{' '}
                 <strong style={{ color: '#f87171' }}>
                   {globalStats.problems}
@@ -1181,6 +1259,22 @@ export default function ActorsPage() {
             <option value="all">All archetypes (incl. empty)</option>
           </select>
           <select
+            value={kindFilter}
+            onChange={e => setKindFilter(e.target.value as KindFilter)}
+            style={{
+              padding: '6px 8px',
+              fontSize: 12,
+              background: 'var(--bg-primary)',
+              border: '1px solid var(--border)',
+              borderRadius: 4,
+              color: 'var(--text-primary)',
+            }}
+          >
+            <option value="all">Primary + Classes</option>
+            <option value="primary">Primary archetypes only</option>
+            <option value="class">Classes only</option>
+          </select>
+          <select
             value={sort}
             onChange={e => setSort(e.target.value as SortMode)}
             style={{
@@ -1222,6 +1316,24 @@ export default function ActorsPage() {
             style={toolbarBtnStyle}
           >
             Propose re-merges
+          </button>
+          <button
+            onClick={() =>
+              runAdmin(
+                '/admin/synthesize-archetypes?epoch_orders=0&apply=true&min_confidence=0.70',
+                'Global synthesis started (primary + classes).',
+                true
+              )
+            }
+            style={{
+              ...toolbarBtnStyle,
+              background: 'rgba(167, 139, 250, 0.15)',
+              borderColor: 'rgba(167, 139, 250, 0.5)',
+              color: '#a78bfa',
+              fontWeight: 600,
+            }}
+          >
+            Synthesize archetypes
           </button>
           <button
             onClick={() =>
@@ -1283,6 +1395,7 @@ export default function ActorsPage() {
               key={a.archetype_id}
               arch={a}
               dossiersByNorm={dossiersByNorm}
+              classArchetypes={classArchetypes}
               proposal={proposalByArchetypeId.get(a.archetype_id) || null}
               onApprove={handleApprove}
               onReject={handleReject}

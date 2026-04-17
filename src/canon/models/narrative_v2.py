@@ -33,6 +33,9 @@ class ArchetypeRegistry(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     archetype_name: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
     role_description: Mapped[str | None] = mapped_column(Text, nullable=True)
     entity_type: Mapped[str] = mapped_column(Text, nullable=False, server_default="actor")
+    classification_kind: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default="primary"
+    )
     also_known_as: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, default=list)
     canonical_ids: Mapped[list[uuid.UUID]] = mapped_column(
         ARRAY(UUID(as_uuid=True)), nullable=False, default=list

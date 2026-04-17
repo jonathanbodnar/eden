@@ -537,9 +537,11 @@ async def synthesize_archetypes(
                     eid, eorder, apply=apply
                 )
                 logger.info(
-                    "Synthesizer complete: clusters=%d, auto_applied=%d, apply_stats=%s",
-                    result.get("cluster_count", 0),
-                    result.get("auto_applied_count", 0),
+                    "Synthesizer complete: primary=%d (applied %d), classes=%d (applied %d), apply_stats=%s",
+                    result.get("primary_cluster_count", 0),
+                    result.get("auto_applied_primary", 0),
+                    result.get("class_count", 0),
+                    result.get("auto_applied_classes", 0),
                     result.get("apply_stats", {}),
                 )
         except Exception:

@@ -1125,7 +1125,8 @@ async def archetype_analysis(session: AsyncSession = Depends(get_session)):
             text(
                 """
                 SELECT id, archetype_name, entity_type, role_description,
-                       also_known_as, canonical_ids, first_seen_chapter_id
+                       also_known_as, canonical_ids, first_seen_chapter_id,
+                       classification_kind
                 FROM archetype_registry
                 ORDER BY archetype_name
                 """
@@ -1177,7 +1178,16 @@ async def archetype_analysis(session: AsyncSession = Depends(get_session)):
     # 3. For each archetype, collect per-actor signatures and compute matches
     result = []
     for arow in arch_rows:
-        arch_id, name, etype, role_desc, aka, canonical_ids, first_seen = arow
+        (
+            arch_id,
+            name,
+            etype,
+            role_desc,
+            aka,
+            canonical_ids,
+            first_seen,
+            classification_kind,
+        ) = arow
         aka_list = list(aka or [])
 
         actors_payload: list[dict] = []
@@ -1260,6 +1270,7 @@ async def archetype_analysis(session: AsyncSession = Depends(get_session)):
             "archetype_name": name,
             "entity_type": etype,
             "role_description": role_desc,
+            "classification_kind": classification_kind or "primary",
             "actor_count": n,
             "total_event_count": total_events,
             "cohesion_score": cohesion,
