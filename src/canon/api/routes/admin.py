@@ -555,7 +555,7 @@ async def approve_archetype_proposal(
                     """
                     SELECT id, archetype_name, also_known_as, canonical_ids
                     FROM archetype_registry
-                    WHERE id = ANY(:ids::uuid[])
+                    WHERE id = ANY(CAST(:ids AS uuid[]))
                     """
                 ),
                 {"ids": source_ids},
@@ -641,7 +641,7 @@ async def approve_archetype_proposal(
                         """
                         UPDATE archetype_registry
                         SET also_known_as = :aka,
-                            canonical_ids = :cids::uuid[],
+                            canonical_ids = CAST(:cids AS uuid[]),
                             role_description = COALESCE(:role, role_description),
                             updated_at = now()
                         WHERE id = :id
@@ -664,7 +664,7 @@ async def approve_archetype_proposal(
                                 entity_type, also_known_as, canonical_ids
                             ) VALUES (
                                 :nm, :role, 'actor',
-                                :aka, :cids::uuid[]
+                                :aka, CAST(:cids AS uuid[])
                             ) RETURNING id
                             """
                         ),
@@ -697,7 +697,7 @@ async def approve_archetype_proposal(
                         """
                         UPDATE archetype_registry
                         SET also_known_as = :aka,
-                            canonical_ids = :cids::uuid[],
+                            canonical_ids = CAST(:cids AS uuid[]),
                             updated_at = now()
                         WHERE id = :id
                         """
@@ -720,7 +720,7 @@ async def approve_archetype_proposal(
                             """
                             SELECT id, contributing_cultures
                             FROM event_clusters
-                            WHERE archetype_registry_id = ANY(:ids::uuid[])
+                            WHERE archetype_registry_id = ANY(CAST(:ids AS uuid[]))
                             """
                         ),
                         {"ids": source_ids},

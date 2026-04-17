@@ -620,7 +620,7 @@ async def _passages_from_culture_sources(
                        sv.text_extracted
                 FROM source_versions sv
                 JOIN source_records sr ON sr.id = sv.source_record_id
-                WHERE sr.id = ANY(:ids::uuid[])
+                WHERE sr.id = ANY(CAST(:ids AS uuid[]))
                   AND sv.text_extracted IS NOT NULL
                   AND ({like_clauses})
                 ORDER BY length(sv.text_extracted) DESC
