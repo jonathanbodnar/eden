@@ -478,6 +478,87 @@ async def propose_archetype_remerges(
     }
 
 
+@router.post("/synthesize-archetypes")
+async def synthesize_archetypes(
+    epoch_orders: str | None = None,
+    apply: bool = True,
+    min_confidence: float = 0.70,
+    session: AsyncSession = Depends(get_session),
+):
+    """Global cross-cultural archetype synthesis.
+
+    Unlike `/propose-archetype-remerges` (which only splits *within*
+    existing archetypes), this endpoint sends ALL dossiers for the
+    epoch to MiniMax in one shot and asks for a fresh global clustering
+    based on distinctive shared actions, overlapping relational
+    networks, earliest-source alignment, and characteristic essence.
+
+    With `apply=true` (default), clusters at confidence >= min_confidence
+    are written back to `archetype_registry` and `event_clusters` are
+    rewired. With `apply=false`, a "synthesis" proposal row is still
+    persisted for UI review, but no registry changes happen.
+
+    Requires dossiers to exist (run `/admin/build-deity-dossiers` first).
+    """
+    import asyncio
+
+    from sqlalchemy import text as sql_text
+
+    from src.canon.database import async_session_factory
+    from src.canon.services.deity_dossier import GlobalArchetypeSynthesizer
+
+    orders = (
+        [int(x.strip()) for x in epoch_orders.split(",")] if epoch_orders else [0]
+    )
+    async with async_session_factory() as s:
+        rows = (
+            await s.execute(
+                sql_text(
+                    "SELECT id, epoch_order, title FROM canonical_epochs "
+                    "WHERE epoch_order = ANY(:orders) AND is_current = true"
+                ),
+                {"orders": orders},
+            )
+        ).all()
+    epoch_tuples = [(str(r[0]), r[1], r[2]) for r in rows]
+
+    async def _run() -> None:
+        try:
+            synth = GlobalArchetypeSynthesizer(min_confidence=min_confidence)
+            for eid, eorder, etitle in epoch_tuples:
+                logger.info(
+                    "Synthesizer: epoch %d — %s (apply=%s, min_conf=%.2f)",
+                    eorder,
+                    etitle,
+                    apply,
+                    min_confidence,
+                )
+                result = await synth.synthesize_epoch(
+                    eid, eorder, apply=apply
+                )
+                logger.info(
+                    "Synthesizer complete: clusters=%d, auto_applied=%d, apply_stats=%s",
+                    result.get("cluster_count", 0),
+                    result.get("auto_applied_count", 0),
+                    result.get("apply_stats", {}),
+                )
+        except Exception:
+            logger.exception("Synthesizer failed")
+
+    asyncio.create_task(_run())
+    return {
+        "status": "started",
+        "epoch_orders": orders,
+        "apply": apply,
+        "min_confidence": min_confidence,
+        "epochs_resolved": len(epoch_tuples),
+        "message": (
+            "Global synthesis running in background. Watch logs or poll "
+            "/admin/deity-dossier-status for proposal_counts.synthesis."
+        ),
+    }
+
+
 @router.post("/archetype-proposals/{proposal_id}/approve")
 async def approve_archetype_proposal(
     proposal_id: str,
