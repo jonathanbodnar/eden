@@ -7,12 +7,76 @@ surface mirrors `call_deepseek` in `llm.py`.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import random
 import re
 from typing import Any
 
 import httpx
+
+_RETRYABLE_STATUS = {408, 409, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524, 529}
+_MAX_RETRIES = 5
+
+
+async def _post_with_retry(
+    url: str,
+    payload: dict[str, Any],
+    headers: dict[str, str],
+    timeout: float,
+) -> httpx.Response | None:
+    """POST with exponential backoff for transient MiniMax errors.
+
+    MiniMax-M2.5 routinely returns HTTP 529 "overloaded_error" when the
+    cluster is saturated; the request is idempotent-ish for our workload
+    (we re-generate proposals with wipe), so retrying with backoff is
+    the right call. Returns the final successful (or last-seen) response,
+    or None if every attempt raised.
+    """
+    last_exc: Exception | None = None
+    last_resp: httpx.Response | None = None
+    delay = 2.0
+    for attempt in range(1, _MAX_RETRIES + 1):
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                resp = await client.post(url, json=payload, headers=headers)
+            last_resp = resp
+            if resp.status_code == 200:
+                return resp
+            if resp.status_code in _RETRYABLE_STATUS and attempt < _MAX_RETRIES:
+                wait = delay + random.uniform(0, 1)
+                logging.getLogger(__name__).warning(
+                    "MiniMax %d on attempt %d/%d; retrying in %.1fs",
+                    resp.status_code,
+                    attempt,
+                    _MAX_RETRIES,
+                    wait,
+                )
+                await asyncio.sleep(wait)
+                delay = min(delay * 2, 30.0)
+                continue
+            return resp
+        except (httpx.TimeoutException, httpx.TransportError) as exc:
+            last_exc = exc
+            if attempt < _MAX_RETRIES:
+                wait = delay + random.uniform(0, 1)
+                logging.getLogger(__name__).warning(
+                    "MiniMax transport error on attempt %d/%d: %s; retrying in %.1fs",
+                    attempt,
+                    _MAX_RETRIES,
+                    exc,
+                    wait,
+                )
+                await asyncio.sleep(wait)
+                delay = min(delay * 2, 30.0)
+                continue
+            break
+    if last_resp is not None:
+        return last_resp
+    if last_exc is not None:
+        raise last_exc
+    return None
 
 from src.canon.config import settings
 from src.canon.services.narrative_v2.llm import (
@@ -116,14 +180,17 @@ async def call_minimax(
     }
 
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(url, json=payload, headers=headers)
-            if resp.status_code != 200:
-                logger.error(
-                    "MiniMax HTTP %d: %s", resp.status_code, resp.text[:500]
-                )
-            resp.raise_for_status()
-            data = resp.json()
+        resp = await _post_with_retry(url, payload, headers, timeout)
+        if resp is None:
+            return {}
+        if resp.status_code != 200:
+            logger.error(
+                "MiniMax HTTP %d (final): %s",
+                resp.status_code,
+                resp.text[:500],
+            )
+            return {}
+        data = resp.json()
     except Exception:
         logger.exception("MiniMax call failed")
         return {}
@@ -221,14 +288,17 @@ async def call_minimax_text(
     }
 
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(url, json=payload, headers=headers)
-            if resp.status_code != 200:
-                logger.error(
-                    "MiniMax HTTP %d: %s", resp.status_code, resp.text[:500]
-                )
-            resp.raise_for_status()
-            data = resp.json()
+        resp = await _post_with_retry(url, payload, headers, timeout)
+        if resp is None:
+            return ""
+        if resp.status_code != 200:
+            logger.error(
+                "MiniMax HTTP %d (final): %s",
+                resp.status_code,
+                resp.text[:500],
+            )
+            return ""
+        data = resp.json()
     except Exception:
         logger.exception("MiniMax text call failed")
         return ""

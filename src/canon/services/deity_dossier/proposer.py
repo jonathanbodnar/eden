@@ -87,7 +87,7 @@ class ProposalGenerator:
         self,
         *,
         cohesion_threshold: float = 60.0,
-        llm_concurrency: int = 3,
+        llm_concurrency: int = 2,
         min_members: int = 2,
     ):
         self.cohesion_threshold = cohesion_threshold
