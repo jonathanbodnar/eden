@@ -514,7 +514,12 @@ async def _earliest_source(
                 WHERE csl.canonical_id = :cid
                   AND csl.canonical_type = 'actor'
                   AND csl.archive_object_type = 'source_record'
-                  AND sd.date_type IN ('composition', 'attestation')
+                  AND sd.date_type IN (
+                      'composition',
+                      'copy_witness',
+                      'object_creation',
+                      'archaeological_context'
+                  )
                   AND sd.date_start IS NOT NULL
                 ORDER BY sd.date_start ASC
                 LIMIT 1
