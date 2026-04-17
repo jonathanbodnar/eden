@@ -1080,3 +1080,195 @@ async def generate_chapter_audio(
     asyncio.create_task(_generate_audio_background(cid_str))
 
     return {"status": "generating"}
+
+
+# ---------------------------------------------------------------------------
+# Archetype analysis (Actors tab)
+# ---------------------------------------------------------------------------
+
+
+def _normalize_name(s: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", (s or "").lower())
+
+
+def _cosine_sim(
+    a: dict[str, int], b: dict[str, int]
+) -> float:
+    """Cosine similarity between two sparse bag-of-words counters."""
+    if not a or not b:
+        return 0.0
+    dot = 0.0
+    for k, v in a.items():
+        if k in b:
+            dot += v * b[k]
+    if dot == 0.0:
+        return 0.0
+    mag_a = sum(v * v for v in a.values()) ** 0.5
+    mag_b = sum(v * v for v in b.values()) ** 0.5
+    if mag_a == 0 or mag_b == 0:
+        return 0.0
+    return dot / (mag_a * mag_b)
+
+
+@router.get("/archetype-analysis")
+async def archetype_analysis(session: AsyncSession = Depends(get_session)):
+    """Return every archetype with its contributing actors and a % match score.
+
+    The % match tells you how well each actor's atomic-event footprint
+    (verb_families + outcome_keywords) aligns with the other actors in the
+    same archetype. Low scores = probable over-merging.
+    """
+
+    # 1. Pull all archetypes
+    arch_rows = (
+        await session.execute(
+            text(
+                """
+                SELECT id, archetype_name, entity_type, role_description,
+                       also_known_as, canonical_ids, first_seen_chapter_id
+                FROM archetype_registry
+                ORDER BY archetype_name
+                """
+            )
+        )
+    ).all()
+
+    if not arch_rows:
+        return []
+
+    # 2. Pull every atomic event with its outline's chapter number, once
+    ev_rows = (
+        await session.execute(
+            text(
+                """
+                SELECT ae.id, ae.culture_key, ae.actors, ae.verb_family,
+                       ae.outcome_keywords, ae.outcome, ae.quoted_phrase,
+                       so.chapter_number
+                FROM culture_atomic_events ae
+                JOIN story_outlines so ON so.id = ae.story_outline_id
+                """
+            )
+        )
+    ).all()
+
+    # Build an index: normalized_actor_name -> list of events
+    events_by_actor: dict[str, list[dict]] = {}
+    for ev in ev_rows:
+        ev_id, culture_key, actors, verb_family, outcome_keywords, outcome, quoted, chapter_number = ev
+        actors_list = actors or []
+        if isinstance(actors_list, str):
+            # Defensive — should be list from jsonb
+            actors_list = []
+        for a in actors_list:
+            key = _normalize_name(str(a))
+            if not key:
+                continue
+            events_by_actor.setdefault(key, []).append({
+                "event_id": str(ev_id),
+                "actor_raw": a,
+                "culture_key": culture_key,
+                "verb_family": verb_family,
+                "outcome_keywords": list(outcome_keywords or []),
+                "outcome": outcome,
+                "quoted_phrase": quoted,
+                "chapter_number": chapter_number,
+            })
+
+    # 3. For each archetype, collect per-actor signatures and compute matches
+    result = []
+    for arow in arch_rows:
+        arch_id, name, etype, role_desc, aka, canonical_ids, first_seen = arow
+        aka_list = list(aka or [])
+
+        actors_payload: list[dict] = []
+        per_actor_sigs: list[tuple[str, dict[str, int], dict[str, int]]] = []
+
+        for aka_name in aka_list:
+            key = _normalize_name(aka_name)
+            events = events_by_actor.get(key, [])
+            vfam = {}
+            okw = {}
+            cultures_seen: set[str] = set()
+            chapters_seen: set[int] = set()
+            top_outcomes: list[str] = []
+            for ev in events:
+                if ev["verb_family"]:
+                    vfam[ev["verb_family"]] = vfam.get(ev["verb_family"], 0) + 1
+                for kw in ev["outcome_keywords"]:
+                    kwn = kw.lower().strip()
+                    if kwn:
+                        okw[kwn] = okw.get(kwn, 0) + 1
+                if ev["culture_key"]:
+                    cultures_seen.add(ev["culture_key"])
+                if ev["chapter_number"]:
+                    chapters_seen.add(ev["chapter_number"])
+                if ev["outcome"] and ev["outcome"] not in top_outcomes:
+                    top_outcomes.append(ev["outcome"])
+
+            per_actor_sigs.append((aka_name, vfam, okw))
+            actors_payload.append({
+                "name": aka_name,
+                "event_count": len(events),
+                "cultures": sorted(cultures_seen),
+                "chapters": sorted(chapters_seen),
+                "verb_families": [v for v, _ in sorted(vfam.items(), key=lambda x: -x[1])[:5]],
+                "top_outcomes": top_outcomes[:3],
+            })
+
+        # Compute pairwise similarity matrix and per-actor mean match
+        n = len(per_actor_sigs)
+        match_scores: list[float | None] = [None] * n
+        if n > 1:
+            for i in range(n):
+                sims = []
+                for j in range(n):
+                    if i == j:
+                        continue
+                    # Blend: verb_family 40%, outcome_keywords 60%
+                    s_v = _cosine_sim(per_actor_sigs[i][1], per_actor_sigs[j][1])
+                    s_o = _cosine_sim(per_actor_sigs[i][2], per_actor_sigs[j][2])
+                    sims.append(0.4 * s_v + 0.6 * s_o)
+                match_scores[i] = sum(sims) / len(sims) if sims else 0.0
+        elif n == 1:
+            # Singleton archetypes have no peers to compare against.
+            match_scores[0] = None
+
+        for a, score in zip(actors_payload, match_scores):
+            a["match_score"] = (
+                round(score * 100, 1) if score is not None else None
+            )
+
+        # Cohesion = mean of non-None match scores
+        non_none = [s for s in match_scores if s is not None]
+        cohesion = round(sum(non_none) / len(non_none) * 100, 1) if non_none else None
+
+        # Total event count across actors
+        total_events = sum(a["event_count"] for a in actors_payload)
+
+        result.append({
+            "archetype_id": str(arch_id),
+            "archetype_name": name,
+            "entity_type": etype,
+            "role_description": role_desc,
+            "actor_count": n,
+            "total_event_count": total_events,
+            "cohesion_score": cohesion,
+            "actors": sorted(
+                actors_payload,
+                key=lambda a: (
+                    -1 if a.get("match_score") is None else -a["match_score"]
+                ),
+            ),
+        })
+
+    # Sort: actors with low cohesion and multiple actors first (so user sees problems)
+    result.sort(
+        key=lambda r: (
+            # None cohesion (singletons) last, then low-cohesion first
+            1 if r["cohesion_score"] is None else 0,
+            r["cohesion_score"] if r["cohesion_score"] is not None else 0,
+            -r["actor_count"],
+        )
+    )
+
+    return result

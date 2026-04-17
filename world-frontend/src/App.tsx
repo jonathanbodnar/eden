@@ -3,12 +3,15 @@ import { WorldProvider } from './context/WorldContext'
 import ThreePanelLayout from './layouts/ThreePanelLayout'
 import StoryModeLayout from './layouts/StoryModeLayout'
 import AboutPage from './pages/AboutPage'
+import ActorsPage from './pages/ActorsPage'
 
 function TabBar() {
   const location = useLocation()
   const navigate = useNavigate()
   const current = location.pathname.startsWith('/story')
     ? 'story'
+    : location.pathname.startsWith('/actors')
+    ? 'actors'
     : location.pathname.startsWith('/about')
     ? 'about'
     : 'explorer'
@@ -16,6 +19,7 @@ function TabBar() {
   const tabs = [
     { key: 'explorer', label: 'Explorer', path: '/' },
     { key: 'story', label: 'Story', path: '/story' },
+    { key: 'actors', label: 'Actors', path: '/actors' },
     { key: 'about', label: 'About', path: '/about' },
   ]
 
@@ -70,6 +74,7 @@ export default function App() {
         <div style={{ flex: 1, overflow: 'hidden' }}>
           <Routes>
             <Route path="/story/*" element={<StoryModeLayout />} />
+            <Route path="/actors" element={<ActorsPage />} />
             <Route path="/about" element={<AboutPage />} />
             <Route path="/*" element={<ThreePanelLayout />} />
           </Routes>
