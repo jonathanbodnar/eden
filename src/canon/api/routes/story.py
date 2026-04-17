@@ -1215,22 +1215,32 @@ async def archetype_analysis(session: AsyncSession = Depends(get_session)):
                 "top_outcomes": top_outcomes[:3],
             })
 
-        # Compute pairwise similarity matrix and per-actor mean match
+        # Compute pairwise similarity matrix and per-actor mean match.
+        # Actors with no events are marked as undetermined (None) — they
+        # might legitimately belong, we just can't measure fit.
         n = len(per_actor_sigs)
         match_scores: list[float | None] = [None] * n
+        peers_with_events = [
+            j for j, (_, vf, okw) in enumerate(per_actor_sigs) if vf or okw
+        ]
         if n > 1:
             for i in range(n):
+                # If this actor has no events, undetermined.
+                if not per_actor_sigs[i][1] and not per_actor_sigs[i][2]:
+                    match_scores[i] = None
+                    continue
+                # Compare only against peers that also have events.
                 sims = []
-                for j in range(n):
+                for j in peers_with_events:
                     if i == j:
                         continue
-                    # Blend: verb_family 40%, outcome_keywords 60%
                     s_v = _cosine_sim(per_actor_sigs[i][1], per_actor_sigs[j][1])
                     s_o = _cosine_sim(per_actor_sigs[i][2], per_actor_sigs[j][2])
                     sims.append(0.4 * s_v + 0.6 * s_o)
-                match_scores[i] = sum(sims) / len(sims) if sims else 0.0
+                match_scores[i] = (
+                    sum(sims) / len(sims) if sims else None
+                )
         elif n == 1:
-            # Singleton archetypes have no peers to compare against.
             match_scores[0] = None
 
         for a, score in zip(actors_payload, match_scores):

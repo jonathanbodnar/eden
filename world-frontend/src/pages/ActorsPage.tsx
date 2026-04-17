@@ -21,8 +21,8 @@ interface ArchetypeEntry {
   actors: ActorEntry[]
 }
 
-type SortMode = 'cohesion_asc' | 'cohesion_desc' | 'size_desc' | 'name'
-type FilterMode = 'all' | 'multi' | 'problems'
+type SortMode = 'cohesion_asc' | 'cohesion_desc' | 'size_desc' | 'events_desc' | 'name'
+type FilterMode = 'all' | 'multi' | 'problems' | 'with_events'
 
 function colorForScore(s: number | null): string {
   if (s === null) return '#888'
@@ -377,8 +377,8 @@ export default function ActorsPage() {
   const [data, setData] = useState<ArchetypeEntry[] | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [q, setQ] = useState('')
-  const [sort, setSort] = useState<SortMode>('cohesion_asc')
-  const [filter, setFilter] = useState<FilterMode>('multi')
+  const [sort, setSort] = useState<SortMode>('events_desc')
+  const [filter, setFilter] = useState<FilterMode>('with_events')
 
   useEffect(() => {
     fetch('/world-api/story/archetype-analysis')
@@ -397,8 +397,13 @@ export default function ActorsPage() {
       items = items.filter(a => a.actor_count >= 2)
     } else if (filter === 'problems') {
       items = items.filter(
-        a => a.cohesion_score !== null && a.cohesion_score < 45
+        a =>
+          a.total_event_count > 0 &&
+          a.cohesion_score !== null &&
+          a.cohesion_score < 45
       )
+    } else if (filter === 'with_events') {
+      items = items.filter(a => a.total_event_count > 0)
     }
     if (q.trim()) {
       const needle = q.trim().toLowerCase()
@@ -423,6 +428,8 @@ export default function ActorsPage() {
       })
     } else if (sort === 'size_desc') {
       items.sort((a, b) => b.actor_count - a.actor_count)
+    } else if (sort === 'events_desc') {
+      items.sort((a, b) => b.total_event_count - a.total_event_count)
     } else {
       items.sort((a, b) => a.archetype_name.localeCompare(b.archetype_name))
     }
@@ -551,9 +558,10 @@ export default function ActorsPage() {
               color: 'var(--text-primary)',
             }}
           >
-            <option value="all">All archetypes</option>
+            <option value="with_events">With events (active)</option>
             <option value="multi">Multi-actor only</option>
             <option value="problems">Low cohesion (under 45%)</option>
+            <option value="all">All archetypes (incl. empty)</option>
           </select>
           <select
             value={sort}
@@ -567,6 +575,7 @@ export default function ActorsPage() {
               color: 'var(--text-primary)',
             }}
           >
+            <option value="events_desc">Event count</option>
             <option value="cohesion_asc">Cohesion (low → high)</option>
             <option value="cohesion_desc">Cohesion (high → low)</option>
             <option value="size_desc">Actor count</option>
