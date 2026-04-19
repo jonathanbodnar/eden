@@ -1,0 +1,39 @@
+"""FastAPI application entrypoint."""
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
+
+from src.ingestion.api.routes import archive, collection, context, intake, jobs, progress, sources
+from src.ingestion.config import settings
+
+app = FastAPI(
+    title=settings.app_name,
+    version="0.1.0",
+    description="Source-governed ingestion pipeline admin API",
+)
+
+# Trust X-Forwarded-Proto/For headers from nginx so redirects use https://
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(sources.router, prefix="/api/sources", tags=["Trusted Sources"])
+app.include_router(jobs.router, prefix="/api/jobs", tags=["Jobs & Queue"])
+app.include_router(progress.router, prefix="/api/progress", tags=["Progress"])
+app.include_router(archive.router, prefix="/api/archive", tags=["Archive Inspection"])
+app.include_router(context.router, prefix="/api/context", tags=["Context Layer"])
+app.include_router(intake.router, prefix="/api/sources/intake", tags=["Source Intake"])
+app.include_router(collection.router, prefix="/api/collection", tags=["Collection Browser"])
+
+
+@app.get("/health")
+async def health_check():
+    return {"status": "ok", "service": settings.app_name}

@@ -1,0 +1,94 @@
+version: "3.9"
+
+services:
+  world-migrate:
+    build:
+      context: ..
+      target: migrate
+    networks:
+      - eden_default
+    environment:
+      WORLD_DATABASE_URL: "postgresql+asyncpg://eden:${POSTGRES_PASSWORD:-eden}@postgres:5432/eden"
+      WORLD_DATABASE_URL_SYNC: "postgresql://eden:${POSTGRES_PASSWORD:-eden}@postgres:5432/eden"
+    command: >
+      sh -c "
+        sed -i 's|sqlalchemy.url = .*|sqlalchemy.url = postgresql://eden:${POSTGRES_PASSWORD:-eden}@postgres:5432/eden|' alembic.ini &&
+        alembic upgrade head
+      "
+
+  world-api:
+    build:
+      context: ..
+      target: world-api
+    restart: always
+    depends_on:
+      world-migrate:
+        condition: service_completed_successfully
+    networks:
+      - eden_default
+      - deploy_default
+    ports:
+      - "127.0.0.1:8001:8001"
+    environment:
+      WORLD_DATABASE_URL: "postgresql+asyncpg://eden:${POSTGRES_PASSWORD:-eden}@postgres:5432/eden"
+      WORLD_DATABASE_URL_SYNC: "postgresql://eden:${POSTGRES_PASSWORD:-eden}@postgres:5432/eden"
+      WORLD_ANTHROPIC_API_KEY: "${WORLD_ANTHROPIC_API_KEY:-}"
+      WORLD_ANTHROPIC_MODEL: "${WORLD_ANTHROPIC_MODEL:-claude-sonnet-4-20250514}"
+      WORLD_DEEPSEEK_API_KEY: "${WORLD_DEEPSEEK_API_KEY:-}"
+      WORLD_DEEPSEEK_BASE_URL: "${WORLD_DEEPSEEK_BASE_URL:-https://api.deepseek.com}"
+      WORLD_DEEPSEEK_MODEL: "${WORLD_DEEPSEEK_MODEL:-deepseek-chat}"
+      WORLD_MINIMAX_API_KEY: "${WORLD_MINIMAX_API_KEY:-}"
+      WORLD_MINIMAX_BASE_URL: "${WORLD_MINIMAX_BASE_URL:-https://api.minimax.io/v1}"
+      WORLD_MINIMAX_MODEL: "${WORLD_MINIMAX_MODEL:-MiniMax-M2.5}"
+      WORLD_OPENAI_API_KEY: "${WORLD_OPENAI_API_KEY:-${EDEN_OPENAI_API_KEY:-}}"
+      WORLD_EMBEDDING_MODEL: "${WORLD_EMBEDDING_MODEL:-text-embedding-3-small}"
+      WORLD_RUNPOD_API_KEY: "${WORLD_RUNPOD_API_KEY:-}"
+      WORLD_RUNPOD_ENDPOINT_ID: "${WORLD_RUNPOD_ENDPOINT_ID:-}"
+      WORLD_CARTESIA_API_KEY: "${WORLD_CARTESIA_API_KEY:-}"
+      WORLD_CARTESIA_VOICE_ID: "${WORLD_CARTESIA_VOICE_ID:-5ee9feff-1265-424a-9d7f-8e4d431a12c7}"
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+
+  world-worker:
+    build:
+      context: ..
+      target: worker
+    restart: always
+    depends_on:
+      world-migrate:
+        condition: service_completed_successfully
+    networks:
+      - eden_default
+    environment:
+      WORLD_DATABASE_URL: "postgresql+asyncpg://eden:${POSTGRES_PASSWORD:-eden}@postgres:5432/eden"
+      WORLD_DATABASE_URL_SYNC: "postgresql://eden:${POSTGRES_PASSWORD:-eden}@postgres:5432/eden"
+      WORLD_ANTHROPIC_API_KEY: "${WORLD_ANTHROPIC_API_KEY:-}"
+      WORLD_ANTHROPIC_MODEL: "${WORLD_ANTHROPIC_MODEL:-claude-sonnet-4-20250514}"
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+  world-frontend:
+    build:
+      context: ..
+      dockerfile: Dockerfile.world-frontend
+    restart: always
+    depends_on:
+      world-api:
+        condition: service_started
+    networks:
+      - eden_default
+      - deploy_default
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+
+networks:
+  eden_default:
+    external: true
+  deploy_default:
+    external: true

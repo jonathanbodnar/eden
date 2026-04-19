@@ -1,0 +1,120 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: always
+    environment:
+      POSTGRES_USER: eden
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-eden}
+      POSTGRES_DB: eden
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    command:
+      - "postgres"
+      - "-c"
+      - "max_connections=600"
+      - "-c"
+      - "shared_buffers=4GB"
+      - "-c"
+      - "effective_cache_size=14GB"
+      - "-c"
+      - "work_mem=32MB"
+      - "-c"
+      - "maintenance_work_mem=512MB"
+      - "-c"
+      - "wal_buffers=64MB"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U eden"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+
+  migrate:
+    build:
+      context: ..
+      target: migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      EDEN_DATABASE_URL: "postgresql+asyncpg://eden:${POSTGRES_PASSWORD:-eden}@postgres:5432/eden"
+      EDEN_DATABASE_URL_SYNC: "postgresql://eden:${POSTGRES_PASSWORD:-eden}@postgres:5432/eden"
+    command: >
+      sh -c "
+        sed -i 's|sqlalchemy.url = .*|sqlalchemy.url = postgresql://eden:${POSTGRES_PASSWORD:-eden}@postgres:5432/eden|' alembic.ini &&
+        alembic upgrade head
+      "
+
+  api:
+    build:
+      context: ..
+      target: api
+    restart: always
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      EDEN_DATABASE_URL: "postgresql+asyncpg://eden:${POSTGRES_PASSWORD:-eden}@postgres:5432/eden"
+      EDEN_DATABASE_URL_SYNC: "postgresql://eden:${POSTGRES_PASSWORD:-eden}@postgres:5432/eden"
+      EDEN_R2_ENDPOINT_URL: "${EDEN_R2_ENDPOINT_URL:-}"
+      EDEN_R2_ACCESS_KEY_ID: "${EDEN_R2_ACCESS_KEY_ID:-}"
+      EDEN_R2_SECRET_ACCESS_KEY: "${EDEN_R2_SECRET_ACCESS_KEY:-}"
+      EDEN_R2_BUCKET_NAME: "${EDEN_R2_BUCKET_NAME:-eden-raw}"
+      EDEN_OPENAI_API_KEY: "${EDEN_OPENAI_API_KEY:-}"
+      EDEN_ANTHROPIC_API_KEY: "${EDEN_ANTHROPIC_API_KEY:-}"
+      EDEN_ANTHROPIC_MODEL: "${EDEN_ANTHROPIC_MODEL:-claude-sonnet-4-20250514}"
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+  worker:
+    build:
+      context: ..
+      target: worker
+    restart: always
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      EDEN_DATABASE_URL: "postgresql+asyncpg://eden:${POSTGRES_PASSWORD:-eden}@postgres:5432/eden"
+      EDEN_DATABASE_URL_SYNC: "postgresql://eden:${POSTGRES_PASSWORD:-eden}@postgres:5432/eden"
+      EDEN_R2_ENDPOINT_URL: "${EDEN_R2_ENDPOINT_URL:-}"
+      EDEN_R2_ACCESS_KEY_ID: "${EDEN_R2_ACCESS_KEY_ID:-}"
+      EDEN_R2_SECRET_ACCESS_KEY: "${EDEN_R2_SECRET_ACCESS_KEY:-}"
+      EDEN_R2_BUCKET_NAME: "${EDEN_R2_BUCKET_NAME:-eden-raw}"
+      EDEN_OPENAI_API_KEY: "${EDEN_OPENAI_API_KEY:-}"
+      EDEN_ANTHROPIC_API_KEY: "${EDEN_ANTHROPIC_API_KEY:-}"
+      EDEN_ANTHROPIC_MODEL: "${EDEN_ANTHROPIC_MODEL:-claude-sonnet-4-20250514}"
+    deploy:
+      replicas: 60
+      resources:
+        limits:
+          memory: 512M
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: Dockerfile.frontend
+    restart: always
+    depends_on:
+      - api
+    ports:
+      - "0.0.0.0:80:3000"
+      - "0.0.0.0:443:3443"
+    volumes:
+      - /opt/eden/certs:/etc/nginx/certs:ro
+
+volumes:
+  pgdata:
+    external: true
+    name: eden_pgdata

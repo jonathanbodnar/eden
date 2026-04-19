@@ -1,0 +1,751 @@
+import { useState, useEffect } from 'react'
+import { api } from '../../api'
+import type { StoryChapter, StoryEvidence, EntityMergeBreakdown, CultureVariant } from '../../api'
+
+interface Props {
+  chapter: StoryChapter | null
+  evidence: StoryEvidence[]
+  selectedEntity: { entityType: string; entityId: string; entityName: string } | null
+  onClearEntity?: () => void
+  activeCulture?: CultureVariant | null
+}
+
+
+function EntityBreakdownView({ data, onBack, archetypeName }: { data: EntityMergeBreakdown; onBack: () => void; archetypeName?: string }) {
+  const displayName = archetypeName || data.entity.name
+  const hasMultipleIdentities = data.equivalences.length > 1
+
+  const allCultures = Array.from(new Set(
+    data.equivalences.flatMap(eq => eq.cultures || [])
+      .concat(data.cultures || [])
+  ))
+
+  return (
+    <>
+      <div style={{
+        padding: '16px',
+        borderBottom: '1px solid var(--border)',
+      }}>
+        <button
+          onClick={onBack}
+          style={{
+            background: 'none',
+            border: 'none',
+            color: 'var(--text-muted)',
+            cursor: 'pointer',
+            fontSize: 11,
+            padding: 0,
+            marginBottom: 8,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 4,
+          }}
+        >
+          &larr; Back to evidence
+        </button>
+        <div style={{
+          fontSize: 11,
+          textTransform: 'uppercase',
+          letterSpacing: 1.5,
+          color: 'var(--gold)',
+          marginBottom: 4,
+        }}>
+          {hasMultipleIdentities ? 'Merged Archetype' : 'Entity Breakdown'}
+        </div>
+        <div style={{
+          fontSize: 16,
+          fontWeight: 700,
+          color: 'var(--text-primary)',
+          lineHeight: 1.3,
+        }}>
+          {displayName}
+        </div>
+        <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
+          {data.entity.subtype}
+        </div>
+      </div>
+
+      <div style={{ flex: 1, overflow: 'auto', padding: '12px 16px' }}>
+        {/* Cultures */}
+        {allCultures.length > 0 && (
+          <div style={{ marginBottom: 20 }}>
+            <div style={{
+              fontSize: 11,
+              textTransform: 'uppercase',
+              letterSpacing: 1,
+              color: 'var(--text-muted)',
+              marginBottom: 8,
+            }}>
+              Found in {allCultures.length} culture{allCultures.length !== 1 ? 's' : ''}
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+              {allCultures.map(c => (
+                <span key={c} style={{
+                  padding: '3px 8px',
+                  background: 'rgba(212, 168, 83, 0.12)',
+                  border: '1px solid rgba(212, 168, 83, 0.3)',
+                  borderRadius: 10,
+                  fontSize: 11,
+                  color: 'var(--gold)',
+                }}>
+                  {c}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Cultural Identities — all shown as equal peers */}
+        {data.equivalences.length > 0 && (
+          <div style={{ marginBottom: 20 }}>
+            <div style={{
+              fontSize: 11,
+              textTransform: 'uppercase',
+              letterSpacing: 1,
+              color: 'var(--text-muted)',
+              marginBottom: 8,
+            }}>
+              Cultural Identities ({data.equivalences.length})
+            </div>
+            {hasMultipleIdentities && (
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8, lineHeight: 1.5 }}>
+                This archetype appears across {data.equivalences.length} cultural traditions, each preserving a facet of the same entity (Law 8: Entity Convergence):
+              </div>
+            )}
+            {data.equivalences.map((eq, i) => (
+              <div key={i} style={{
+                padding: '10px 12px',
+                background: 'var(--bg-tertiary)',
+                borderRadius: 8,
+                marginBottom: 8,
+                borderLeft: `3px solid var(--gold)`,
+              }}>
+                <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 4 }}>
+                  {eq.equivalent_name || eq.equivalent_id}
+                </div>
+                {eq.cultures.length > 0 && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3, marginBottom: 6 }}>
+                    {eq.cultures.map(c => (
+                      <span key={c} style={{
+                        fontSize: 10,
+                        padding: '2px 7px',
+                        background: 'rgba(212, 168, 83, 0.1)',
+                        border: '1px solid rgba(212, 168, 83, 0.25)',
+                        borderRadius: 8,
+                        color: 'var(--gold)',
+                      }}>
+                        {c}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {eq.equivalent_summary && (
+                  <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 6, lineHeight: 1.5 }}>
+                    {eq.equivalent_summary.slice(0, 250)}
+                    {(eq.equivalent_summary.length > 250) && '...'}
+                  </div>
+                )}
+                {eq.reasoning && (
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                    <strong style={{ color: 'var(--text-secondary)' }}>Why merged:</strong> {eq.reasoning}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Source Evidence */}
+        {data.sources.length > 0 && (
+          <div>
+            <div style={{
+              fontSize: 11,
+              textTransform: 'uppercase',
+              letterSpacing: 1,
+              color: 'var(--text-muted)',
+              marginBottom: 8,
+            }}>
+              Source Evidence ({data.sources.length})
+            </div>
+            {data.sources.map((src, i) => (
+              <details key={i} style={{
+                marginBottom: 6,
+                background: 'var(--bg-tertiary)',
+                borderRadius: 6,
+                overflow: 'hidden',
+              }}>
+                <summary style={{
+                  padding: '8px 10px',
+                  cursor: 'pointer',
+                  fontSize: 12,
+                  color: 'var(--text-primary)',
+                  fontWeight: 500,
+                  listStyle: 'none',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                }}>
+                  <span style={{ flex: 1, marginRight: 8 }}>{src.title}</span>
+                  {src.culture && (
+                    <span style={{
+                      fontSize: 10,
+                      padding: '2px 6px',
+                      background: 'var(--bg-secondary)',
+                      borderRadius: 8,
+                      color: 'var(--text-muted)',
+                      flexShrink: 0,
+                    }}>
+                      {src.culture}
+                    </span>
+                  )}
+                </summary>
+                <div style={{
+                  padding: '0 10px 10px',
+                  fontSize: 12,
+                  color: 'var(--text-secondary)',
+                  lineHeight: 1.6,
+                  fontFamily: "'Georgia', 'Times New Roman', serif",
+                  fontStyle: 'italic',
+                }}>
+                  {src.excerpt || 'No excerpt available'}
+                </div>
+              </details>
+            ))}
+          </div>
+        )}
+      </div>
+    </>
+  )
+}
+
+function CultureEntitiesView({ culture }: { culture: CultureVariant }) {
+  const cultureAny = culture as any
+  const actors = cultureAny.actors || []
+  const events = cultureAny.events || []
+  const places = cultureAny.places || []
+  const sourceTexts = culture.source_texts || []
+  const sourceCount = cultureAny.source_count || sourceTexts.length
+  const wordCount = cultureAny.word_count || 0
+
+  return (
+    <>
+      <div style={{ padding: '16px', borderBottom: '1px solid var(--border)' }}>
+        <div style={{
+          fontSize: 11, textTransform: 'uppercase', letterSpacing: 1.5,
+          color: 'var(--gold)', marginBottom: 4,
+        }}>
+          {culture.culture} &mdash; Evidence
+        </div>
+        <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+          {sourceCount} source{sourceCount !== 1 ? 's' : ''}
+          {wordCount > 0 && ` · ${wordCount.toLocaleString()} words`}
+          {actors.length > 0 && ` · ${actors.length} figures`}
+        </div>
+      </div>
+
+      <div style={{ flex: 1, overflow: 'auto', padding: '12px 16px' }}>
+        {/* Source Texts — the actual writings used */}
+        {sourceTexts.length > 0 && (
+          <div style={{ marginBottom: 20 }}>
+            <div style={{
+              fontSize: 11, textTransform: 'uppercase', letterSpacing: 1,
+              color: 'var(--text-muted)', marginBottom: 8,
+            }}>
+              Source Texts Used ({sourceTexts.length})
+            </div>
+            {sourceTexts.map((src, i) => (
+              <details key={i} open={i === 0} style={{
+                marginBottom: 8,
+                background: 'var(--bg-tertiary)',
+                borderRadius: 6,
+                overflow: 'hidden',
+              }}>
+                <summary style={{
+                  padding: '8px 10px',
+                  cursor: 'pointer',
+                  fontSize: 12,
+                  color: 'var(--gold)',
+                  fontWeight: 600,
+                  listStyle: 'none',
+                }}>
+                  {src.title}
+                </summary>
+                <div style={{
+                  padding: '0 10px 10px',
+                  fontSize: 12,
+                  color: 'var(--text-secondary)',
+                  lineHeight: 1.7,
+                  fontFamily: "'Georgia', 'Times New Roman', serif",
+                  fontStyle: 'italic',
+                }}>
+                  {src.text.slice(0, 800)}
+                  {src.text.length > 800 && '...'}
+                </div>
+              </details>
+            ))}
+          </div>
+        )}
+
+        {/* Key figures */}
+        {actors.length > 0 && (
+          <div style={{ marginBottom: 20 }}>
+            <div style={{
+              fontSize: 11, textTransform: 'uppercase', letterSpacing: 1,
+              color: 'var(--gold)', marginBottom: 8,
+            }}>
+              Key Figures ({actors.length})
+            </div>
+            {actors.map((a: any, i: number) => (
+              <div key={a.id || a.name || i} style={{
+                padding: '8px 10px', background: 'var(--bg-tertiary)',
+                borderRadius: 6, marginBottom: 6,
+              }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>
+                  {a.name}
+                </div>
+                {(a.role || a.summary) && (
+                  <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5, marginTop: 2 }}>
+                    {(a.role || a.summary || '').slice(0, 200)}
+                  </div>
+                )}
+                {a.key_actions && a.key_actions.length > 0 && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
+                    {a.key_actions.slice(0, 4).map((action: string, j: number) => (
+                      <span key={j} style={{
+                        fontSize: 10, padding: '2px 6px',
+                        background: 'rgba(212,168,83,0.08)',
+                        border: '1px solid rgba(212,168,83,0.2)',
+                        borderRadius: 8, color: 'var(--gold)',
+                      }}>
+                        {action}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Key events */}
+        {events.length > 0 && (
+          <div style={{ marginBottom: 20 }}>
+            <div style={{
+              fontSize: 11, textTransform: 'uppercase', letterSpacing: 1,
+              color: '#7eb8da', marginBottom: 8,
+            }}>
+              Key Events ({events.length})
+            </div>
+            {events.map((e: any, i: number) => (
+              <div key={e.id || e.event || i} style={{
+                padding: '8px 10px', background: 'var(--bg-tertiary)',
+                borderRadius: 6, marginBottom: 6,
+              }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>
+                  {e.name || e.event || 'Event'}
+                </div>
+                {(e.description || e.summary) && (
+                  <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5, marginTop: 2 }}>
+                    {(e.description || e.summary || '').slice(0, 200)}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Key places */}
+        {places.length > 0 && (
+          <div style={{ marginBottom: 20 }}>
+            <div style={{
+              fontSize: 11, textTransform: 'uppercase', letterSpacing: 1,
+              color: '#a8d5a2', marginBottom: 8,
+            }}>
+              Key Places ({places.length})
+            </div>
+            {places.map((p: any, i: number) => (
+              <div key={p.id || p.name || i} style={{
+                padding: '8px 10px', background: 'var(--bg-tertiary)',
+                borderRadius: 6, marginBottom: 6,
+              }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>
+                  {p.name}
+                </div>
+                {(p.description || p.summary) && (
+                  <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5, marginTop: 2 }}>
+                    {(p.description || p.summary || '').slice(0, 200)}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </>
+  )
+}
+
+export default function EvidencePanel({ chapter, evidence, selectedEntity, onClearEntity, activeCulture }: Props) {
+  const [mergeData, setMergeData] = useState<EntityMergeBreakdown | null>(null)
+  const [loadingMerge, setLoadingMerge] = useState(false)
+
+  useEffect(() => {
+    if (!selectedEntity) {
+      setMergeData(null)
+      return
+    }
+    const mention = chapter?.entity_mentions?.find(
+      (m: any) => m.canonical_id === selectedEntity.entityId
+    )
+    const aka = mention?.also_known_as
+    const allIds = (mention as any)?.all_canonical_ids as string[] | undefined
+    setLoadingMerge(true)
+    api.getEntityMergeBreakdown(selectedEntity.entityType, selectedEntity.entityId, aka, allIds)
+      .then(setMergeData)
+      .catch(() => setMergeData(null))
+      .finally(() => setLoadingMerge(false))
+  }, [selectedEntity, chapter])
+
+  if (!chapter) {
+    return (
+      <div style={{
+        background: 'var(--bg-secondary)',
+        borderLeft: '1px solid var(--border)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        color: 'var(--text-muted)',
+        fontSize: 13,
+        padding: 20,
+      }}>
+        Select a chapter to see evidence
+      </div>
+    )
+  }
+
+  if (loadingMerge) {
+    return (
+      <div style={{
+        background: 'var(--bg-secondary)',
+        borderLeft: '1px solid var(--border)',
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100%',
+        alignItems: 'center',
+        justifyContent: 'center',
+        color: 'var(--text-muted)',
+      }}>
+        Loading entity breakdown...
+      </div>
+    )
+  }
+
+  if (activeCulture && !selectedEntity) {
+    return (
+      <div style={{
+        background: 'var(--bg-secondary)',
+        borderLeft: '1px solid var(--border)',
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100%',
+        overflow: 'hidden',
+      }}>
+        <CultureEntitiesView culture={activeCulture} />
+      </div>
+    )
+  }
+
+  if (mergeData && selectedEntity) {
+    return (
+      <div style={{
+        background: 'var(--bg-secondary)',
+        borderLeft: '1px solid var(--border)',
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100%',
+        overflow: 'hidden',
+      }}>
+        <EntityBreakdownView
+          data={mergeData}
+          onBack={() => onClearEntity?.()}
+          archetypeName={selectedEntity?.entityName}
+        />
+      </div>
+    )
+  }
+
+  const cultureCounts: Record<string, number> = {}
+  for (const claim of chapter.claims || []) {
+    for (const c of claim.cultures || []) {
+      cultureCounts[c] = (cultureCounts[c] || 0) + 1
+    }
+  }
+  const cultureList = Object.entries(cultureCounts)
+    .sort((a, b) => b[1] - a[1])
+
+  return (
+    <div style={{
+      background: 'var(--bg-secondary)',
+      borderLeft: '1px solid var(--border)',
+      display: 'flex',
+      flexDirection: 'column',
+      height: '100%',
+      overflow: 'hidden',
+    }}>
+      {/* Header */}
+      <div style={{
+        padding: '16px',
+        borderBottom: '1px solid var(--border)',
+      }}>
+        <div style={{
+          fontSize: 11,
+          textTransform: 'uppercase',
+          letterSpacing: 1.5,
+          color: 'var(--gold)',
+          marginBottom: 4,
+        }}>
+          Evidence
+        </div>
+        <div style={{
+          fontSize: 14,
+          fontWeight: 600,
+          color: 'var(--text-primary)',
+          lineHeight: 1.3,
+        }}>
+          {chapter.chapter_title}
+        </div>
+        {chapter.time_hint && (
+          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
+            {chapter.time_hint}
+          </div>
+        )}
+        {chapter.themes && chapter.themes.length > 0 && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 6 }}>
+            {chapter.themes.map((t, i) => (
+              <span key={i} style={{
+                fontSize: 10,
+                padding: '2px 6px',
+                background: 'rgba(212, 168, 83, 0.1)',
+                border: '1px solid rgba(212, 168, 83, 0.25)',
+                borderRadius: 8,
+                color: 'var(--gold)',
+              }}>
+                {t}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div style={{ flex: 1, overflow: 'auto', padding: '12px 16px' }}>
+        {/* Entity Mentions Quick List */}
+        {chapter.entity_mentions && chapter.entity_mentions.length > 0 && (
+          <div style={{ marginBottom: 20 }}>
+            <div style={{
+              fontSize: 11,
+              textTransform: 'uppercase',
+              letterSpacing: 1,
+              color: 'var(--text-muted)',
+              marginBottom: 8,
+            }}>
+              Entities in this Chapter
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {chapter.entity_mentions.map((m, i) => (
+                <button
+                  key={i}
+                  disabled={!m.canonical_id}
+                  onClick={() => m.canonical_id && onClearEntity
+                    ? (() => {
+                        const evt = new CustomEvent('entity-click', { detail: { entityType: m.type, entityId: m.canonical_id, entityName: m.name } })
+                        window.dispatchEvent(evt)
+                      })()
+                    : undefined
+                  }
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    padding: '6px 10px',
+                    background: 'var(--bg-tertiary)',
+                    border: 'none',
+                    borderRadius: 6,
+                    cursor: m.canonical_id ? 'pointer' : 'default',
+                    textAlign: 'left',
+                    width: '100%',
+                  }}
+                >
+                  <span style={{
+                    fontSize: 10,
+                    padding: '1px 5px',
+                    borderRadius: 4,
+                    fontWeight: 600,
+                    textTransform: 'uppercase',
+                    color: m.type === 'actor' ? 'var(--gold)' : m.type === 'event' ? '#7eb8da' : '#a8d5a2',
+                    background: m.type === 'actor' ? 'rgba(212,168,83,0.1)' : m.type === 'event' ? 'rgba(126,184,218,0.1)' : 'rgba(168,213,162,0.1)',
+                  }}>
+                    {m.type}
+                  </span>
+                  <span style={{ fontSize: 12, color: 'var(--text-primary)', fontWeight: 500 }}>
+                    {m.name}
+                  </span>
+                  {m.also_known_as && m.also_known_as.length > 0 && (
+                    <span style={{ fontSize: 10, color: 'var(--text-muted)', flex: 1, textAlign: 'right' }}>
+                      +{m.also_known_as.length} names
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Culture Distribution */}
+        {cultureList.length > 0 && (
+          <div style={{ marginBottom: 20 }}>
+            <div style={{
+              fontSize: 11,
+              textTransform: 'uppercase',
+              letterSpacing: 1,
+              color: 'var(--text-muted)',
+              marginBottom: 8,
+            }}>
+              Cultural Distribution
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {cultureList.map(([culture, count]) => (
+                <span
+                  key={culture}
+                  style={{
+                    padding: '3px 10px',
+                    background: count >= 3 ? 'rgba(212, 168, 83, 0.15)' : 'var(--bg-tertiary)',
+                    border: `1px solid ${count >= 3 ? 'var(--gold)' : 'var(--border)'}`,
+                    borderRadius: 12,
+                    fontSize: 11,
+                    color: count >= 3 ? 'var(--gold)' : 'var(--text-secondary)',
+                    fontWeight: 500,
+                  }}
+                >
+                  {culture} ({count})
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Score Breakdown */}
+        {chapter.claims && chapter.claims.length > 0 && (
+          <div style={{ marginBottom: 20 }}>
+            <div style={{
+              fontSize: 11,
+              textTransform: 'uppercase',
+              letterSpacing: 1,
+              color: 'var(--text-muted)',
+              marginBottom: 8,
+            }}>
+              Claim Confidence
+            </div>
+            {chapter.claims.slice(0, 8).map((claim, i) => (
+              <div key={i} style={{
+                marginBottom: 8,
+                padding: '8px 10px',
+                background: 'var(--bg-tertiary)',
+                borderRadius: 6,
+              }}>
+                <div style={{ fontSize: 12, color: 'var(--text-primary)', marginBottom: 4, lineHeight: 1.4 }}>
+                  {claim.claim}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{
+                    flex: 1,
+                    height: 4,
+                    background: 'var(--bg-secondary)',
+                    borderRadius: 2,
+                    overflow: 'hidden',
+                  }}>
+                    <div style={{
+                      height: '100%',
+                      width: `${(claim.score || 0) * 100}%`,
+                      background: (claim.score || 0) >= 0.7 ? 'var(--gold)' : (claim.score || 0) >= 0.4 ? 'var(--accent)' : 'var(--text-muted)',
+                      borderRadius: 2,
+                    }} />
+                  </div>
+                  <span style={{ fontSize: 11, color: 'var(--text-muted)', minWidth: 28 }}>
+                    {((claim.score || 0) * 100).toFixed(0)}%
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Source Excerpts */}
+        {evidence.length > 0 && (
+          <div>
+            <div style={{
+              fontSize: 11,
+              textTransform: 'uppercase',
+              letterSpacing: 1,
+              color: 'var(--text-muted)',
+              marginBottom: 8,
+            }}>
+              Source Texts ({evidence.length})
+            </div>
+            {evidence.map((ev, i) => (
+              <details
+                key={ev.source_id || i}
+                style={{
+                  marginBottom: 6,
+                  background: 'var(--bg-tertiary)',
+                  borderRadius: 6,
+                  overflow: 'hidden',
+                }}
+              >
+                <summary style={{
+                  padding: '8px 10px',
+                  cursor: 'pointer',
+                  fontSize: 12,
+                  color: 'var(--text-primary)',
+                  fontWeight: 500,
+                  listStyle: 'none',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                }}>
+                  <span style={{ flex: 1, marginRight: 8 }}>{ev.title}</span>
+                  {ev.culture && (
+                    <span style={{
+                      fontSize: 10,
+                      padding: '2px 6px',
+                      background: 'var(--bg-secondary)',
+                      borderRadius: 8,
+                      color: 'var(--text-muted)',
+                      flexShrink: 0,
+                    }}>
+                      {ev.culture}
+                    </span>
+                  )}
+                </summary>
+                <div style={{
+                  padding: '0 10px 10px',
+                  fontSize: 12,
+                  color: 'var(--text-secondary)',
+                  lineHeight: 1.6,
+                  fontFamily: "'Georgia', 'Times New Roman', serif",
+                  fontStyle: 'italic',
+                }}>
+                  {ev.excerpt || 'No excerpt available'}
+                  {ev.origin_place && (
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4, fontStyle: 'normal' }}>
+                      Origin: {ev.origin_place}
+                    </div>
+                  )}
+                </div>
+              </details>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
